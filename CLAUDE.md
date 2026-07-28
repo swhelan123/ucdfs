@@ -413,6 +413,21 @@ From here: schema changes are new numbered files (`005_…`) applied to non-prod
 first, then to prod. Never edit `000_baseline.sql` — it is a snapshot of a
 moment, not a living document.
 
+### Seeding non-prod
+
+`scripts/seed-nonprod.sh` copies the reference data down from production: the PT
+plan graph, the competition schedule, the harness document, `comp_meta`. It
+copies **nothing that is about a person** — no profiles, attendance, roster,
+requests, `pt_done_log` or `activity_log`, all of which carry names, and no
+photos, which are files on disk in a per-tier directory for exactly this reason.
+
+The rule is not "is it sensitive" but "is it about a person", and there is no
+flag that relaxes it. It reads from a `UCDFS_ENV=prod` file and writes only to a
+`UCDFS_ENV=nonprod` one, refusing both the reverse and the case where the two
+are the same project — so it cannot overwrite the live manufacturing plan with
+whatever state staging had drifted into. Re-runnable
+(`Prefer: resolution=merge-duplicates`).
+
 ## Deployment
 
 Built once, promoted — never built twice from the same source and hoped over.
@@ -436,5 +451,19 @@ meant rebuilding an old commit and hoping; now it is `./deploy.sh prod <sha>`.
 Everything runs on a **self-hosted runner on the homeserver**. There is no cloud
 runner: the deploy target is behind NAT, and the secrets are already on that
 machine — a hosted runner would mean copying the `service_role` key into GitHub
-so it could hand it back to us. `Dockerfile` copies `main.py` and `static/`, so
-new static files ship automatically.
+so it could hand it back to us. **No secret is stored in GitHub at all**; jobs
+read `/home/shane/ucdfs/.env*` directly, which only works because the runner and
+the deploy target are the same box.
+
+The runner is `~/actions-runner`, labelled `ucdfs`, run by the **user** systemd
+service `github-runner.service` — not a system one, because there is no
+passwordless sudo here and lingering is already enabled for the account, so a
+user service survives reboot without root.
+
+```bash
+systemctl --user status github-runner     # is CI alive
+journalctl --user -u github-runner -f     # what it is doing
+```
+
+`Dockerfile` copies `main.py` and `static/`, so new static files ship
+automatically.

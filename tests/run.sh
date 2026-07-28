@@ -24,14 +24,17 @@ for arg in "$@"; do
 done
 [ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness profiles admin)
 
-load_env
-
 # Stamped before anything runs, so cleanup can find exactly the rows this run
 # wrote to the shared activity feed and nothing older.
 RUN_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 needs_container=0
 for s in "${SUITES[@]}"; do [ "$s" != "static" ] && needs_container=1; done
+
+# Only the suites that touch a database need credentials. `static` parses files
+# and greps for secrets — it should keep working on a machine that has no env
+# file at all, which is also what makes it the useful first thing to run.
+[ "$needs_container" = "1" ] && load_env
 
 needs_node=0
 for s in "${SUITES[@]}"; do

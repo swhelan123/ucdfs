@@ -10,13 +10,17 @@ than the task list.
 ## Run it
 
 ```bash
-docker compose up -d --build     # live, port 3978
-./tests/run.sh                   # tests, throwaway container on 3979
+./deploy.sh dev                  # your working tree, :3980, non-prod database
+./tests/run.sh                   # tests, throwaway container on :3979
+./deploy.sh rollback             # what prod is on, and what it could go back to
 ```
 
-Secrets are in `.env` (gitignored; `.env.example` is the template). There is no
-local Python environment — `python3` here has no FastAPI and `venv` is
-unavailable, so **everything runs in Docker**.
+Never `docker compose up` by hand — `deploy.sh` is what decides which database a
+tier talks to, and it refuses the combinations that would point dev or stage at
+production. See "Environments" below.
+
+There is no local Python environment — `python3` here has no FastAPI and `venv`
+is unavailable, so **everything runs in Docker**.
 
 ## Layout
 
@@ -352,22 +356,85 @@ publish the real dates.
 
 ## Working on this safely
 
-- **Never restart or rebuild the container on :3978 without asking.** It is in
-  daily use by the team. Test on :3979 instead.
-- **Migrations are applied by hand** in the Supabase SQL editor, in order, and
-  the ordering matters — enabling RLS before the app has the service key takes
-  the live site down. Check what is already applied before suggesting a re-run.
+- **Never restart or rebuild :3978 without asking.** It is in daily use.
+- **Nothing but production talks to the production database.** Dev, stage and
+  the whole test suite are on `ucdfs-nonprod`. This is enforced, not just
+  intended — see below.
 - Test accounts must use the `ucdfs-test-` prefix so cleanup can find them.
 - Run `./tests/run.sh` before saying something works. The suite is fast and has
   caught real bugs that looked fine by inspection.
 
+## Environments
+
+Two Supabase projects, three app tiers. **Which env file a tier loads is the
+only thing that decides which database it talks to**, so that one line is the
+most consequential in the repo.
+
+| tier | port | database | env file | built from |
+|---|---|---|---|---|
+| prod | 3978 | `fs-attendance` | `.env` | a tagged image, manual approval |
+| stage | 3981 | `ucdfs-nonprod` | `.env.nonprod` | a tagged image, on merge to main |
+| dev | 3980 | `ucdfs-nonprod` | `.env.nonprod` | your working tree |
+| tests | 3979 | `ucdfs-nonprod` | `.env.nonprod` | the working tree, throwaway |
+
+Dev and stage share a database because the free tier allows two active projects
+and production needs one of them. The difference that matters is that **stage
+runs the built image from `main`** and dev runs whatever you are editing.
+
+`deploy.sh` enforces the boundary rather than documenting it. Every env file
+carries `UCDFS_ENV=prod|nonprod`, and the script refuses to start dev or stage
+from a prod-labelled file, refuses to deploy a sha that is not an ancestor of
+`origin/main` without `ALLOW_UNTRACKED_PROD=1`, and refuses to call a deploy
+successful until `/health` answers. `tests/lib.sh` refuses a prod-labelled file
+outright — the suites sign up accounts, write attendance and assert that
+deletion works, which against production is somebody's real history.
+
+**Data paths in `deploy.sh` are absolute on purpose.** CI runs it from the
+runner's workspace, which is a different directory every job; a relative
+`./data/uploads` there resolves to an empty folder, the mount succeeds, and the
+team's profile photos vanish from a site that otherwise looks fine.
+
+Each tier gets its own uploads directory. Staging must never hold real faces.
+
+## Migrations
+
+`migrations/000_baseline.sql` is the whole schema as production had it on
+2026-07-28, captured by introspection and verified against the live database by
+comparing a hash of all 91 column signatures. **A fresh environment runs that
+file and nothing else.**
+
+It exists because 001–004 covered five tables and the database had seventeen:
+`attendance`, the seven `pt_*`, the `comp_*`, `harness_doc` and
+`schedule_events` were made by hand in the dashboard and lived nowhere else. The
+schema was not in git, so no second environment could be built and losing the
+project meant losing the design.
+
+From here: schema changes are new numbered files (`005_…`) applied to non-prod
+first, then to prod. Never edit `000_baseline.sql` — it is a snapshot of a
+moment, not a living document.
+
 ## Deployment
 
-Single container, rebuilt in place:
+Built once, promoted — never built twice from the same source and hoped over.
 
 ```bash
-docker compose up -d --build
+./deploy.sh build $(git rev-parse --short HEAD)   # tag an image
+./deploy.sh stage <tag>                           # try it on :3981
+./deploy.sh prod  <tag>                           # ship that same image
+./deploy.sh rollback                              # what you could go back to
 ```
 
-`Dockerfile` copies `main.py` and `static/`, so new static files ship
-automatically. Static assets are served from `/static` via `StaticFiles`.
+CI (`.github/workflows/ci.yml`) does the first two on every merge to `main`.
+**Production is never deployed by a push** — it is `workflow_dispatch`, gated on
+a GitHub environment with a required reviewer, so shipping is a decision rather
+than a side effect of merging.
+
+Images are tagged `ucdfs:<sha>` and kept. `build: .` alone overwrote the image
+in place, so the version running five minutes ago no longer existed and rollback
+meant rebuilding an old commit and hoping; now it is `./deploy.sh prod <sha>`.
+
+Everything runs on a **self-hosted runner on the homeserver**. There is no cloud
+runner: the deploy target is behind NAT, and the secrets are already on that
+machine — a hosted runner would mean copying the `service_role` key into GitHub
+so it could hand it back to us. `Dockerfile` copies `main.py` and `static/`, so
+new static files ship automatically.

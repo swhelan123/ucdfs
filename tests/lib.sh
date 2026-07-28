@@ -27,16 +27,43 @@ ck() { # ck <label> <got> <want>
   fi
 }
 
+# The suites default to the non-production database and refuse the real one.
+#
+# They used to load .env, which is production: every run created real accounts
+# in the live GoTrue, and cleanup_activity_log() existed because otherwise test
+# rows sat on the team's dashboard pushing real activity off the homepage. All
+# of that was load-bearing. Now it is a second line of defence behind a database
+# nobody real is in.
+#
+# Overriding the file is possible and deliberately awkward — you have to name it
+# AND set UCDFS_ALLOW_PROD_TESTS=1 — because "just this once against prod" is how
+# somebody's attendance history gets deleted by a test that asserts deletion works.
 load_env() {
-  if [ ! -f "$ROOT/.env" ]; then
-    echo "No .env at $ROOT/.env — copy .env.example and fill it in." >&2
+  ENV_FILE="${UCDFS_ENV_FILE:-$ROOT/.env.nonprod}"
+
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "No $ENV_FILE." >&2
+    echo "The suites run against the non-production Supabase project, not the live one." >&2
+    echo "See .env.example for what goes in it." >&2
     exit 1
   fi
-  set -a; . "$ROOT/.env"; set +a
-  if [ -z "$SUPABASE_SERVICE_KEY" ]; then
-    echo "SUPABASE_SERVICE_KEY is empty in .env — the suites need it." >&2
+
+  set -a; . "$ENV_FILE"; set +a
+
+  if [ "${UCDFS_ENV:-}" = "prod" ] && [ "${UCDFS_ALLOW_PROD_TESTS:-0}" != "1" ]; then
+    echo "Refusing to run: $ENV_FILE is UCDFS_ENV=prod." >&2
+    echo "These suites sign up accounts, write attendance and delete rows. Against" >&2
+    echo "production that is real people's data." >&2
+    echo "If you genuinely mean it: UCDFS_ALLOW_PROD_TESTS=1 $0" >&2
     exit 1
   fi
+
+  if [ -z "${SUPABASE_SERVICE_KEY:-}" ]; then
+    echo "SUPABASE_SERVICE_KEY is empty in $ENV_FILE — the suites need it." >&2
+    exit 1
+  fi
+
+  echo "  database: ${UCDFS_ENV:-unlabelled} (${SUPABASE_URL})"
 }
 
 test_email() { echo "${TEST_PREFIX}$(date +%s)-$RANDOM@ucdconnect.ie"; }

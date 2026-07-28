@@ -1,0 +1,122 @@
+# UCDFS continuous integration and deployment.
+#
+# Everything runs on a self-hosted runner on the homeserver. There is no cloud
+# runner step, for two reasons: the deploy target is behind NAT and only
+# reachable from inside the house, and the secrets are already on that machine —
+# a GitHub-hosted runner would mean copying the service_role key into GitHub so
+# it could hand it back to us over the internet.
+#
+# The shape:
+#
+#   any push          → test
+#   push to main      → test → build ucdfs:<sha> → deploy to stage
+#   manual dispatch   → deploy an existing ucdfs:<sha> to prod, after approval
+#
+# Production is never deployed by a push. It is a button you press, gated on the
+# "production" environment so GitHub asks for approval first. That is the
+# difference between "I merged a branch" and "the team's site changed".
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (git short sha) to deploy to production'
+        required: true
+        type: string
+
+concurrency:
+  # One run per branch. A second push while the first is still deploying should
+  # replace it, not race it onto the same ports.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Tests ────────────────────────────────────────────────────────────────
+  test:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: [self-hosted, ucdfs]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The suite needs an image to run the container from, and builds are
+      # cheap here (python:3.12-slim plus four wheels).
+      - name: Build the test image
+        run: docker build -t ucdfs-attendance-bot .
+
+      # run.sh loads .env.nonprod and refuses a file labelled UCDFS_ENV=prod,
+      # so this cannot reach the live database even if the path is wrong.
+      - name: Run the suites
+        env:
+          UCDFS_HOME: /home/shane/ucdfs
+          UCDFS_ENV_FILE: /home/shane/ucdfs/.env.nonprod
+        run: ./tests/run.sh
+
+  # ── Build the artefact ───────────────────────────────────────────────────
+  # Built once, on main only, and tagged with the sha. Stage and prod both
+  # deploy THIS image — prod is a promotion of something already proven on
+  # stage, not a second build from the same source that might not agree.
+  build:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    runs-on: [self-hosted, ucdfs]
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - run: ./deploy.sh build "${{ steps.tag.outputs.tag }}"
+
+  # ── Stage ────────────────────────────────────────────────────────────────
+  deploy-stage:
+    needs: build
+    runs-on: [self-hosted, ucdfs]
+    timeout-minutes: 10
+    environment:
+      name: staging
+      url: http://192.168.0.166:3981
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh stage "${{ needs.build.outputs.tag }}"
+      - name: What is running where
+        if: always()
+        run: |
+          echo "stage  → ucdfs:${{ needs.build.outputs.tag }}"
+          echo "prod   → $(docker inspect -f '{{.Config.Image}}' ucdfs-prod 2>/dev/null || echo none)"
+          echo
+          echo "Promote this to production from the Actions tab:"
+          echo "  Run workflow → tag = ${{ needs.build.outputs.tag }}"
+
+  # ── Production ───────────────────────────────────────────────────────────
+  # Manual, and gated. Configure the "production" environment in the repo
+  # settings with yourself as a required reviewer — that is what turns this into
+  # an approval prompt on your phone rather than a job that just runs.
+  #
+  # deploy.sh refuses a tag that is not an ancestor of origin/main unless
+  # ALLOW_UNTRACKED_PROD=1, so the only way to ship something unreviewed is to
+  # say so explicitly.
+  deploy-prod:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, ucdfs]
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://ucdfs.shane-whelan.ie
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # deploy.sh checks the tag is an ancestor of main
+      - name: Deploy ${{ inputs.tag }} to production
+        run: ./deploy.sh prod "${{ inputs.tag }}"
+      - name: Rollback instructions
+        if: failure()
+        run: |
+          echo "Production deploy failed. It is still on whatever it was on."
+          echo "Images you can go back to:"
+          docker images ucdfs --format '  {{.Tag}}  {{.CreatedSince}}'

@@ -1,18 +1,55 @@
+# One compose file, three tiers. Everything that differs between them is a
+# variable, and every default is production — so a bare `docker compose up -d`
+# still does exactly what it did before this file grew variables.
+#
+# Do not run compose directly to deploy. Use ./deploy.sh, which sets these and
+# refuses the combinations that would point one tier at another's database:
+#
+#   ./deploy.sh dev            :3980, non-prod database, built from the working tree
+#   ./deploy.sh stage          :3981, non-prod database, a tagged image
+#   ./deploy.sh prod <tag>     :3978, THE REAL DATABASE, a tagged image, on purpose
+#
+name: ucdfs-${UCDFS_ENV:-prod}
+
 services:
-  attendance-bot:
+  app:
+    # Tagged, not just built. `build: .` alone overwrites the previous image in
+    # place, so the version you were running five minutes ago no longer exists
+    # and a rollback means rebuilding an old commit and hoping. Every deploy now
+    # leaves an image behind called ucdfs:<git-sha>, and rolling back is
+    # ./deploy.sh prod <the-sha-that-worked>.
+    image: ucdfs:${UCDFS_TAG:-local}
     build: .
-    container_name: attendance-bot
+    container_name: ucdfs-${UCDFS_ENV:-prod}
     restart: unless-stopped
     ports:
-      - "3978:3978"
-    # Secrets live in .env (gitignored). Copy .env.example to .env and fill it in.
+      - "${UCDFS_PORT:-3978}:3978"
+
+    # Which database this tier talks to. The single most consequential line in
+    # the file: point stage at .env and you are testing against real people.
     env_file:
-      - .env
+      - ${UCDFS_ENV_FILE:-.env}
+
+    # Profile photos. This has to be a mount: the image is rebuilt on every
+    # deploy, so anything written inside the container and not mounted out is
+    # gone the next time we ship. Kept out of static/ deliberately — the
+    # Dockerfile COPYs static/ into the image, and StaticFiles would serve these
+    # to anyone with the URL. They go out through /media/avatars/… instead,
+    # which sits behind the auth middleware.
+    #
+    # Each tier gets its own directory. Sharing one would put real faces into a
+    # staging environment that exists to be broken.
     volumes:
-      # Profile photos. This has to be a mount: the image is rebuilt in place on
-      # every deploy, so anything written inside the container and not mounted
-      # out is gone the next time we ship. Kept out of static/ deliberately —
-      # Dockerfile COPYs static/ into the image, and StaticFiles would serve
-      # these to anyone with the URL. They go out through /media/avatars/…
-      # instead, which sits behind the auth middleware.
-      - ./data/uploads:/app/uploads
+      - ${UCDFS_DATA:-./data/uploads}:/app/uploads
+
+    # 2 cores and 3.7 GB on this box, shared with twenty other containers. The
+    # app idles at about 30 MB; the cap is here so a leak degrades this one
+    # service instead of taking the homeserver down with it.
+    mem_limit: ${UCDFS_MEM:-256m}
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3978/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -18,22 +18,31 @@ screenshotted and looked at rather than asserted. Drive it the same way
 ## How it works
 
 A throwaway container is built from the working tree and served on **:3979**.
-The live container on **:3978 is never touched** — you can run the tests against
-production data while the team is using the site.
+The live container on **:3978 is never touched**.
 
-Test accounts are created against the real Supabase project (there is no
-separate test project) using the `ucdfs-test-` prefix, and deleted on exit via
-the GoTrue admin API. Cleanup is guarded twice: the prefix filter, then a
-per-user re-check. It reports what it removed and how many real accounts it left
-alone.
+**The suites run against `ucdfs-nonprod`, not production.** `load_env` reads
+`.env.nonprod` and refuses any file labelled `UCDFS_ENV=prod` — these tests sign
+up accounts, write attendance and assert that deletion works, which against the
+live database is real people's history. Overriding it takes both
+`UCDFS_ENV_FILE` and `UCDFS_ALLOW_PROD_TESTS=1`, deliberately, because "just
+this once against prod" is how somebody's attendance gets deleted by a test
+proving that deletion works.
+
+They did run against production until 2026-07-28, and the cleanup below was
+load-bearing rather than a safety net. It is kept because a second line of
+defence costs nothing:
+
+Test accounts use the `ucdfs-test-` prefix and are deleted on exit via the
+GoTrue admin API. Cleanup is guarded twice: the prefix filter, then a per-user
+re-check. It reports what it removed and how many other accounts it left alone.
 
 Feed lines are cleaned up too. `activity_log` stores the actor as text captured
 at write time — on purpose, so a line still reads correctly after the account it
 names is gone — which means deleting the test *accounts* would otherwise leave
-their lines sitting on the live dashboard, pushing real activity off the
-homepage. `cleanup_activity_log()` removes rows written **during this run** by
-the known test display names; both conditions are required. Add a name to
-`TEST_ACTORS` in `lib.sh` if you add a `signUp()` with a new one.
+their lines sitting on the dashboard, pushing real activity off the homepage.
+`cleanup_activity_log()` removes rows written **during this run** by the known
+test display names; both conditions are required. Add a name to `TEST_ACTORS` in
+`lib.sh` if you add a `signUp()` with a new one.
 
 ## The suites
 

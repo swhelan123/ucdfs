@@ -72,6 +72,26 @@ const PAGES = [
     check('no tile is still pending when revealed',
       d.querySelectorAll('.applet-stat.loading').length === 0,
       `${d.querySelectorAll('.applet-stat.loading').length} pending`);
+
+    // The degraded path, which the check above cannot reach because the happy
+    // path always has data. /api/dashboard nulls a single tile when one table
+    // fails, by design — and with one paint there is no second render coming to
+    // replace a placeholder, so "…" would sit there for good. A spinner that
+    // never resolves is worse than no number at all.
+    //
+    // appletCard and TILES_LOADED are top-level let/const, so they are lexical
+    // globals rather than properties of window — they have to be read by
+    // evaluating in page scope. See tests/README.md.
+    let degraded = null;
+    try {
+      degraded = w.eval(
+        'TILES_LOADED && appletCard(APPLETS.find(a => a.id === "pt"), undefined)');
+    } catch (e) { degraded = 'eval failed: ' + e.message; }
+    check('a tile with no data renders no stat, not a stuck placeholder',
+      typeof degraded === 'string' && !/applet-stat loading/.test(degraded),
+      typeof degraded === 'string'
+        ? (degraded.match(/applet-stat[^"]*/) || ['(no stat line)'])[0]
+        : String(degraded));
     check('external applet opens in a new tab',
       [...cards].some(c => (c.getAttribute('href') || '').startsWith('http') &&
                             c.getAttribute('target') === '_blank'));

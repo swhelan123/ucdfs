@@ -21,10 +21,16 @@
 
    Deliberately here and not in shared.css. .page is every card page, and the
    others do not fetch the same way; hiding all of them from one rule would
-   mean a page that never calls reveal() never appears at all. */
-.page { opacity: 0; transition: opacity .16s ease-out; }
-body.ready .page { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .page { transition: none; } }
+   mean a page that never calls reveal() never appears at all.
+
+   visibility, not opacity alone. An element at opacity:0 is still laid out,
+   still hit-tested and still in the tab order — so for the second or so before
+   .ready lands you could tab into, or click, a dashboard you cannot see.
+   visibility:hidden takes it out of all three, and still animates, because the
+   flip to visible is instant while the fade is not. */
+.page { opacity: 0; visibility: hidden; }
+body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s ease-out; }
+@media (prefers-reduced-motion: reduce) { body.ready .page { transition: none; } }
 
 /* ── Greeting ── */
 .greeting { margin-bottom: 26px; }
@@ -181,11 +187,29 @@ body.ready .page { opacity: 1; }
 
 </style>
 
-<!-- Without scripting nothing will ever add .ready, and the rule above would
-     hide the page for good. The markup underneath is static and readable. -->
-<noscript><style>.page { opacity: 1; }</style></noscript>
+<!-- No CSS fallback here on purpose. #main is display:none until the script
+     shows it, and every tile, chip and feed row is built by JS from an API —
+     so revealing .page without scripting would uncover an empty shell, not a
+     readable page. Say so instead. -->
+<noscript><style>
+  .page { opacity: 1; visibility: visible; }
+  .noscript-note {
+    margin: 40px auto; max-width: 30rem; padding: 18px 20px; border-radius: 14px;
+    background: #fff; border: 1px solid #e2e8f0; text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #0f172a;
+  }
+</style></noscript>
 </head>
 <body>
+
+<noscript>
+  <div class="noscript-note">
+    <strong>This page needs JavaScript.</strong><br>
+    The dashboard is built in the browser from the team's data, so there is
+    nothing to show without it. Everything else on the site works the same way.
+  </div>
+</noscript>
 
 <!-- ── Main ── -->
 <div id="main" style="display:none">
@@ -272,11 +296,16 @@ function appletCard(a, tile) {
             : '';
   const ext = a.external ? '<span class="ext-arrow">↗</span>' : '';
 
-  // A tile is only shown once /api/dashboard has answered for this applet.
+  // The placeholder means "the answer is still coming", so it must only ever
+  // appear while that is true. There is one paint now, after /api/dashboard has
+  // settled — so a tile still missing at that point is missing for good, and
+  // showing "…" for it would be a spinner that never resolves. Worse than no
+  // stat at all, and exactly the case /api/dashboard produces when one table
+  // fails and nulls a single tile.
   let stat = '';
   if (tile && tile.detail) {
     stat = `<div class="applet-stat"><span class="stat-dot"></span>${UCDFS.esc(tile.detail)}</div>`;
-  } else if (clickable && HAS_TILE[a.id]) {
+  } else if (clickable && HAS_TILE[a.id] && !TILES_LOADED) {
     stat = '<div class="applet-stat loading">…</div>';
   }
 
@@ -304,6 +333,10 @@ const HAS_TILE = { attendance: 1, pt: 1, harness: 1, comp: 1 };
 
 let APPLETS  = [];
 let TILES    = {};
+/* Set once /api/dashboard has settled, successfully or not. It is the
+   difference between "no number yet" and "no number", which is the difference
+   between a placeholder and a spinner that never stops. */
+let TILES_LOADED = false;
 let SUBTEAMS = [];
 let FILTER   = 'all';
 
@@ -507,12 +540,15 @@ function renderHeadline() {
    The dashboard stays hidden until it has been drawn once, so nobody watches
    it build itself. See the .page rule in the style block.
 
-   reveal() is idempotent and called from two places, because the only thing
-   worse than a page that flickers is a page that never arrives. boot() calls
-   it in a finally, so a thrown error still shows whatever was drawn; the
+   reveal() is idempotent and called from exactly two places, because the only
+   thing worse than a page that flickers is a page that never arrives. boot()
+   calls it in a finally, which covers both a clean draw and a thrown one; the
    timeout covers the case where boot never returns at all — fetch has no
    timeout of its own, so a request that never settles would otherwise leave a
-   permanently blank page. Failures degrade, they do not blank. */
+   permanently blank page. Failures degrade, they do not blank.
+
+   Do not add a third call at the end of draw(): the finally already runs on
+   the success path, and a spare call only makes this comment wrong. */
 let revealed = false;
 function reveal() {
   if (revealed) return;
@@ -558,6 +594,7 @@ async function draw(user) {
   APPLETS  = applets;
   SUBTEAMS = subteams;
   TILES    = data.tiles || {};
+  TILES_LOADED = true;   // settled — see the placeholder rule in appletCard()
   /* A subteam that no longer exists must not leave the grid filtered to
      nothing — fall back to All. */
   if (FILTER !== 'all' && !SUBTEAMS.some(s => s.id === FILTER)) FILTER = 'all';
@@ -570,7 +607,6 @@ async function draw(user) {
   renderCountdown(data.countdown);
   renderNow(TILES.attendance);
   renderFeed(data.activity);
-  reveal();
 
   /* The subteam step lives in shared.js now, so it fires wherever someone
      lands — a bookmarked /harness, not just here. This page cares because

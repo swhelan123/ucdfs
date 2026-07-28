@@ -66,6 +66,15 @@ const STARTED = Date.now() - 1000;
   check('the profiles applet is registered',
     applets.some(x => x.id === 'profiles' && x.route === '/profiles'));
 
+  // requires_role: a gated entry is omitted for people who may not open it,
+  // rather than shown as a tile that exists only to refuse them.
+  check('a member never sees the gated admin applet',
+    !applets.some(x => x.id === 'admin'),
+    applets.map(x => x.id).join(' '));
+  const gatedPage = await fetch(BASE + '/admin', { headers: hdrA, redirect: 'manual' });
+  check('and cannot open it directly either', gatedPage.status === 403,
+    'GET /admin → ' + gatedPage.status);
+
   console.log('\nfilter, never hide');
   const visibleUnder = (x, f) => f === 'all' ||
     tagsOf(x).indexOf('all') >= 0 || tagsOf(x).indexOf(f) >= 0;
@@ -386,6 +395,17 @@ const STARTED = Date.now() - 1000;
     check('the cropper is present but closed until a file is chosen',
       !!d.getElementById('crop-canvas') &&
       d.getElementById('cropper').style.display === 'none');
+    // The cropper opens *from* the editor, and both are .sheet. Without a
+    // higher z-index the tie goes to DOM order and the cropper opens behind the
+    // form that launched it — invisible, with the page apparently frozen.
+    // jsdom has no layout, so this reads the rule out of the served stylesheet.
+    {
+      const css = [...d.querySelectorAll('style')].map(s => s.textContent).join('\n');
+      const sheetZ = +(css.match(/\.sheet\s*\{[^}]*z-index:\s*(\d+)/) || [])[1];
+      const cropZ  = +(css.match(/#cropper\s*\{[^}]*z-index:\s*(\d+)/) || [])[1];
+      check('the cropper stacks above the editor', cropZ > sheetZ,
+        `#cropper ${cropZ} vs .sheet ${sheetZ}`);
+    }
     w.close();
   }
   {
@@ -425,9 +445,11 @@ const STARTED = Date.now() - 1000;
       d.querySelectorAll('#applet-grid .applet').length === applets.length,
       `${d.querySelectorAll('#applet-grid .applet').length} of ${applets.length}`);
 
+    // The overlay is built by shared.js only when it is needed, so "not asked"
+    // now means the element was never created rather than created and hidden.
     check('someone already onboarded is not asked again',
-      d.getElementById('onboard').style.display === 'none',
-      d.getElementById('onboard').style.display);
+      !d.getElementById('onboard'),
+      d.getElementById('onboard') ? 'overlay present' : 'never raised');
     // Your own face in the header, drawn from the cookie so it needs no fetch.
     check('the header pill shows your photo when you have one',
       /media\/avatars/.test(d.getElementById('pill-avatar').style.backgroundImage || ''),
@@ -440,13 +462,24 @@ const STARTED = Date.now() - 1000;
     // September recruitment path and the only chance to catch it.
     const fresh = await signUp('Profile', 'Fresh');
     const { w, d } = await open('/', { setCookies: fresh.setCookies, failOnPrompt: true });
-    check('a new account gets the subteam question',
-      d.getElementById('onboard').style.display === 'flex',
-      d.getElementById('onboard').style.display || '(hidden)');
+    check('a new account gets the subteam question', !!d.getElementById('onboard'),
+      d.getElementById('onboard') ? 'raised' : 'never raised');
     check('it offers all three plus "not sure yet"',
       d.querySelectorAll('#ob-opts .ob-opt').length === 3 &&
-      /Not sure yet/.test(d.getElementById('ob-later').textContent),
+      /Not sure yet/.test((d.getElementById('ob-later') || {}).textContent || ''),
       `${d.querySelectorAll('#ob-opts .ob-opt').length} options`);
+    w.close();
+  }
+  {
+    // The point of moving it into shared.js: someone who signs up from a
+    // bookmarked deep link used to reach that page unasked, and stayed unasked
+    // until they happened to open the dashboard.
+    const deep = await signUp('Profile', 'Deep');
+    const { w, d } = await open('/attendance', { setCookies: deep.setCookies, failOnPrompt: true });
+    check('and gets it on a deep link too, not just the dashboard',
+      !!d.getElementById('onboard') &&
+      d.querySelectorAll('#ob-opts .ob-opt').length === 3,
+      d.getElementById('onboard') ? 'raised on /attendance' : 'never raised');
     w.close();
   }
 

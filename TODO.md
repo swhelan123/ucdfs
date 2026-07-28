@@ -62,10 +62,10 @@ Two things still open:
 
 ### 2. Activity feed — ✅ done
 Bottom of the dashboard, newest eight. Merges two sources: `pt_done_log` (the PT
-plan's existing audit log, adapted rather than duplicated) and the new
-`activity_log` table — `migrations/002`, **not yet applied**, written to via
-`log_activity()`. The feed works before it is applied; the comp-hub lines
-(requested / bought) only start appearing after.
+plan's existing audit log, adapted rather than duplicated) and the
+`activity_log` table — `migrations/002`, **applied**, written to via
+`log_activity()`. Profiles writes one line the first time someone fills theirs
+in, and none for later edits.
 
 Attendance deliberately doesn't write to it — twenty people logging a day each
 morning would bury everything else, and the nowbar covers it. Worth revisiting
@@ -73,8 +73,8 @@ when there are more applets writing: eight items is thin now and will be noisy
 later, so the feed probably wants its own page and a "load more".
 
 ### 3. Who's in the workshop right now — ✅ done
-*"4 in the workshop now — Shane, Aoife, Cian +1 · until 17:00"*, with avatars, in
-a bar under the headline. Only rendered when someone actually is in; the
+*"4 in the workshop now — Shane, Aoife, Cian +1 · until 17:00"*, with real
+profile photos where people have uploaded one, in a bar under the headline. Only rendered when someone actually is in; the
 headline drops its own workshop line in that case so the two never duplicate.
 
 Someone who logged no departure time counts as still here — we can't know, and
@@ -96,8 +96,9 @@ which is the single biggest driver of repeat visits.
 
 **Shipped:** `/profiles` — directory grid, croppable photo, year/course/joined,
 role, division badges, skill tags typed as bubbles, three prompts from a list of
-fifteen, search, and filter chips for division and tag. `migrations/003`,
-`tests/suite-profiles.js` (79 checks). Photos are on this server's disk under
+fifteen, search, and filter chips for division and tag. `migrations/003`
+(**applied**), `tests/suite-profiles.js` (83 checks). Photos are on this
+server's disk under
 `./data/uploads`, served through `/media/avatars/…` behind the auth middleware,
 so profiles are members-only by default — and they show up in the header pill,
 the "who's in now" bar and the attendance log, not just here. `is_public` is
@@ -113,10 +114,22 @@ because nobody on the team is one.
 **Still open:**
 - The **public / sponsor page** the `is_public` toggle exists for. Separate
   audience, separate design; not what recruitment week needs.
-- Nobody's profile is filled in yet. Worth seeding a few before September so the
-  grid doesn't look abandoned on the day 30 people first open it.
+- Three accounts exist with divisions picked but empty profiles. Worth a nudge
+  before September so the grid doesn't look abandoned when 30 people first
+  open it.
 - The prompt list has never met a real user. Expect to swap two or three out
   after the first week — that costs one line in `PROMPTS`, no migration.
+
+~~**Two rough edges in the first-run flow**~~ — ✅ both fixed 2026-07-28:
+
+- ~~A deep link skips the division question~~ — the step moved out of
+  `dashboard.html` into `shared.js`, which builds the overlay itself and raises
+  it on whatever page you land on. It is idempotent: the dashboard also calls
+  `UCDFS.onboard(cb)` to hear the answer and move its filter, and the second
+  call only registers the callback.
+- ~~Name spelling is load-bearing~~ — both the page and the new server-side
+  ownership check fold case and collapse whitespace, so "shane whelan" and
+  "Shane  Whelan" are the same person.
 
 Not because it's the most useful — because it's the only one with a **social**
 reason to open the site. Adoption is the thing that killed the last attempt, and
@@ -404,11 +417,29 @@ so this stuff can be screenshot-verified rather than guessed at.
    drawing. The cleverest idea in Harness Hive: the embed is the live object,
    not a screenshot of one.
 
-Also outstanding from the auth work:
-- Assign `committee` / `admin` roles to the rest of the committee, then drop
-  `COMP_ADMIN_PASSWORD` entirely (it's still accepted as a fallback).
-- Add `requires_role` to registry entries so applets can be gated in one place.
-- Move the Supabase keys out of `docker-compose.yml` into a gitignored `.env`.
+~~Also outstanding from the auth work~~ — ✅ all three done 2026-07-28:
+- ~~Assign `committee`/`admin` roles, then drop `COMP_ADMIN_PASSWORD`~~ — the
+  password is gone from the code, the config and the Comp Hub UI. Roles are
+  handed out from **`/admin`**, so granting access no longer means an UPDATE in
+  the SQL editor, which is why nobody did it.
+- ~~Add `requires_role` to registry entries~~ — `_may_open()` enforces it on the
+  page route *and* `/api/applets`, so a gated applet is omitted rather than
+  shown as a tile that refuses you. `/admin` is the first entry to use it.
+- ~~Move the Supabase keys out of `docker-compose.yml`~~ — `env_file: .env`,
+  and `tests/suite-static.sh` asserts no key ever reappears inline.
+
+**God mode** (`migrations/004`, applied). `profiles.role = 'admin'` is the
+capability; `profiles.god_mode` is whether it is switched on. Elevated, you pass
+every gate on the site; switched off you are an ordinary member, which is the
+only way to check what the team actually sees. A banner sits on every page while
+it is on, with a one-click way out. `tests/suite-admin.js` — 38 checks, mostly
+negatives.
+
+**While wiring that up: attendance had no server-side ownership check at all.**
+`/api/log` and `/api/log/delete` took a name from the request body and wrote it.
+The page only drew edit buttons on your own row, so it looked enforced — but any
+signed-in member could delete anybody's day with one fetch. Fixed, case-folded,
+with god mode as the only override.
 
 ---
 

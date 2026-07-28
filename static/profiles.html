@@ -141,6 +141,11 @@
    Square, because every place a face is shown is a circle. Panning is on the
    canvas itself rather than on a draggable frame — you move the photo under a
    fixed hole, which is what every phone does. */
+/* Above the editor, which is also a .sheet. Equal z-index would leave it to DOM
+   order, and the editor comes later — so the cropper would open behind the form
+   that launched it. It is opened *from* the editor, so it has to outrank it. */
+#cropper { z-index: 80; }
+
 .crop-stage {
   position: relative; width: 100%; max-width: 300px; margin: 0 auto 16px;
   aspect-ratio: 1; border-radius: 50%; overflow: hidden;

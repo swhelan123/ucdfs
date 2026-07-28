@@ -491,13 +491,18 @@ function renderAttendance(rows) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Nothing logged yet</div></div>';
     return;
   }
-  const myName   = (UCDFS.user() || {}).name || '';
+  /* Case-folded and whitespace-collapsed: these rows predate accounts and were
+     typed by hand, so "shane whelan" and "Shane  Whelan" are the same person.
+     Comparing them raw silently takes away someone's ability to edit their own
+     history — the server enforces the same rule the same way. */
+  const fold     = n => (n || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const myName   = fold((UCDFS.user() || {}).name);
   const arriving = rows.filter(r => r.status === 'arriving');
   const absent   = rows.filter(r => r.status === 'absent');
   let html = '';
   arriving.forEach(r => {
     const tl    = timesLabel(r.time, r.departure_time);
-    const isMine = r.name === myName;
+    const isMine = fold(r.name) === myName;
     html += `<div class="person">
       ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-in')}
       <div class="pinfo">
@@ -512,7 +517,7 @@ function renderAttendance(rows) {
     </div>`;
   });
   absent.forEach(r => {
-    const isMine = r.name === myName;
+    const isMine = fold(r.name) === myName;
     html += `<div class="person">
       ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-out')}
       <div class="pinfo"><div class="pname">${esc(r.name)}</div></div>

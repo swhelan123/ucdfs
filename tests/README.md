@@ -46,6 +46,7 @@ the known test display names; both conditions are required. Add a name to
 | `comp` | the shared-CSS class rename held; all four tabs render |
 | `harness` | the numbers people order parts from: nets, rule check, BOM, exports, reports |
 | `profiles` | subteam tags stay honest and never hide a tool; profile saves are self-only; photos are members-only |
+| `admin` | the permission boundary: what a member is refused, what an un-elevated admin is refused, and that god mode can always be switched back on |
 
 ## Regressions these exist to catch
 
@@ -69,6 +70,13 @@ Each of these was a real bug found during development, not a hypothetical:
 - **A filter that hid something.** Tags are relevance, not permission. `profiles`
   checks that an `all`-tagged tool survives every chip and that a member of one
   subteam can still open another's applet.
+- **Hiding a control is not a permission.** `/api/log` and `/api/log/delete`
+  took a name from the request body, so any signed-in member could delete
+  anybody's attendance with one fetch — the page just didn't draw the button.
+  `admin` asserts ownership is enforced server-side.
+- **A one-way door out of your own admin rights.** God mode gates everything
+  except its own toggle; if that endpoint ever starts requiring god mode, an
+  admin who switches off cannot switch back on. `admin` asserts the way back.
 - **A class rename left an unstyled page.** 187 class attributes changed when
   `comp.html` moved onto `shared.css`; a missed one renders as plain HTML that
   nothing else would flag. `static` and `comp` both check.

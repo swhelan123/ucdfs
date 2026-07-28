@@ -32,6 +32,8 @@
   var cachedUser = null;   // null = not yet read, false = read and absent
   var appletsPromise = null;
   var photosPromise = null;
+  var obStarted = false;    // the subteam step is raised at most once per page
+  var obCallbacks = [];     // pages that want to hear which one was picked
 
   // ── Identity ─────────────────────────────────────────────────────────────
 
@@ -53,6 +55,10 @@
       /* Your own face, so a page can draw it without waiting on a fetch. Null
          when you haven't uploaded one — every caller falls back to initials. */
       u.photo = extra.photo || null;
+      /* Drives the god-mode banner and nothing else. Display, like everything
+         else here: forging it draws a banner and grants precisely nothing,
+         because every gate is enforced server-side against the database row. */
+      u.god_mode = !!extra.god_mode;
     }
     return u;
   }
@@ -265,6 +271,165 @@
     return appletsPromise;
   }
 
+  // ── First sign-in ────────────────────────────────────────────────────────
+
+  var ACCENT_VARS = {
+    indigo: ['var(--indigo)', 'var(--indigo-bg)'],
+    purple: ['var(--purple)', 'var(--purple-bg)'],
+    green:  ['var(--green)',  'var(--green-bg)'],
+    amber:  ['var(--amber)',  'var(--amber-bg)'],
+    teal:   ['var(--teal)',   'var(--teal-bg)'],
+    red:    ['var(--red)',    'var(--red-bg)']
+  };
+
+  /**
+   * Ask a brand-new account which division they're on, wherever they landed.
+   *
+   * This used to live on the dashboard, which meant someone who signed up from
+   * a shared /harness link was never asked until they happened to open the
+   * homepage. During recruitment the people arriving by shared link are exactly
+   * the ones worth catching, so it moved here and the markup is built rather
+   * than duplicated into six pages.
+   *
+   * onPicked(subteamId | null) fires after a successful save, so a page that
+   * cares (the dashboard filter) can react.
+   */
+  function onboard(onPicked) {
+    if (onPicked) obCallbacks.push(onPicked);
+    if (!user() || window.location.pathname === '/login') return;
+    /* Already answered — never ask again, and skip the request entirely. */
+    if (user().subteam) return;
+
+    /* Called twice on the dashboard: once automatically for every page, once by
+       the page itself to hear about the answer. Only the first call asks — the
+       second just leaves its callback. Without this the overlay is built twice
+       and the second one covers the first. */
+    if (obStarted) return;
+    obStarted = true;
+
+    fetch('/api/profile/me')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (meta) {
+        /* !ready means 003 isn't applied. Asking someone to pick and then
+           failing to save it is worse than not asking. */
+        if (!meta || !meta.ready || meta.onboarded) return;
+        raise(meta.subteams || []);
+      })
+      .catch(function () { /* never block a page over this */ });
+  }
+
+  function raise(subteams) {
+    var wrap = document.createElement('div');
+    wrap.className = 'ob-wrap';
+    wrap.id = 'onboard';
+    wrap.innerHTML =
+      '<div class="ob-card">' +
+        '<div class="ob-h" id="ob-h">Which division are you on?</div>' +
+        '<div class="ob-p" id="ob-p">You can change this any time.</div>' +
+        '<div class="ob-opts" id="ob-opts"></div>' +
+        '<button class="ob-later" id="ob-later" type="button">Not sure yet</button>' +
+      '</div>';
+    document.body.appendChild(wrap);
+
+    var opts = wrap.querySelector('#ob-opts');
+    opts.innerHTML = subteams.map(function (s) {
+      var a = ACCENT_VARS[s.accent] || ACCENT_VARS.indigo;
+      return '<button class="ob-opt" type="button" data-subteam="' + esc(s.id) + '"' +
+             ' style="--ob-accent:' + a[0] + ';--ob-accent-bg:' + a[1] + '">' +
+             '<div class="ob-icon">' + s.icon + '</div>' +
+             '<div class="ob-name">' + esc(s.name) + '</div></button>';
+    }).join('');
+
+    var buttons = [].slice.call(wrap.querySelectorAll('.ob-opt'))
+                    .concat([wrap.querySelector('#ob-later')]);
+
+    function pick(id) {
+      buttons.forEach(function (b) { b.disabled = true; });
+      fetch('/api/profile/subteam', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subteam: id })
+      }).then(function (r) {
+        if (!r.ok) throw new Error('save failed');
+        refreshUser();
+        step2(wrap, subteams, id);
+        obCallbacks.forEach(function (cb) {
+          try { cb(id); } catch (e) { /* one page's handler must not stop another */ }
+        });
+      }).catch(function () {
+        buttons.forEach(function (b) { b.disabled = false; });
+        toast("Couldn't save that — try again");
+      });
+    }
+
+    wrap.querySelectorAll('.ob-opt').forEach(function (b) {
+      b.addEventListener('click', function () { pick(b.dataset.subteam); });
+    });
+    /* "Not sure yet" posts null and still marks them onboarded. It is an
+       answer, not a skip — half of September's intake genuinely don't know. */
+    wrap.querySelector('#ob-later').addEventListener('click', function () { pick(null); });
+  }
+
+  /* Straight into "finish your profile" rather than dropping them back on the
+     page. One sequence, so nobody is asked two unrelated questions on two
+     different days. */
+  function step2(wrap, subteams, picked) {
+    var s = null;
+    for (var i = 0; i < subteams.length; i++) if (subteams[i].id === picked) s = subteams[i];
+    wrap.querySelector('#ob-h').textContent = s ? "You're on " + s.name + ' ' + s.icon : 'Nice one';
+    wrap.querySelector('#ob-p').textContent =
+      'Add a photo and pick three prompts so people know who you are.';
+    wrap.querySelector('#ob-opts').innerHTML =
+      '<a class="btn btn-dark btn-full" href="/profiles?edit=1">Set up my profile</a>';
+    var later = wrap.querySelector('#ob-later');
+    later.disabled = false;
+    later.textContent = 'Later';
+    later.onclick = function () { wrap.remove(); };
+  }
+
+  // ── God mode ─────────────────────────────────────────────────────────────
+
+  /**
+   * A banner on every page while an admin is elevated, with a one-click way out.
+   *
+   * Being able to edit anyone's anything must never be a state you are in
+   * without noticing. The flag comes from the profile cookie, which makes this
+   * display only — every actual gate is enforced server-side against the
+   * database row, so a forged cookie draws a banner and grants nothing.
+   */
+  function godBar() {
+    var existing = document.getElementById('god-bar');
+    var u = user();
+    if (!u || !u.god_mode) { if (existing) existing.remove(); return; }
+    if (existing) return;
+
+    var bar = document.createElement('div');
+    bar.className = 'god-bar';
+    bar.id = 'god-bar';
+    bar.innerHTML = '<span class="god-dot"></span><span>God mode</span>' +
+                    '<button class="god-off" id="god-off" type="button">Turn off</button>';
+    document.body.appendChild(bar);
+
+    bar.querySelector('#god-off').addEventListener('click', function () {
+      var btn = bar.querySelector('#god-off');
+      btn.disabled = true;
+      btn.textContent = '…';
+      fetch('/api/admin/god-mode', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: false })
+      }).then(function (r) {
+        if (!r.ok) throw new Error('failed');
+        /* Reload rather than patch: half this page was rendered with elevated
+           permissions, and leaving those controls on screen after dropping them
+           is exactly the confusion the banner exists to prevent. */
+        window.location.reload();
+      }).catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Turn off';
+        toast("Couldn't switch that off");
+      });
+    });
+  }
+
   // ── Toast ────────────────────────────────────────────────────────────────
 
   var toastTimer = null;
@@ -287,6 +452,20 @@
            String(d.getDate()).padStart(2, '0');
   }
 
+  /* Both run on every page that loads this file. The god bar has to be
+     everywhere by definition, and the onboarding step is only useful if it
+     catches you wherever you landed. Pages that want to react to a division
+     being picked call UCDFS.onboard(cb) themselves; calling it twice is
+     harmless because the second call sees a subteam and returns. */
+  function autoStart() {
+    try { godBar(); onboard(); } catch (e) { /* never break a page */ }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoStart);
+  } else {
+    autoStart();
+  }
+
   window.UCDFS = {
     user: user,
     refreshUser: refreshUser,
@@ -296,6 +475,8 @@
     requireName: requireName,
     renderPill: renderPill,
     applets: applets,
+    onboard: onboard,
+    godBar: godBar,
     photos: photos,
     photoFor: photoFor,
     avatar: avatar,

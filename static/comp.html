@@ -178,13 +178,6 @@
         <div class="section-label">Weekly roster</div>
         <div class="admin-bar">
           <span id="admin-status" style="font-size:.7rem;color:var(--muted)"></span>
-          <button id="admin-toggle-btn" class="btn btn-ghost btn-xs" onclick="toggleAdminPwRow()">🔒 Admin</button>
-        </div>
-      </div>
-      <div id="admin-pw-row" style="display:none;margin-bottom:14px">
-        <div style="display:flex;gap:8px">
-          <input id="adminpw" class="text-input" type="password" placeholder="Admin password" style="font-size:.85rem;padding:9px 12px">
-          <button class="btn btn-dark btn-sm" onclick="verifyAdmin()" style="border-radius:10px">Unlock</button>
         </div>
       </div>
       <div id="roster-content">
@@ -265,7 +258,7 @@ const ROLE_LABELS = {
   dishes_evening:'🌙 Evening Dishes',
 };
 
-let cName='', adminPw='', adminUnlocked=false, currentRunner=null;
+let cName='', adminUnlocked=false, currentRunner=null;
 let splitWith=[], allUsers=[], requestsData=[];
 const initials=n=>UCDFS.initials(n);
 const esc=s=>UCDFS.esc(s);
@@ -280,7 +273,9 @@ function cShowMain(user){
   UCDFS.renderPill();
   loadUsers();
   const lastTab=localStorage.getItem('comp_active_tab') || 'roster';
-  cTab(lastTab);
+  /* Ask first, then draw — otherwise the admin controls flash in a moment
+     after the roster and everything jumps. */
+  checkAdmin().then(()=>cTab(lastTab));
 }
 
 /* ── Tabs ── */
@@ -382,7 +377,7 @@ async function addEvent(){
   const location=document.getElementById('sch-loc').value.trim();
   const isUcdfs=document.getElementById('sch-ucdfs').checked;
   if(!day||!time||!name||!location){cToast('All fields required');return;}
-  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs})});
   cToast('Event added');loadScheduleEvents().then(()=>renderSchedule());
 }
 let editingEventId=null;
@@ -457,13 +452,13 @@ async function saveEventEdit(id){
   if(!dateVal||!timeVal||!name||!location){cToast('All fields required');return;}
   const day=formatDateToDay(dateVal);
   const time=timeVal;
-  await fetch(`/comp/api/schedule/events/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  await fetch(`/comp/api/schedule/events/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs})});
   closeEventModal();
   cToast('Event updated');loadScheduleEvents().then(()=>renderSchedule());
 }
 async function deleteEvent(id){
   if(!confirm('Delete this event?'))return;
-  await fetch(`/comp/api/schedule/events/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:adminPw})});
+  await fetch(`/comp/api/schedule/events/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
   cToast('Event deleted');loadScheduleEvents().then(()=>renderSchedule());
 }
 function showAddEventForm(){
@@ -496,25 +491,22 @@ async function addEvent(){
   if(!dateVal||!timeVal||!name||!location){cToast('All fields required');return;}
   const day=formatDateToDay(dateVal);
   const time=timeVal;
-  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs})});
   cToast('Event added');loadScheduleEvents().then(()=>renderSchedule());
 }
 
 /* ── Admin ── */
-function toggleAdminPwRow(){
-  const r=document.getElementById('admin-pw-row');
-  r.style.display=r.style.display==='none'?'':'none';
-  if(r.style.display!=='none') setTimeout(()=>document.getElementById('adminpw').focus(),80);
-}
-async function verifyAdmin(){
-  const pw=document.getElementById('adminpw').value;
-  const r=await fetch('/comp/api/admin/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-  if(r.status===403){cToast('Wrong password');return;}
-  adminPw=pw; adminUnlocked=true;
-  document.getElementById('admin-pw-row').style.display='none';
-  document.getElementById('admin-status').textContent='🔓 Admin';
-  document.getElementById('admin-toggle-btn').style.display='none';
-  loadRoster();
+/* Admin actions used to need a shared password typed into a box. They need a
+   role now — committee, or an admin with god mode on — so there is nothing to
+   unlock: we just ask the server whether this account qualifies, and the
+   controls appear or they don't. The endpoint is still the authority; this only
+   decides what to draw. */
+async function checkAdmin(){
+  try{
+    const r=await fetch('/comp/api/admin/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    adminUnlocked = r.ok;
+  }catch(e){ adminUnlocked=false; }
+  document.getElementById('admin-status').textContent = adminUnlocked ? '🔓 Admin' : '';
 }
 
 /* ── Roster ── */
@@ -550,12 +542,12 @@ function renderRoster(roster){
 }
 async function addRoster(day,role,input){
   const name=input.value.trim(); if(!name) return;
-  const r=await fetch('/comp/api/roster',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,role,name,password:adminPw})});
+  const r=await fetch('/comp/api/roster',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,role,name})});
   if(!r.ok){cToast('Failed to add');return;}
   input.value=''; loadRoster();
 }
 async function removeRoster(id){
-  await fetch('/comp/api/roster/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,password:adminPw})});
+  await fetch('/comp/api/roster/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   loadRoster();
 }
 

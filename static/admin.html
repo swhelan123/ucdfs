@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin · UCDFS</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Admin-only styles. Everything else comes from shared.css. */
+:root { --page-max: 760px; }
+
+.admin-h { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+.admin-p { font-size: 0.83rem; color: var(--muted); margin: 3px 0 22px; line-height: 1.5; }
+
+/* ── The god mode switch ── */
+.god-card {
+  display: flex; align-items: center; gap: 15px;
+  background: var(--ucd-navy); color: #fff;
+  border-radius: 18px; padding: 18px 20px; margin-bottom: 26px;
+  box-shadow: var(--shadow-md);
+}
+.god-icon { font-size: 1.7rem; line-height: 1; flex-shrink: 0; }
+.god-body { flex: 1; min-width: 0; }
+.god-title { font-weight: 700; font-size: 1rem; }
+.god-sub   { font-size: 0.76rem; opacity: 0.75; margin-top: 3px; line-height: 1.45; }
+
+/* A switch, not a button: it has a state, and the state is the point. */
+.switch {
+  position: relative; width: 52px; height: 30px; flex-shrink: 0;
+  border-radius: 999px; border: none; cursor: pointer; padding: 0;
+  background: rgba(255,255,255,0.22); transition: background 0.16s;
+}
+.switch.on { background: var(--ucd-gold); }
+.switch:disabled { opacity: 0.6; cursor: default; }
+.switch-knob {
+  position: absolute; top: 3px; left: 3px; width: 24px; height: 24px;
+  border-radius: 50%; background: #fff;
+  transition: transform 0.16s cubic-bezier(0.34,1.56,0.64,1);
+}
+.switch.on .switch-knob { transform: translateX(22px); }
+
+/* ── People and their roles ── */
+.who {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 15px; border-bottom: 1px solid var(--border);
+}
+.who:last-child { border-bottom: none; }
+.who-body { flex: 1; min-width: 0; }
+.who-name { font-weight: 600; font-size: 0.9rem; display: flex;
+            align-items: center; gap: 7px; flex-wrap: wrap; }
+.who-mail { font-size: 0.75rem; color: var(--muted); margin-top: 2px;
+            overflow: hidden; text-overflow: ellipsis; }
+.who-role {
+  padding: 8px 11px; font-size: 0.82rem; font-family: inherit;
+  border: 2px solid var(--border); border-radius: 11px;
+  background: var(--card); color: var(--text); outline: none; flex-shrink: 0;
+}
+.who-role:focus { border-color: var(--indigo); }
+.who-role:disabled { opacity: 0.6; }
+.who-you {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
+  background: var(--dark); color: #fff;
+}
+.who-god {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
+  background: var(--ucd-navy); color: var(--ucd-gold);
+}
+
+.note {
+  font-size: 0.76rem; color: var(--muted); line-height: 1.6;
+  margin-top: 18px; padding: 14px 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+}
+.note b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="Back to dashboard">‹</a>
+      <img class="logo-mark" src="/static/img/logo-96.png"
+           alt="UCD Formula Student" width="40" height="40">
+      <div class="header-text">
+        <div class="header-title">Admin</div>
+        <div class="header-sub">Roles and permissions</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="admin-h">Admin</div>
+    <div class="admin-p">Only admins can open this page.</div>
+
+    <div class="god-card">
+      <div class="god-icon">🔑</div>
+      <div class="god-body">
+        <div class="god-title">God mode</div>
+        <div class="god-sub" id="god-sub">…</div>
+      </div>
+      <button class="switch" id="god-switch" type="button" role="switch"
+              aria-label="God mode">
+        <span class="switch-knob"></span>
+      </button>
+    </div>
+
+    <div class="section-label">Everyone</div>
+    <div class="card" id="people"></div>
+
+    <div class="note">
+      <b>member</b> — the default. <b>committee</b> — Competition Hub admin
+      actions: roster, shop runs, marking things bought.
+      <b>admin</b> — can open this page and switch on god mode.
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+let PEOPLE = [], ROLES = [], ME = null;
+
+function renderGod() {
+  const me = PEOPLE.find(p => p.id === ME);
+  const on = !!(me && me.god_mode);
+  const sw = document.getElementById('god-switch');
+  sw.classList.toggle('on', on);
+  sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  document.getElementById('god-sub').textContent = on
+    ? 'On — you pass every permission check on the site.'
+    : "Off — you're using the site as an ordinary member.";
+}
+
+async function toggleGod() {
+  const sw = document.getElementById('god-switch');
+  const me = PEOPLE.find(p => p.id === ME);
+  const want = !(me && me.god_mode);
+  sw.disabled = true;
+  try {
+    const r = await fetch('/api/admin/god-mode', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: want }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Failed');
+    /* Reload rather than patch. Half the pages on this site render different
+       controls depending on elevation, and leaving stale ones on screen after
+       dropping permissions is exactly what the banner exists to prevent. */
+    window.location.reload();
+  } catch (e) {
+    sw.disabled = false;
+    UCDFS.toast(e.message || "Couldn't switch that");
+  }
+}
+
+function renderPeople() {
+  document.getElementById('people').innerHTML = PEOPLE.map(p => `
+    <div class="who">
+      ${UCDFS.avatar(p.name, null, 'av av38 av-indigo')}
+      <div class="who-body">
+        <div class="who-name">${UCDFS.esc(p.name)}
+          ${p.is_me ? '<span class="who-you">You</span>' : ''}
+          ${p.god_mode ? '<span class="who-god">God mode</span>' : ''}
+        </div>
+        <div class="who-mail">${UCDFS.esc(p.email)}</div>
+      </div>
+      <select class="who-role" data-id="${UCDFS.esc(p.id)}">
+        ${ROLES.map(r => `<option value="${UCDFS.esc(r)}"
+           ${r === p.role ? 'selected' : ''}>${UCDFS.esc(r)}</option>`).join('')}
+      </select>
+    </div>`).join('');
+
+  document.querySelectorAll('.who-role').forEach(sel =>
+    sel.addEventListener('change', () => setRole(sel, sel.dataset.id, sel.value)));
+}
+
+async function setRole(sel, id, role) {
+  const before = (PEOPLE.find(p => p.id === id) || {}).role;
+  sel.disabled = true;
+  try {
+    const r = await fetch('/api/admin/role', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, role }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    const who = PEOPLE.find(p => p.id === id);
+    UCDFS.toast(`${who ? who.name.split(' ')[0] : 'They'} is now ${role}`);
+    /* Demoting yourself changes what you may do on this very page, so reload
+       rather than leave controls on screen that will now 403. */
+    if (id === ME && role !== 'admin') { window.location.href = '/'; return; }
+    await load();
+  } catch (e) {
+    sel.value = before;          /* put the dropdown back where it was */
+    UCDFS.toast(e.message || "Couldn't change that");
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function load() {
+  const r = await fetch('/api/admin/people');
+  if (!r.ok) throw new Error('Could not load the team');
+  const j = await r.json();
+  PEOPLE = j.people || [];
+  ROLES  = j.roles  || [];
+  ME     = j.me;
+  renderPeople();
+  renderGod();
+}
+
+async function boot() {
+  UCDFS.renderPill();
+  document.getElementById('god-switch').addEventListener('click', toggleGod);
+  try {
+    await load();
+  } catch (e) {
+    document.getElementById('people').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Could not load the team. Has migration 004 been applied?</div></div>';
+  }
+}
+
+UCDFS.gate(boot);
+</script>
+</body>
+</html>

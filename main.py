@@ -23,12 +23,6 @@ from supabase import create_client, Client
 # ── Config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_KEY"]
-# No default: a real password must never be a source-code fallback, or it ends
-# up in version control and in every clone. Unset means the shared-password
-# route is simply closed, and committee/admin roles are the only way in — which
-# is where we want to end up anyway (see TODO.md).
-COMP_ADMIN_PW = os.environ.get("COMP_ADMIN_PASSWORD") or None
-
 # The service_role key bypasses RLS. Once migrations/001_auth_and_rls.sql PART 2
 # has run, this is the ONLY key that can reach the data — the anon key is exactly
 # what RLS is there to shut out. It must never be sent to a browser.
@@ -168,9 +162,13 @@ async def api_subteams():
 #             Drives the dashboard filter chips and nothing else. Omitting it
 #             means "all", so an entry that forgets the field stays visible to
 #             everyone rather than quietly disappearing for most of the team.
+#   requires_role: the PERMISSION field. A role name; the page route 403s and
+#             /api/applets omits the entry for anyone without it. God mode
+#             satisfies it. Omitting it means everyone, which is the right
+#             default — gating is the exception and should be written down.
 #
-# When auth lands, add e.g. "requires_role": "committee" here and gate in one
-# place rather than in each page. That is the permission field; subteams is not.
+# subteams and requires_role are not the same kind of thing and must never be
+# conflated: one is what you'd rather see first, the other is what you may open.
 APPLETS = [
     {
         "id":     "attendance",
@@ -228,6 +226,20 @@ APPLETS = [
         "subteams": ["ops"],
     },
     {
+        "id":     "admin",
+        "name":   "Admin",
+        "icon":   "🔑",
+        "route":  "/admin",
+        "file":   "admin.html",
+        "blurb":  "Roles, permissions and god mode",
+        "accent": "red",
+        "status": "live",
+        "subteams": ["all"],
+        # The only gated entry. Everyone else never sees the card at all —
+        # /api/applets omits it rather than showing a tile that 403s.
+        "requires_role": "admin",
+    },
+    {
         "id":     "mech",
         "name":   "Mech Manufacturing Plan",
         "icon":   "⚙️",
@@ -243,9 +255,24 @@ APPLETS = [
 APPLETS_BY_ID = {a["id"]: a for a in APPLETS}
 
 
-def _page_route(filename: str):
+def _may_open(applet: dict, profile: Optional[dict]) -> bool:
+    """Does this person satisfy the entry's requires_role? God mode always does.
+
+    One function, used by both the page route and /api/applets, so a gated
+    applet cannot end up visible on the dashboard but closed on click — or,
+    worse, the other way round.
+    """
+    needed = applet.get("requires_role")
+    if not needed:
+        return True
+    return god_on(profile) or (profile or {}).get("role") == needed
+
+
+def _page_route(filename: str, applet: dict):
     """Build a handler that serves one static page (closure over the filename)."""
-    async def _serve():
+    async def _serve(request: Request):
+        if not _may_open(applet, getattr(request.state, "profile", None)):
+            raise HTTPException(403, "You don't have access to that")
         return FileResponse(f"static/{filename}")
     return _serve
 
@@ -253,15 +280,21 @@ def _page_route(filename: str):
 for _applet in APPLETS:
     if _applet.get("file") and not _applet.get("external"):
         app.add_api_route(
-            _applet["route"], _page_route(_applet["file"]), methods=["GET"]
+            _applet["route"], _page_route(_applet["file"], _applet), methods=["GET"]
         )
 
 
 @app.get("/api/applets")
-async def api_applets():
-    """What the dashboard renders. Public fields only — no file paths."""
+async def api_applets(request: Request):
+    """What the dashboard renders. Public fields only — no file paths.
+
+    Entries you may not open are omitted rather than dimmed: a tile that exists
+    only to refuse you is worse than no tile.
+    """
+    profile = getattr(request.state, "profile", None)
     return {"applets": [
-        {k: v for k, v in a.items() if k != "file"} for a in APPLETS
+        {k: v for k, v in a.items() if k != "file"}
+        for a in APPLETS if _may_open(a, profile)
     ]}
 
 
@@ -418,6 +451,9 @@ def _public_profile(profile: dict, photo: Optional[str] = None) -> dict:
         "role":  profile.get("role") or "member",
         "subteam": profile.get("subteam") or None,
         "photo": photo,
+        # Display only, so the banner can say "god mode is on" without a fetch.
+        # Every actual gate reads the database row, never this.
+        "god_mode": bool(profile.get("god_mode")),
     }
 
 
@@ -579,9 +615,49 @@ def current_profile(request: Request) -> dict:
     return profile
 
 
+# ── God mode ──────────────────────────────────────────────────────────────────
+# role == 'admin' is the capability: who is *allowed* to be elevated. god_mode is
+# whether they currently *are*. See migrations/004 for why they are two things.
+#
+# Both are read from the profiles row the middleware already loaded, never from
+# the cookie. The cookie carries god_mode too, but only so the UI can draw the
+# banner — it is display, exactly like role, and the server never reads it back.
+
+def is_admin(profile: Optional[dict]) -> bool:
+    """Allowed to switch god mode on. Not the same as having it on."""
+    return bool(profile) and profile.get("role") == "admin"
+
+
+def god_on(profile: Optional[dict]) -> bool:
+    """Currently elevated. This is what every gate should ask."""
+    return is_admin(profile) and bool(profile.get("god_mode"))
+
+
+def is_god(request: Request) -> bool:
+    return god_on(getattr(request.state, "profile", None))
+
+
 def require_role(request: Request, *roles: str) -> dict:
+    """Gate an endpoint on role. God mode satisfies any requirement.
+
+    An admin with god mode *off* deliberately does not pass — that is the point
+    of the switch, and it is what lets an admin check what an ordinary member
+    actually sees rather than guessing.
+    """
     profile = current_profile(request)
-    if profile.get("role") not in roles:
+    if god_on(profile) or profile.get("role") in roles:
+        return profile
+    raise HTTPException(403, "You don't have access to that")
+
+
+def require_admin(request: Request) -> dict:
+    """For the god-mode switch itself, which asks for the *capability*.
+
+    Never gate this on god_on(): an admin who switched themselves off would have
+    no way back in short of editing the database by hand.
+    """
+    profile = current_profile(request)
+    if not is_admin(profile):
         raise HTTPException(403, "You don't have access to that")
     return profile
 
@@ -733,6 +809,128 @@ async def api_me(request: Request):
         return JSONResponse({"detail": "Not signed in"}, status_code=401)
     photo = _avatar_url(profile.get("id"), _get_details(profile.get("id") or ""))
     return {"profile": _public_profile(profile, photo)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Admin  (migrations/004)
+#
+#  Two jobs: switching god mode on and off, and handing out roles. The second is
+#  what lets COMP_ADMIN_PASSWORD stay dead — promoting the committee used to
+#  mean an UPDATE in the SQL editor, which is why nobody did it and everyone
+#  kept typing the shared password instead.
+# ══════════════════════════════════════════════════════════════════════════════
+
+ASSIGNABLE_ROLES = ["member", "committee", "admin"]
+
+
+@app.post("/api/admin/god-mode")
+async def api_god_mode(request: Request):
+    """Flip your own elevation.
+
+    Gated on require_admin, NOT on god mode: an admin who switched themselves
+    off has to be able to switch back on. Nobody can grant themselves the
+    capability here — only the role does that, and only another admin (or 004)
+    can hand that out.
+    """
+    me = require_admin(request)
+    b  = await request.json()
+    on = bool(b.get("on"))
+
+    try:
+        supabase.table("profiles").update({"god_mode": on}).eq("id", me["id"]).execute()
+    except Exception as e:
+        logger.error(f"[admin] god mode toggle failed for {me['id']}: {e}")
+        raise HTTPException(503, "Couldn't switch that — has migration 004 been applied?")
+
+    fresh = _get_profile(me["id"]) or {**me, "god_mode": on}
+    response = JSONResponse({"ok": True, "god_mode": on,
+                             "profile": _public_profile(fresh)})
+    # The banner reads the cookie, so it has to move with the state.
+    _set_profile_cookie(response, fresh)
+    return response
+
+
+@app.get("/api/admin/people")
+async def api_admin_people(request: Request):
+    """Everyone, with their role. Admin-only — this is the permission list."""
+    require_role(request, "admin")
+    try:
+        rows = supabase.table("profiles").select(
+            "id,first_name,last_name,email,role,god_mode,subteam").execute().data or []
+    except Exception as e:
+        logger.error(f"[admin] people query failed: {e}")
+        raise HTTPException(503, "Couldn't load the team.")
+
+    rows.sort(key=lambda r: (ASSIGNABLE_ROLES.index(r.get("role"))
+                             if r.get("role") in ASSIGNABLE_ROLES else 9,
+                             (r.get("first_name") or "").lower()))
+    me = current_profile(request)
+    return {
+        "people": [{
+            "id":    r.get("id"),
+            "name":  ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip(),
+            "email": r.get("email") or "",
+            "role":  r.get("role") or "member",
+            "god_mode": bool(r.get("god_mode")),
+            "is_me": r.get("id") == me.get("id"),
+        } for r in rows],
+        "roles": ASSIGNABLE_ROLES,
+        "me": me.get("id"),
+    }
+
+
+@app.post("/api/admin/role")
+async def api_admin_role(request: Request):
+    """Set someone's role.
+
+    The one guard that matters: you cannot remove the last admin. Locking every
+    admin out of the app is unrecoverable from inside it — the way back is
+    editing the database by hand, at which point the tool has failed.
+    """
+    me = require_role(request, "admin")
+    b  = await request.json()
+    target = (b.get("id") or "").strip()
+    role   = (b.get("role") or "").strip()
+
+    if role not in ASSIGNABLE_ROLES:
+        raise HTTPException(400, "Not a role.")
+    if not target:
+        raise HTTPException(400, "Which person?")
+
+    victim = _get_profile(target)
+    if not victim:
+        raise HTTPException(404, "No such account.")
+
+    if victim.get("role") == "admin" and role != "admin":
+        try:
+            admins = supabase.table("profiles").select("id").eq("role", "admin").execute().data or []
+        except Exception as e:
+            logger.error(f"[admin] admin count failed: {e}")
+            raise HTTPException(503, "Couldn't check that safely — nothing changed.")
+        if len(admins) <= 1:
+            raise HTTPException(400, "That's the last admin — promote someone else first.")
+
+    updates = {"role": role}
+    # Losing the capability has to take the elevation with it, or a demoted
+    # admin keeps a god_mode flag that silently switches back on if they are
+    # ever re-promoted.
+    if role != "admin":
+        updates["god_mode"] = False
+
+    try:
+        supabase.table("profiles").update(updates).eq("id", target).execute()
+    except Exception as e:
+        logger.error(f"[admin] role change failed for {target}: {e}")
+        raise HTTPException(503, "Couldn't save that — has migration 004 been applied?")
+
+    name = ((victim.get("first_name") or "") + " " + (victim.get("last_name") or "")).strip()
+    log_activity("admin", _public_profile(me).get("name"), "made", f"{name} {role}")
+
+    response = JSONResponse({"ok": True})
+    # Changing your own role changes what your own banner should say.
+    if target == me.get("id"):
+        _set_profile_cookie(response, _get_profile(target) or me)
+    return response
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1708,6 +1906,27 @@ async def get_attendance(target_date: Optional[str] = None):
     return {"date": d, "rows": rows}
 
 
+def _require_own_row(request: Request, name: str):
+    """You may only write your own attendance. God mode may write anyone's.
+
+    This used to live only in the page — the buttons were hidden for other
+    people's rows, but the endpoint took whatever name it was given, so any
+    signed-in member could delete anybody's entry with one fetch. Hiding a
+    control is not a permission.
+
+    Compared case-folded and whitespace-collapsed, because the name here comes
+    from the account while the stored rows predate accounts and were typed by
+    hand — "shane whelan" and "Shane  Whelan" are the same person, and treating
+    them as different silently locks people out of their own history.
+    """
+    if is_god(request):
+        return
+    mine = " ".join(_public_profile(current_profile(request)).get("name", "").split()).lower()
+    theirs = " ".join((name or "").split()).lower()
+    if mine != theirs:
+        raise HTTPException(403, "You can only change your own attendance")
+
+
 @app.post("/api/log")
 async def log_web(request: Request):
     import traceback
@@ -1727,6 +1946,7 @@ async def log_web(request: Request):
         raise HTTPException(status_code=400, detail="status must be 'arriving' or 'absent'")
 
     name = f"{first_name} {last_name}"
+    _require_own_row(request, name)
     logger.info(f"[log_web] {name} | {target_date} | {status} | {arrival_time} → {departure_time}")
     try:
         upsert_attendance(name, target_date, status, arrival_time, departure_time)
@@ -1752,6 +1972,7 @@ async def delete_log(request: Request):
     if not first_name or not last_name or not target_date:
         raise HTTPException(status_code=400, detail="first_name, last_name and date required")
     name = f"{first_name} {last_name}"
+    _require_own_row(request, name)
     logger.info(f"[delete_log] {name} | {target_date}")
     supabase.table("attendance").delete().eq("name", name).eq("date", target_date).execute()
     return {"reply": f"Entry removed for {name} on {target_date}."}
@@ -1787,29 +2008,30 @@ async def comp_users():
     names = sorted(set(row["name"] for row in (r.data or []) if row.get("name")))
     return {"users": names}
 
-def _is_comp_admin(request: Request, password: Optional[str]) -> bool:
-    """Committee/admin accounts get in on their role; everyone else still needs
-    the shared password. Once roles are assigned, drop the password half."""
+def _is_comp_admin(request: Request) -> bool:
+    """Committee accounts, and admins with god mode on.
+
+    The shared COMP_ADMIN_PASSWORD used to sit alongside this as a fallback so
+    nobody got locked out mid-switchover. It is gone: roles are assignable from
+    /admin now, so there is a way to hand out access that isn't a password
+    everyone knows and nobody can revoke.
+
+    An admin with god mode *off* does not pass, deliberately — that is how you
+    check what an ordinary member sees.
+    """
     profile = getattr(request.state, "profile", None) or {}
-    if profile.get("role") in ("committee", "admin"):
-        return True
-    # Fail closed when no shared password is configured, rather than letting an
-    # empty submission match an empty setting.
-    if not COMP_ADMIN_PW:
-        return False
-    return password == COMP_ADMIN_PW
+    return profile.get("role") == "committee" or god_on(profile)
 
 
-def _require_comp_admin(request: Request, password: Optional[str]):
-    if not _is_comp_admin(request, password):
-        raise HTTPException(403, "Wrong password")
+def _require_comp_admin(request: Request):
+    if not _is_comp_admin(request):
+        raise HTTPException(403, "That's a committee-only action")
 
 
 @app.post("/comp/api/admin/verify")
 async def comp_admin_verify(request: Request):
-    b = await request.json()
-    _require_comp_admin(request, b.get("password"))
-    return {"ok": True, "by_role": (getattr(request.state, "profile", None) or {}).get("role") in ("committee", "admin")}
+    _require_comp_admin(request)
+    return {"ok": True, "by_role": True}
 
 @app.get("/comp/api/roster")
 async def comp_roster_get():
@@ -1819,7 +2041,7 @@ async def comp_roster_get():
 @app.post("/comp/api/roster")
 async def comp_roster_add(request: Request):
     b = await request.json()
-    _require_comp_admin(request, b.get("password"))
+    _require_comp_admin(request)
     day  = b.get("day","").strip().lower()
     role = b.get("role","").strip()
     name = b.get("name","").strip()
@@ -1834,7 +2056,7 @@ async def comp_roster_add(request: Request):
 @app.post("/comp/api/roster/delete")
 async def comp_roster_delete(request: Request):
     b = await request.json()
-    _require_comp_admin(request, b.get("password"))
+    _require_comp_admin(request)
     supabase.table("comp_roster").delete().eq("id", b["id"]).execute()
     return {"ok": True}
 
@@ -1966,7 +2188,7 @@ async def schedule_events_get():
 @app.post("/comp/api/schedule/events")
 async def schedule_events_add(request: Request):
     b = await request.json()
-    _require_comp_admin(request, b.get("password"))
+    _require_comp_admin(request)
     day = (b.get("day") or "").strip()
     time = (b.get("time") or "").strip()
     name = (b.get("name") or "").strip()
@@ -1985,7 +2207,7 @@ async def schedule_events_add(request: Request):
 @app.post("/comp/api/schedule/events/{event_id}")
 async def schedule_events_update(event_id: int, request: Request):
     b = await request.json()
-    _require_comp_admin(request, b.get("password"))
+    _require_comp_admin(request)
     update = {}
     for k in ("day", "time", "name", "location", "is_ucdfs", "sort_order"):
         if k in b:
@@ -1999,7 +2221,7 @@ async def schedule_events_update(event_id: int, request: Request):
 @app.post("/comp/api/schedule/events/{event_id}/delete")
 async def schedule_events_delete(event_id: int, request: Request):
     b = await request.json()
-    _require_comp_admin(request, b.get("password"))
+    _require_comp_admin(request)
     supabase.table("schedule_events").delete().eq("id", event_id).execute()
     return {"ok": True}
 

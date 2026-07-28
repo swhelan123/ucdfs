@@ -30,6 +30,7 @@ static/
   attendance.html     card-based applet
   comp.html           card-based applet
   profiles.html       card-based applet — the team directory
+  admin.html          card-based applet — roles + god mode (requires_role: admin)
   pt.html             full-screen canvas tool
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
@@ -69,8 +70,11 @@ the dashboard to add a tool.**
 - `external: True` with a URL in `route` for off-site links (e.g. the Canva mech plan)
 - `subteams`: ids from `SUBTEAMS`, or `["all"]`. Drives the dashboard filter
   chips and nothing else — see "Subteams" below. Omitting it means everyone.
+- `requires_role`: the permission field. `_may_open()` enforces it on both the
+  page route and `/api/applets`, so a gated entry can never be visible on the
+  dashboard but closed on click. Omitting it means everyone.
 
-Current ids: `attendance`, `profiles`, `pt`, `harness`, `comp`, `mech`.
+Current ids: `attendance`, `profiles`, `pt`, `harness`, `comp`, `mech`, `admin`.
 
 ## Auth and data access
 
@@ -90,8 +94,9 @@ holds the `service_role` key and does its own authorization. This is load-bearin
   (authorization refusal); a malformed address is **400**.
 - Page routes redirect to `/login` when signed out; API routes return 401. Public
   paths are listed in `PUBLIC_EXACT`.
-- `COMP_ADMIN_PASSWORD` still works alongside the `admin` role, as a deliberate
-  fallback so admins can't be locked out mid-switchover. It is due for removal.
+- `COMP_ADMIN_PASSWORD` is **gone**. Committee actions need the `committee`
+  role or god mode, and roles are handed out from `/admin` — there is a way to
+  grant access now that isn't a password everyone knows and nobody can revoke.
 
 ### Identity is a seam
 
@@ -137,6 +142,48 @@ Subjects are stored as text captured at write time, not as a foreign key, so a
 line still reads correctly after the thing it names is renamed or deleted.
 Attendance deliberately does not write to it: twenty people logging a day each
 morning would bury everything else, and the "who's in now" bar covers it.
+
+## Roles, permissions and god mode
+
+Three things that look similar and are not:
+
+| | what it is | enforced |
+|---|---|---|
+| `subteams` (registry) | relevance — what you see first | never; presentational |
+| `requires_role` (registry) | permission — what you may open | `_may_open()`, page route + `/api/applets` |
+| `profile_details.role_label` | what you call yourself on your profile | never; a display string |
+| `profiles.role` | the real permission: member / committee / admin | `require_role()` |
+| `profiles.god_mode` | is this admin currently elevated | `god_on()` |
+
+**`role` is the capability, `god_mode` is the switch** (`migrations/004`). An
+admin who is permanently elevated cannot see what the team sees, and every
+accidental click lands on someone else's data — so god mode is something you
+turn on, and `shared.js` draws a banner on every page while it is.
+
+Two rules that keep it recoverable, both with tests:
+
+- **`require_role()` lets god mode through; `require_admin()` does not.** The
+  god-mode toggle itself uses `require_admin`, so an admin who switches off can
+  always switch back on. Gate that endpoint on god mode and it becomes a
+  one-way door out of your own admin rights.
+- **`/admin` is gated on the role, not on elevation** — for the same reason.
+  Turning god mode off must not hide the page holding the switch.
+- Demoting an admin clears `god_mode` too, or the flag lies dormant and
+  reactivates the moment somebody re-promotes them. The last admin cannot be
+  demoted at all: locking everyone out is unrecoverable from inside the app.
+
+`god_mode` rides in the profile cookie for the banner only. Like `role` and
+`subteam` before it, forging it draws UI and grants nothing — every gate reads
+the database row the middleware already loaded.
+
+### Hiding a control is not a permission
+
+`/api/log` and `/api/log/delete` took a name from the request body and wrote it.
+The attendance page only drew edit buttons on your own row, so it *looked*
+enforced — but any signed-in member could delete anybody's day with one fetch.
+`_require_own_row()` now checks server-side, case-folded and
+whitespace-collapsed (those rows predate accounts and were typed by hand), with
+god mode as the only override.
 
 ## Subteams
 

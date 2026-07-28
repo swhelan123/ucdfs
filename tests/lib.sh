@@ -51,7 +51,6 @@ start_test_container() {
     -e SUPABASE_URL="$SUPABASE_URL" \
     -e SUPABASE_KEY="$SUPABASE_KEY" \
     -e SUPABASE_SERVICE_KEY="$SUPABASE_SERVICE_KEY" \
-    -e COMP_ADMIN_PASSWORD="$COMP_ADMIN_PASSWORD" \
     -e ALLOWED_EMAIL_DOMAINS="$ALLOWED_EMAIL_DOMAINS" \
     -e COOKIE_SECURE=0 \
     "$IMAGE" >/dev/null || {
@@ -117,7 +116,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Page Check,Comp Check,Harness Check,Test Bot'
+TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Test Bot'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time

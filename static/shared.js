@@ -32,6 +32,10 @@
   var cachedUser = null;   // null = not yet read, false = read and absent
   var appletsPromise = null;
   var photosPromise = null;
+  /* What the site calls it. "God mode" is our name for it in the code, the
+     schema and the docs; the team sees something that describes what it does. */
+  var OVERRIDE_NAME = 'Admin override';
+
   var obStarted = false;    // the subteam step is raised at most once per page
   var obCallbacks = [];     // pages that want to hear which one was picked
 
@@ -271,6 +275,76 @@
     return appletsPromise;
   }
 
+  // ── Runtime styles ───────────────────────────────────────────────────────
+
+  /**
+   * Styles for the elements this file injects into pages.
+   *
+   * They cannot live in shared.css. The canvas tools (pt, harness) load
+   * shared.js but deliberately NOT shared.css — they have their own visual
+   * language — so anything appended to document.body from here would render as
+   * raw unstyled markup on exactly the pages nobody would think to check. That
+   * is what happened to the override banner the first time.
+   *
+   * Every colour is var(--token, literal): it picks up the design system on a
+   * card page and still looks right on a canvas tool where those custom
+   * properties were never defined.
+   */
+  var RUNTIME_CSS =
+    '.ucdfs-bar{position:fixed;right:14px;bottom:14px;z-index:2000;' +
+      'display:flex;align-items:center;gap:10px;padding:8px 10px 8px 14px;' +
+      'border-radius:999px;background:var(--ucd-navy,#15386e);color:var(--ucd-gold,#f6ca45);' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.28);' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+      'font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;' +
+      'line-height:1;}' +
+    '.ucdfs-bar-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;' +
+      'background:var(--ucd-gold,#f6ca45);animation:ucdfsPulse 2s ease-in-out infinite;}' +
+    '@keyframes ucdfsPulse{0%,100%{opacity:1}50%{opacity:.25}}' +
+    '.ucdfs-bar-off{border:none;cursor:pointer;font-family:inherit;font-size:.7rem;' +
+      'font-weight:800;letter-spacing:.04em;padding:6px 12px;border-radius:999px;' +
+      'background:var(--ucd-gold,#f6ca45);color:var(--ucd-navy,#15386e);' +
+      'text-transform:uppercase;line-height:1;}' +
+    '.ucdfs-bar-off:disabled{opacity:.6;cursor:default;}' +
+    '@media (max-width:520px){.ucdfs-bar{right:10px;bottom:10px;font-size:.66rem;}}' +
+
+    '.ob-wrap{position:fixed;inset:0;z-index:2001;background:rgba(15,23,42,.55);' +
+      '-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);' +
+      'display:flex;align-items:center;justify-content:center;padding:22px;' +
+      'overflow-y:auto;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}' +
+    '.ob-card{background:var(--card,#fff);color:var(--text,#0f172a);border-radius:24px;' +
+      'padding:30px 26px;box-shadow:0 12px 28px rgba(0,0,0,.25);' +
+      'width:100%;max-width:460px;margin:auto;text-align:left;}' +
+    '.ob-h{font-size:1.3rem;font-weight:800;letter-spacing:-.02em;}' +
+    '.ob-p{color:var(--muted,#64748b);font-size:.85rem;line-height:1.55;margin:7px 0 20px;}' +
+    '.ob-opts{display:grid;gap:10px;margin-bottom:14px;}' +
+    '.ob-opt{display:flex;align-items:center;gap:13px;width:100%;padding:15px 16px;' +
+      'text-align:left;cursor:pointer;background:var(--card,#fff);' +
+      'border:2px solid var(--border,#e2e8f0);border-radius:16px;' +
+      'font-family:inherit;color:var(--text,#0f172a);' +
+      'transition:border-color .13s,transform .13s;}' +
+    '.ob-opt:hover{border-color:var(--ob-accent,#4f46e5);transform:translateY(-2px);}' +
+    '.ob-opt:disabled{opacity:.5;cursor:default;transform:none;}' +
+    '.ob-icon{width:42px;height:42px;border-radius:12px;flex-shrink:0;display:flex;' +
+      'align-items:center;justify-content:center;font-size:1.3rem;' +
+      'background:var(--ob-accent-bg,#eef2ff);}' +
+    '.ob-name{font-weight:700;font-size:.95rem;}' +
+    '.ob-cta{display:block;width:100%;padding:14px;border:none;border-radius:14px;' +
+      'background:var(--dark,#0f172a);color:#fff;font-family:inherit;font-size:.95rem;' +
+      'font-weight:700;text-align:center;text-decoration:none;cursor:pointer;}' +
+    '.ob-later{width:100%;padding:11px;background:none;border:none;font-family:inherit;' +
+      'font-size:.8rem;color:var(--muted,#64748b);cursor:pointer;border-radius:10px;}' +
+    '.ob-later:hover{background:var(--bg,#f1f5f9);color:var(--text,#0f172a);}';
+
+  function ensureRuntimeStyles() {
+    if (document.getElementById('ucdfs-runtime-css')) return;
+    var el = document.createElement('style');
+    el.id = 'ucdfs-runtime-css';
+    el.textContent = RUNTIME_CSS;
+    document.head.appendChild(el);
+  }
+
   // ── First sign-in ────────────────────────────────────────────────────────
 
   var ACCENT_VARS = {
@@ -319,6 +393,7 @@
   }
 
   function raise(subteams) {
+    ensureRuntimeStyles();
     var wrap = document.createElement('div');
     wrap.className = 'ob-wrap';
     wrap.id = 'onboard';
@@ -378,8 +453,10 @@
     wrap.querySelector('#ob-h').textContent = s ? "You're on " + s.name + ' ' + s.icon : 'Nice one';
     wrap.querySelector('#ob-p').textContent =
       'Add a photo and pick three prompts so people know who you are.';
+    /* Its own class, not .btn — the canvas tools have no shared.css to take
+       that from, and this overlay can appear on them. */
     wrap.querySelector('#ob-opts').innerHTML =
-      '<a class="btn btn-dark btn-full" href="/profiles?edit=1">Set up my profile</a>';
+      '<a class="ob-cta" href="/profiles?edit=1">Set up my profile</a>';
     var later = wrap.querySelector('#ob-later');
     later.disabled = false;
     later.textContent = 'Later';
@@ -397,20 +474,21 @@
    * database row, so a forged cookie draws a banner and grants nothing.
    */
   function godBar() {
-    var existing = document.getElementById('god-bar');
+    var existing = document.getElementById('ucdfs-override-bar');
     var u = user();
     if (!u || !u.god_mode) { if (existing) existing.remove(); return; }
     if (existing) return;
 
+    ensureRuntimeStyles();
     var bar = document.createElement('div');
-    bar.className = 'god-bar';
-    bar.id = 'god-bar';
-    bar.innerHTML = '<span class="god-dot"></span><span>God mode</span>' +
-                    '<button class="god-off" id="god-off" type="button">Turn off</button>';
+    bar.className = 'ucdfs-bar';
+    bar.id = 'ucdfs-override-bar';
+    bar.innerHTML = '<span class="ucdfs-bar-dot"></span><span>' + OVERRIDE_NAME + '</span>' +
+                    '<button class="ucdfs-bar-off" id="ucdfs-override-off" type="button">Turn off</button>';
     document.body.appendChild(bar);
 
-    bar.querySelector('#god-off').addEventListener('click', function () {
-      var btn = bar.querySelector('#god-off');
+    bar.querySelector('#ucdfs-override-off').addEventListener('click', function () {
+      var btn = bar.querySelector('#ucdfs-override-off');
       btn.disabled = true;
       btn.textContent = '…';
       fetch('/api/admin/god-mode', {

@@ -160,6 +160,21 @@ admin who is permanently elevated cannot see what the team sees, and every
 accidental click lands on someone else's data — so god mode is something you
 turn on, and `shared.js` draws a banner on every page while it is.
 
+**The site calls it "Admin override".** `god_mode` is the name in the code, the
+schema and these docs; the team sees a phrase that describes what it does. Don't
+rename the column to match the label.
+
+Elevated, you can edit anyone's profile, remove anyone's photo, and write or
+delete anyone's attendance row. Each of those is a **separate endpoint** rather
+than an `id` parameter on the ordinary one — `/api/admin/profile` beside
+`/api/profile`, so the self-service route cannot express "edit someone else" at
+all and every privileged write is one grep away.
+
+Two traps in that shared write path, both with tests: **never rewrite your own
+profile cookie with the target's row** (your browser starts displaying you as
+the person you just edited), and credit the activity-feed line to whose profile
+it is rather than to whoever typed it.
+
 Two rules that keep it recoverable, both with tests:
 
 - **`require_role()` lets god mode through; `require_admin()` does not.** The
@@ -175,6 +190,16 @@ Two rules that keep it recoverable, both with tests:
 `god_mode` rides in the profile cookie for the banner only. Like `role` and
 `subteam` before it, forging it draws UI and grants nothing — every gate reads
 the database row the middleware already loaded.
+
+### shared.js must carry its own CSS
+
+Anything `shared.js` injects into the page — the override banner, the
+first-sign-in overlay — is styled from a `<style id="ucdfs-runtime-css">` block
+inside that file, **not** from `shared.css`. The canvas tools (pt, harness) load
+`shared.js` and deliberately not `shared.css`, so a rule that lives only in the
+stylesheet renders as raw unstyled markup on exactly the two pages nobody thinks
+to check. Colours are written `var(--token, literal)` so they pick up the design
+system on a card page and still look right without it.
 
 ### Hiding a control is not a permission
 

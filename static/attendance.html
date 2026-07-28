@@ -158,6 +158,16 @@
 .pbadge-in  { background: var(--green-bg); color: var(--green); }
 .pbadge-out { background: var(--red-bg);   color: var(--red); }
 
+/* Shown only while an admin with the override on has pointed the form at
+   somebody else. The controls look identical either way, so the form has to
+   say out loud whose day it is about to write. */
+.admin-target {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; margin-bottom: 14px; border-radius: 12px;
+  background: var(--ucd-navy); color: #fff; font-size: 0.8rem;
+}
+.admin-target b { font-weight: 700; }
+
 /* ── Row actions (edit / delete) ── */
 .row-actions { display: flex; gap: 4px; margin-left: 4px; }
 .row-btn {
@@ -251,6 +261,7 @@
       <div class="panel-form">
         <div class="section-label">Log your attendance</div>
         <div class="form-card">
+        <div class="admin-target" id="admin-target" style="display:none"></div>
           <div class="status-toggle">
             <button class="status-btn btn-in active" id="sbtn-in" onclick="setStatus('arriving')">
               <span class="s-icon">✅</span>
@@ -307,6 +318,21 @@
 let selectedDate = '';
 let currentStatus = 'arriving';
 let PHOTOS   = {};   /* name -> photo URL, from UCDFS.photos() */
+/* Set only when an admin with the override on is editing somebody else's row.
+   The form posts a name, so it has to know whose. Null means "me", which is
+   the only thing anyone without the override can ever be. */
+let ADMIN_TARGET = null;
+const canOverride = () => !!(UCDFS.user() || {}).god_mode;
+/* The API takes first + last; rows store the joined name. Split on the first
+   space so re-joining reproduces exactly what is stored. */
+const splitName = n => {
+  const parts = (n || '').trim().split(/\s+/);
+  return { first: parts.shift() || '', last: parts.join(' ') };
+};
+/* Case-folded and whitespace-collapsed: these rows predate accounts and were
+   typed by hand, so "shane whelan" and "Shane  Whelan" are the same person.
+   The server enforces ownership the same way. */
+const fold = n => (n || '').trim().replace(/\s+/g, ' ').toLowerCase();
 let lastRows = null; /* so a late photo load can redraw what is on screen */
 let currentView   = 'list';
 const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -491,11 +517,6 @@ function renderAttendance(rows) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Nothing logged yet</div></div>';
     return;
   }
-  /* Case-folded and whitespace-collapsed: these rows predate accounts and were
-     typed by hand, so "shane whelan" and "Shane  Whelan" are the same person.
-     Comparing them raw silently takes away someone's ability to edit their own
-     history — the server enforces the same rule the same way. */
-  const fold     = n => (n || '').trim().replace(/\s+/g, ' ').toLowerCase();
   const myName   = fold((UCDFS.user() || {}).name);
   const arriving = rows.filter(r => r.status === 'arriving');
   const absent   = rows.filter(r => r.status === 'absent');
@@ -503,6 +524,7 @@ function renderAttendance(rows) {
   arriving.forEach(r => {
     const tl    = timesLabel(r.time, r.departure_time);
     const isMine = fold(r.name) === myName;
+    const mayEdit = isMine || canOverride();
     html += `<div class="person">
       ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-in')}
       <div class="pinfo">
@@ -510,38 +532,67 @@ function renderAttendance(rows) {
         ${tl ? `<div class="ptimes">${tl}</div>` : ''}
       </div>
       <span class="pbadge pbadge-in">In</span>
-      ${isMine ? `<div class="row-actions">
-        <button class="row-btn" title="Edit" onclick="editEntry('arriving','${r.time||''}','${r.departure_time||''}')">✏️</button>
-        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry()">🗑️</button>
+      ${mayEdit ? `<div class="row-actions">
+        <button class="row-btn" title="Edit" onclick="editEntry('arriving','${r.time||''}','${r.departure_time||''}','${esc(r.name)}')">✏️</button>
+        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry('${esc(r.name)}')">🗑️</button>
       </div>` : ''}
     </div>`;
   });
   absent.forEach(r => {
     const isMine = fold(r.name) === myName;
+    const mayEdit = isMine || canOverride();
     html += `<div class="person">
       ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-out')}
       <div class="pinfo"><div class="pname">${esc(r.name)}</div></div>
       <span class="pbadge pbadge-out">Out</span>
-      ${isMine ? `<div class="row-actions">
-        <button class="row-btn" title="Edit" onclick="editEntry('absent','','')">✏️</button>
-        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry()">🗑️</button>
+      ${mayEdit ? `<div class="row-actions">
+        <button class="row-btn" title="Edit" onclick="editEntry('absent','','','${esc(r.name)}')">✏️</button>
+        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry('${esc(r.name)}')">🗑️</button>
       </div>` : ''}
     </div>`;
   });
   el.innerHTML = html;
 }
 
-function editEntry(status, arrival, departure) {
+function editEntry(status, arrival, departure, name) {
+  const me   = UCDFS.user() || {};
+  const mine = !name || fold(name) === fold(me.name);
+  /* Only the override can point the form at somebody else. Without this the
+     form would silently keep logging as you while appearing to edit them. */
+  ADMIN_TARGET = (!mine && canOverride()) ? name : null;
+  renderTargetBar();
+
   setStatus(status);
   document.getElementById('arrival-input').value = arrival;
   document.getElementById('depart-input').value  = departure;
   document.querySelector('.panel-form').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
-async function deleteEntry() {
-  if (!confirm('Remove your entry for this day?')) return;
-  const me = UCDFS.user() || {};
-  const fn = me.first, ln = me.last;
+/* The form normally logs you, so when it isn't going to, it has to say so —
+   the whole row of controls looks identical either way. */
+function renderTargetBar() {
+  const bar = document.getElementById('admin-target');
+  if (!ADMIN_TARGET) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = '';
+  bar.innerHTML = `<span>Logging as <b>${esc(ADMIN_TARGET)}</b></span>
+    <button class="row-btn" title="Back to me" onclick="clearTarget()">✕</button>`;
+}
+
+function clearTarget() {
+  ADMIN_TARGET = null;
+  renderTargetBar();
+  document.getElementById('arrival-input').value = '';
+  document.getElementById('depart-input').value  = '';
+}
+
+async function deleteEntry(name) {
+  const me   = UCDFS.user() || {};
+  const mine = !name || fold(name) === fold(me.name);
+  if (!mine && !canOverride()) return;
+  if (!confirm(mine ? 'Remove your entry for this day?'
+                    : `Remove ${name}'s entry for this day?`)) return;
+  const who = mine ? { first: me.first, last: me.last } : splitName(name);
+  const fn = who.first, ln = who.last;
   try {
     const r = await fetch('/api/log/delete', {
       method:  'POST',
@@ -550,6 +601,7 @@ async function deleteEntry() {
     });
     if (!r.ok) throw new Error();
     showToast('Entry removed');
+    if (!mine) clearTarget();
     loadAttendance();
   } catch(e) {
     showToast('Could not delete entry, try again');
@@ -558,7 +610,10 @@ async function deleteEntry() {
 
 async function submitLog(btn) {
   const me  = UCDFS.user() || {};
-  const fn  = me.first, ln  = me.last;
+  /* ADMIN_TARGET is only ever set by an admin with the override on; the server
+     re-checks that independently and 403s if not. */
+  const who = ADMIN_TARGET ? splitName(ADMIN_TARGET) : { first: me.first, last: me.last };
+  const fn  = who.first, ln  = who.last;
   const arrival   = document.getElementById('arrival-input').value;
   const departure = document.getElementById('depart-input').value;
 
@@ -592,6 +647,9 @@ async function submitLog(btn) {
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     showToast(data.reply || 'Logged!');
+    /* Back to yourself once the admin edit lands, so the next submit doesn't
+       quietly go to the same person again. */
+    if (ADMIN_TARGET) clearTarget();
     loadAttendance();
     ok = true;
   } catch(e) {

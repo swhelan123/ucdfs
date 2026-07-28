@@ -428,11 +428,13 @@ so this stuff can be screenshot-verified rather than guessed at.
 - ~~Move the Supabase keys out of `docker-compose.yml`~~ — `env_file: .env`,
   and `tests/suite-static.sh` asserts no key ever reappears inline.
 
-**God mode** (`migrations/004`, applied). `profiles.role = 'admin'` is the
-capability; `profiles.god_mode` is whether it is switched on. Elevated, you pass
-every gate on the site; switched off you are an ordinary member, which is the
-only way to check what the team actually sees. A banner sits on every page while
-it is on, with a one-click way out. `tests/suite-admin.js` — 38 checks, mostly
+**God mode** (`migrations/004`, applied) — the site calls it **Admin override**;
+"god mode" is the name in the code and schema. `profiles.role = 'admin'` is the
+capability; `profiles.god_mode` is whether it is switched on. Elevated you can
+edit anyone's profile, remove anyone's photo and write or delete anyone's
+attendance row; switched off you are an ordinary member, which is the only way
+to check what the team actually sees. A banner sits on every page while it is
+on, with a one-click way out. `tests/suite-admin.js` — 48 checks, mostly
 negatives.
 
 **While wiring that up: attendance had no server-side ownership check at all.**

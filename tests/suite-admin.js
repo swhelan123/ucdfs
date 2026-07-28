@@ -57,6 +57,21 @@ const today = new Date().toISOString().slice(0, 10);
   const anon = await fetch(BASE + '/api/admin/people', { redirect: 'manual' });
   check('signed out is 401, not 403', anon.status === 401, 'status ' + anon.status);
 
+  // The privileged profile write. The self-service /api/profile has no id
+  // parameter at all, so this is the only route that can name a target — and it
+  // has to refuse anyone unelevated.
+  const meB0 = (await json(await fetch(BASE + '/api/profile/me', { headers: hdrB }))).person;
+  const steal = await post('/api/admin/profile',
+    { id: meB0.id, course: 'INJECTED', tags: ['injected'] });
+  check("a member cannot save someone else's profile", steal.status === 403,
+    'status ' + steal.status);
+  const stealPhoto = await post('/api/profile/photo/remove', { id: meB0.id });
+  check("nor remove someone else's photo", stealPhoto.status === 403,
+    'status ' + stealPhoto.status);
+  const untouched = (await json(await fetch(BASE + '/api/profile/me', { headers: hdrB }))).person;
+  check('and the target is unchanged', untouched.course !== 'INJECTED',
+    JSON.stringify(untouched.course));
+
   console.log('\nattendance ownership is enforced, not just hidden');
   // Probe logs their own day — allowed.
   const own = await post('/api/log', {
@@ -98,10 +113,10 @@ const today = new Date().toISOString().slice(0, 10);
   check('nor does one let you write the roster', roster.status === 403,
     'status ' + roster.status);
 
-  console.log('\nthe god mode banner');
+  console.log('\nthe override banner');
   {
     const { w, d } = await open('/', { setCookies: a.setCookies, failOnPrompt: true });
-    check('a member never sees it', !d.getElementById('god-bar'));
+    check('a member never sees it', !d.getElementById('ucdfs-override-bar'));
     check('and gets no admin card',
       ![...d.querySelectorAll('#applet-grid .applet')].some(c => /Admin/.test(c.textContent)),
       [...d.querySelectorAll('.applet-name')].map(e => e.textContent.trim()).join(' | '));
@@ -118,8 +133,29 @@ const today = new Date().toISOString().slice(0, 10);
         email: 'x@ucdconnect.ie', role: 'admin', god_mode: true,
       })) + '; Path=/']);
     const { w, d } = await open('/', { setCookies: forged, failOnPrompt: true });
-    check('a forged cookie can draw the banner', !!d.getElementById('god-bar'));
+    const bar = d.getElementById('ucdfs-override-bar');
+    check('a forged cookie can draw the banner', !!bar);
+    // It is drawn by shared.js, which the canvas tools load without shared.css.
+    // Anything injected from there has to carry its own styles or it renders as
+    // raw text on exactly the pages nobody thinks to check.
+    check('and the banner carries its own stylesheet',
+      !!d.getElementById('ucdfs-runtime-css') &&
+      /\.ucdfs-bar\{/.test(d.getElementById('ucdfs-runtime-css').textContent || ''),
+      d.getElementById('ucdfs-runtime-css') ? 'injected' : 'missing');
     w.close();
+
+    // The regression this replaced: the banner was styled from shared.css, and
+    // the canvas tools load shared.js WITHOUT shared.css by design. It rendered
+    // as bare text with a default button on /pt and /harness, which is exactly
+    // where nobody thinks to look.
+    const { w: cw, d: cd } = await open('/harness', { setCookies: forged, failOnPrompt: true });
+    check('and it is styled on a canvas tool, which has no shared.css',
+      !!cd.getElementById('ucdfs-override-bar') && !!cd.getElementById('ucdfs-runtime-css') &&
+      cd.querySelectorAll('link[href*="shared.css"]').length === 0,
+      `bar=${!!cd.getElementById('ucdfs-override-bar')} ` +
+      `css=${!!cd.getElementById('ucdfs-runtime-css')} ` +
+      `sharedcss=${cd.querySelectorAll('link[href*="shared.css"]').length}`);
+    cw.close();
 
     const hdrForged = { Cookie: forged.map(c => c.split(';')[0]).join('; ') };
     const r = await fetch(BASE + '/api/admin/people', { headers: hdrForged });
@@ -194,6 +230,27 @@ const today = new Date().toISOString().slice(0, 10);
   check('god mode passes the committee gate',
     (await post('/comp/api/admin/verify', {})).status === 200);
 
+  console.log('\nediting another profile');
+  const victimRow = (people.people || []).find(x => /Victim/.test(x.name)) || {};
+  const edited = await post('/api/admin/profile', {
+    id: victimRow.id, subteam: 'mech', year: '2nd', course: 'Edited By Admin',
+    role_label: 'member', tags: ['welding'], prompts: [],
+  });
+  check("the override can save someone else's profile", edited.status === 200,
+    'status ' + edited.status);
+  const theirs = (await json(await fetch(BASE + '/api/profile/me', { headers: hdrB }))).person;
+  check('and the edit lands on them', theirs.course === 'Edited By Admin',
+    JSON.stringify({ c: theirs.course, y: theirs.year }));
+
+  // The bug this guards: writing the target's row into the *editor's* cookie,
+  // so an admin's own browser starts displaying them as the person they edited.
+  const leaked = (edited.headers.getSetCookie ? edited.headers.getSetCookie() : [])
+    .find(c => c.startsWith('ucdfs_profile='));
+  check('editing someone else does not rewrite your own identity cookie',
+    !leaked, leaked ? 'cookie was rewritten' : 'untouched');
+  const stillMe = (await json(await fetch(BASE + '/api/me', { headers: hdrA }))).profile;
+  check('and you are still yourself afterwards', /Probe/.test(stillMe.name), stillMe.name);
+
   console.log('\nhanding out roles');
   const victim = (people.people || []).find(x => /Victim/.test(x.name)) || {};
   check('an admin can promote someone',
@@ -210,6 +267,10 @@ const today = new Date().toISOString().slice(0, 10);
     (await post('/api/admin/role', { id: victim.id, role: 'superuser' })).status === 400);
 
   console.log('\nswitching off, and back on');
+  // Removing somebody's photo is the moderation case and takes the same path.
+  check('the override can clear someone else\'s photo',
+    (await post('/api/profile/photo/remove', { id: victimRow.id })).status === 200);
+
   const off = await post('/api/admin/god-mode', { on: false });
   check('god mode switches off', off.status === 200, 'status ' + off.status);
   check('an un-elevated admin loses the committee gate',

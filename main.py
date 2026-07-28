@@ -1191,12 +1191,41 @@ async def api_profile_save(request: Request):
 
     There is no id in the body and there never should be: the row written is
     always current_profile(request), so "edit someone else's profile" is not a
-    request this endpoint can express. Keep it that way — an id parameter here
-    would need an authorization check that nothing else in this file needs.
+    request this endpoint can express. Editing another person is a different
+    endpoint — /api/admin/profile — precisely so that the privileged path is
+    somewhere explicit rather than a parameter on the ordinary one.
     """
+    return await _save_profile(request, current_profile(request)["id"])
+
+
+@app.post("/api/admin/profile")
+async def api_admin_profile_save(request: Request):
+    """Save somebody else's profile. Requires the override.
+
+    Deliberately a separate route from the self-service one above: the check
+    lives at the door rather than inside a branch, and every privileged write
+    is one grep away.
+    """
+    b = await request.json()
+    target = (b.get("id") or "").strip()
+    if not target:
+        raise HTTPException(400, "Which person?")
+    if not is_god(request):
+        raise HTTPException(403, "Turn on admin override to edit someone else's profile")
+    if not _get_profile(target):
+        raise HTTPException(404, "No such account.")
+
+    me = current_profile(request)
+    victim = _get_profile(target) or {}
+    log_activity("admin", _public_profile(me).get("name"), "edited the profile of",
+                 ((victim.get("first_name") or "") + " " + (victim.get("last_name") or "")).strip())
+    return await _save_profile(request, target, body=b)
+
+
+async def _save_profile(request: Request, uid: str, body: Optional[dict] = None):
+    """The shared write. `uid` is decided by the caller, never by the payload."""
     me  = current_profile(request)
-    uid = me["id"]
-    b   = await request.json()
+    b   = body if body is not None else await request.json()
 
     subteam = _clean_subteam(b.get("subteam"))
     extra   = [s for s in (_clean_subteam(x) for x in (b.get("subteams_extra") or []))
@@ -1262,18 +1291,25 @@ async def api_profile_save(request: Request):
             # not, so this degrades rather than raising.
             logger.error(f"[profiles] prompt save failed for {uid}: {e}")
 
+    fresh = _get_profile(uid) or {**me, "subteam": subteam}
+    mine  = uid == me.get("id")
+
     # Only the first time. Somebody joining the directory is news; somebody
     # rewording their answer about the 10mm socket is not, and a feed that
-    # reports both is a feed people stop reading.
+    # reports both is a feed people stop reading. Credited to whose profile it
+    # is, not to whoever typed it — an admin filling in a gap on someone's
+    # behalf should not read as that admin joining the directory.
     if was_blank and (details["year"] or details["course"] or details["tags"]):
-        log_activity("profiles", _public_profile(me).get("name"),
+        log_activity("profiles", _public_profile(fresh).get("name"),
                      "filled in their profile")
 
-    fresh = _get_profile(uid) or {**me, "subteam": subteam}
     response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
-    # The subteam in the cookie drives the dashboard filter, so it has to move
-    # when the profile does.
-    _set_profile_cookie(response, fresh)
+    # Only ever rewrite your OWN cookie. Doing this unconditionally would hand
+    # an admin editing someone else that person's name, photo and subteam —
+    # their own browser would quietly start displaying them as the person they
+    # just edited.
+    if mine:
+        _set_profile_cookie(response, fresh)
     return response
 
 
@@ -1425,6 +1461,21 @@ async def api_profile_photo(request: Request):
 async def api_profile_photo_remove(request: Request):
     me  = current_profile(request)
     uid = me["id"]
+
+    # Somebody else's, with the override on — the moderation case. Same shape as
+    # the profile save: an explicit id, checked at the door.
+    try:
+        b = await request.json()
+    except Exception:
+        b = {}
+    target = (b or {}).get("id")
+    if target and target != uid:
+        if not is_god(request):
+            raise HTTPException(403, "Turn on admin override to remove someone else's photo")
+        if not _get_profile(target):
+            raise HTTPException(404, "No such account.")
+        uid = target
+
     details = _get_details(uid)
     ext = details.get("photo_ext") or ""
 
@@ -1443,7 +1494,10 @@ async def api_profile_photo_remove(request: Request):
         raise HTTPException(503, "Couldn't remove that photo.")
 
     response = JSONResponse({"ok": True})
-    _set_profile_cookie(response, _get_profile(uid) or me)
+    # Same rule as the profile save: never rewrite your own cookie with somebody
+    # else's row just because you edited them.
+    if uid == me["id"]:
+        _set_profile_cookie(response, _get_profile(uid) or me)
     return response
 
 

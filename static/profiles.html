@@ -625,28 +625,44 @@ function openViewer(id) {
       </div>`).join('') ||
       `<div class="p-empty" style="margin-bottom:14px">No prompts answered yet.</div>`}
     <a class="view-mail" href="mailto:${UCDFS.esc(p.email)}">${UCDFS.esc(p.email)}</a>
-    ${p.id === ME ? `<div class="sheet-actions">
-        <button class="btn btn-dark btn-full" id="viewer-edit" type="button">Edit</button>
+    ${(p.id === ME || canEditOthers()) ? `<div class="sheet-actions">
+        <button class="btn btn-dark btn-full" id="viewer-edit" type="button">${
+          p.id === ME ? 'Edit' : 'Edit as admin'}</button>
       </div>` : ''}`;
 
   document.getElementById('viewer').style.display = 'flex';
   document.getElementById('viewer-close').addEventListener('click', closeViewer);
   const ed = document.getElementById('viewer-edit');
-  if (ed) ed.addEventListener('click', () => { closeViewer(); openEditor(); });
+  if (ed) ed.addEventListener('click', () => { closeViewer(); openEditor(p.id); });
 }
 
 function closeViewer() { document.getElementById('viewer').style.display = 'none'; }
 
 /* ── Editing your own ── */
-function openEditor() {
-  const mine = PEOPLE.find(p => p.id === ME);
+/* Whose profile the editor is currently pointed at. Yours, unless an admin
+   with the override on opened somebody else's. */
+let EDITING = null;
+
+function canEditOthers() { return !!(UCDFS.user() || {}).god_mode; }
+
+function openEditor(targetId) {
+  EDITING = targetId || ME;
+  const mine = PEOPLE.find(p => p.id === EDITING);
   /* Deep-ish copy so Cancel really cancels — the grid must not change until a
      save actually lands. */
   DRAFT = JSON.parse(JSON.stringify(mine || {
-    id: ME, name: '', subteam: null, subteams_extra: [], tags: [], prompts: [],
+    id: EDITING, name: '', subteam: null, subteams_extra: [], tags: [], prompts: [],
     year: '', course: '', joined_year: null, role_label: '', is_public: false,
     photo: null,
   }));
+  /* Say whose profile this is. Editing someone else without the header saying
+     so is how you end up overwriting your own by accident. */
+  document.querySelector('#sheet .sheet-h').textContent =
+    EDITING === ME ? 'Your profile' : `${(mine || {}).name || 'Profile'} · admin override`;
+  /* Uploading a photo posts to the self-only endpoint, so it can only ever
+     replace your own. Removing someone else's is the moderation case and does
+     have an admin path. */
+  document.getElementById('photo-pick').style.display = EDITING === ME ? '' : 'none';
   fillEditor();
   document.getElementById('sheet').style.display = 'flex';
 }
@@ -973,10 +989,13 @@ function wireCropper() {
 async function removePhoto() {
   const hint = document.getElementById('photo-hint');
   try {
-    const r = await fetch('/api/profile/photo/remove', { method: 'POST' });
-    if (!r.ok) throw new Error('Could not remove it');
+    const r = await fetch('/api/profile/photo/remove', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: EDITING || ME }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Could not remove it');
     DRAFT.photo = null;
-    const mine = PEOPLE.find(p => p.id === ME);
+    const mine = PEOPLE.find(p => p.id === (EDITING || ME));
     if (mine) { mine.photo = null; render(); }
     UCDFS.refreshUser();
     UCDFS.renderPill();
@@ -1012,20 +1031,28 @@ async function save() {
     prompts:        (DRAFT.prompts || []).filter(p => p.key && (p.answer || '').trim()),
   };
 
+  /* Two endpoints, not one with an id parameter: the self-service route cannot
+     express "edit someone else" at all, and the privileged one checks at the
+     door. */
+  const editingSelf = (EDITING || ME) === ME;
+  if (!editingSelf) body.id = EDITING;
+
   try {
-    const r = await fetch('/api/profile', {
+    const r = await fetch(editingSelf ? '/api/profile' : '/api/admin/profile', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || 'Save failed');
 
-    /* The server rewrote the profile cookie (subteam lives there), so the
-       cached copy in shared.js is now stale. */
+    /* The server rewrites the profile cookie only when you edited yourself, so
+       this is a no-op otherwise — but it must still run for the self case,
+       because subteam lives in that cookie. */
     UCDFS.refreshUser();
     await load();
     closeEditor();
-    UCDFS.toast('Profile saved');
+    UCDFS.toast(editingSelf ? 'Profile saved'
+      : `Saved ${(PEOPLE.find(p => p.id === EDITING) || {}).name || 'that profile'}`);
   } catch (e) {
     UCDFS.toast(e.message || "Couldn't save that");
   } finally {
@@ -1052,7 +1079,7 @@ async function load() {
 async function boot(user) {
   UCDFS.renderPill();
 
-  document.getElementById('edit-btn').addEventListener('click', openEditor);
+  document.getElementById('edit-btn').addEventListener('click', () => openEditor(ME));
   document.getElementById('sheet-close').addEventListener('click', closeEditor);
   document.getElementById('sheet-cancel').addEventListener('click', closeEditor);
   document.getElementById('sheet-save').addEventListener('click', save);

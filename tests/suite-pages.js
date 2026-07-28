@@ -59,6 +59,19 @@ const PAGES = [
     check('live tiles populated', stats.length >= 3 && stats.some(s => /%/.test(s)), stats.join(' | '));
     check('headline resolved', !/Loading/.test(d.getElementById('headline').textContent),
       d.getElementById('headline').textContent.replace(/\s+/g, ' ').trim());
+
+    // The dashboard is hidden until boot() has drawn it once, so it is never
+    // seen half-built. The failure mode that buys is a page that never appears
+    // at all — if reveal() stops being called, or is renamed, or an early
+    // return skips it, every check above still passes against a DOM nobody can
+    // see. This is the one that would notice.
+    check('the page is revealed once drawn', d.body.classList.contains('ready'),
+      `body class="${d.body.className}"`);
+    // No tile may still be showing its placeholder by the time it is visible —
+    // the "…" in every card was half of what the flash actually looked like.
+    check('no tile is still pending when revealed',
+      d.querySelectorAll('.applet-stat.loading').length === 0,
+      `${d.querySelectorAll('.applet-stat.loading').length} pending`);
     check('external applet opens in a new tab',
       [...cards].some(c => (c.getAttribute('href') || '').startsWith('http') &&
                             c.getAttribute('target') === '_blank'));

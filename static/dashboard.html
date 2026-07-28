@@ -13,6 +13,19 @@
 /* Dashboard-only styles. Everything else comes from shared.css. */
 :root { --page-max: 980px; }
 
+/* ── Held back until it is finished ──
+   This page is assembled from three requests, and it used to show its work:
+   the tools grid appeared first, then the headline and the feed a beat later,
+   with a "…" in every tile in between. Hidden until boot() has drawn it once,
+   then faded in as a whole — see reveal() in the script.
+
+   Deliberately here and not in shared.css. .page is every card page, and the
+   others do not fetch the same way; hiding all of them from one rule would
+   mean a page that never calls reveal() never appears at all. */
+.page { opacity: 0; transition: opacity .16s ease-out; }
+body.ready .page { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .page { transition: none; } }
+
 /* ── Greeting ── */
 .greeting { margin-bottom: 26px; }
 .greet-hi   { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; }
@@ -167,6 +180,10 @@
 
 
 </style>
+
+<!-- Without scripting nothing will ever add .ready, and the rule above would
+     hide the page for good. The markup underneath is static and readable. -->
+<noscript><style>.page { opacity: 1; }</style></noscript>
 </head>
 <body>
 
@@ -486,7 +503,33 @@ function renderHeadline() {
     </div>`;
 }
 
+/* ── Showing the page ──────────────────────────────────────────────────────
+   The dashboard stays hidden until it has been drawn once, so nobody watches
+   it build itself. See the .page rule in the style block.
+
+   reveal() is idempotent and called from two places, because the only thing
+   worse than a page that flickers is a page that never arrives. boot() calls
+   it in a finally, so a thrown error still shows whatever was drawn; the
+   timeout covers the case where boot never returns at all — fetch has no
+   timeout of its own, so a request that never settles would otherwise leave a
+   permanently blank page. Failures degrade, they do not blank. */
+let revealed = false;
+function reveal() {
+  if (revealed) return;
+  revealed = true;
+  document.body.classList.add('ready');
+}
+setTimeout(reveal, 2500);
+
 async function boot(user) {
+  try {
+    await draw(user);
+  } finally {
+    reveal();
+  }
+}
+
+async function draw(user) {
   UCDFS.renderPill();
   renderGreeting(user);
 
@@ -496,30 +539,38 @@ async function boot(user) {
   try { saved = localStorage.getItem(FILTER_KEY); } catch (e) { /* private mode */ }
   FILTER = saved || user.subteam || 'all';
 
-  const [applets, subteams] = await Promise.all([
-    UCDFS.applets(),
+  /* Three requests at once, not two then a third.
+     /api/dashboard used to be awaited only after the other two had already
+     painted the grid, so the page assembled itself in front of you: tools
+     first, then the headline and feed a beat later, with a "…" in every tile
+     in between. Nothing in /api/dashboard depends on the other two, so there
+     was never a reason for it to wait its turn — this is one round trip now
+     rather than two, so it is also simply faster.
+
+     Each request swallows its own failure. A dashboard that cannot reach the
+     feed should still draw its tools, which is the same rule /api/dashboard
+     already follows server-side when one table is unhappy. */
+  const [applets, subteams, data] = await Promise.all([
+    UCDFS.applets().catch(() => []),
     fetch('/api/subteams').then(r => r.json()).then(j => j.subteams || []).catch(() => []),
+    fetch('/api/dashboard').then(r => r.json()).catch(() => ({})),
   ]);
   APPLETS  = applets;
   SUBTEAMS = subteams;
+  TILES    = data.tiles || {};
   /* A subteam that no longer exists must not leave the grid filtered to
      nothing — fall back to All. */
   if (FILTER !== 'all' && !SUBTEAMS.some(s => s.id === FILTER)) FILTER = 'all';
-  render();
 
-  let data = {};
-  try {
-    const r = await fetch('/api/dashboard');
-    data  = await r.json();
-    TILES = data.tiles || {};
-  } catch (e) {
-    TILES = {};
-  }
+  /* One paint. Everything below reads state that is already in hand, so the
+     tiles are drawn with their numbers the first time rather than filled in
+     afterwards. */
   render();
   renderHeadline();
   renderCountdown(data.countdown);
   renderNow(TILES.attendance);
   renderFeed(data.activity);
+  reveal();
 
   /* The subteam step lives in shared.js now, so it fires wherever someone
      lands — a bookmarked /harness, not just here. This page cares because

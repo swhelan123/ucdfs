@@ -396,6 +396,20 @@ team's profile photos vanish from a site that otherwise looks fine.
 
 Each tier gets its own uploads directory. Staging must never hold real faces.
 
+**Schema parity is not the whole story — the auth settings have to match too.**
+A new Supabase project defaults to `mailer_autoconfirm: false`, so every signup
+sends a confirmation email and the second one in an hour fails with *"email rate
+limit exceeded"*. Production has it `true`. Nothing in the schema says so, the
+app cannot see it, and it presents as the test suite crashing on `signUp` rather
+than as a configuration difference. Check it with:
+
+```bash
+curl -s -H "apikey: $ANON_KEY" "$SUPABASE_URL/auth/v1/settings" | jq .mailer_autoconfirm
+```
+
+Both projects must say `true`. It is toggled at Authentication → Sign In /
+Providers → Email → **Confirm email off**, and there is no API for it.
+
 ## Migrations
 
 `migrations/000_baseline.sql` is the whole schema as production had it on

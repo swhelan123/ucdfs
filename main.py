@@ -20,7 +20,11 @@ from supabase import create_client, Client
 # ── Config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_KEY"]
-COMP_ADMIN_PW = os.environ.get("COMP_ADMIN_PASSWORD", "ucdfs2026")
+# No default: a real password must never be a source-code fallback, or it ends
+# up in version control and in every clone. Unset means the shared-password
+# route is simply closed, and committee/admin roles are the only way in — which
+# is where we want to end up anyway (see TODO.md).
+COMP_ADMIN_PW = os.environ.get("COMP_ADMIN_PASSWORD") or None
 
 # The service_role key bypasses RLS. Once migrations/001_auth_and_rls.sql PART 2
 # has run, this is the ONLY key that can reach the data — the anon key is exactly
@@ -1045,6 +1049,10 @@ def _is_comp_admin(request: Request, password: Optional[str]) -> bool:
     profile = getattr(request.state, "profile", None) or {}
     if profile.get("role") in ("committee", "admin"):
         return True
+    # Fail closed when no shared password is configured, rather than letting an
+    # empty submission match an empty setting.
+    if not COMP_ADMIN_PW:
+        return False
     return password == COMP_ADMIN_PW
 
 

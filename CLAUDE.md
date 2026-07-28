@@ -370,12 +370,18 @@ Two Supabase projects, three app tiers. **Which env file a tier loads is the
 only thing that decides which database it talks to**, so that one line is the
 most consequential in the repo.
 
-| tier | port | database | env file | built from |
-|---|---|---|---|---|
-| prod | 3978 | `fs-attendance` | `.env` | a tagged image, manual approval |
-| stage | 3981 | `ucdfs-nonprod` | `.env.nonprod` | a tagged image, on merge to main |
-| dev | 3980 | `ucdfs-nonprod` | `.env.nonprod` | your working tree |
-| tests | 3979 | `ucdfs-nonprod` | `.env.nonprod` | the working tree, throwaway |
+| tier | url | port | database | env file | built from |
+|---|---|---|---|---|---|
+| prod | ucdfs.shane-whelan.ie | 3978 | `fs-attendance` | `.env` | a tagged image, manual approval |
+| stage | stage.shane-whelan.ie | 3981 | `ucdfs-nonprod` | `.env.nonprod` | a tagged image, on merge to main |
+| dev | dev.shane-whelan.ie | 3980 | `ucdfs-nonprod` | `.env.nonprod` | your working tree |
+| tests | — | 3979 | `ucdfs-nonprod` | `.env.nonprod` | the working tree, throwaway |
+
+All three go through nginx-proxy-manager, which targets a host and port rather
+than a container name — so renaming a container is safe, and **nothing in this
+repo should ever contain a LAN address**. `suite-static` fails on any RFC 1918
+address in a tracked file: every tier has a real hostname, and this repo may be
+made public.
 
 Dev and stage share a database because the free tier allows two active projects
 and production needs one of them. The difference that matters is that **stage

@@ -1,0 +1,335 @@
+# UCDFS webapp — what to build next
+
+Written 2026-07-28, a week after FSUK 2026. Target for most of this is the
+**start of the 2026/27 season in September**.
+
+---
+
+## The rule for what belongs here
+
+We already have Teams (chat + all our files on SharePoint) and Outlook. This app
+should not compete with any of that. The dividing line that has held up so far:
+
+> **Teams holds conversation and files. This app holds _state_ — anything with a
+> status, an owner, a dependency, or a deadline.**
+
+Teams is bad at structured data and has no concept of "this task is blocked by
+that one" or "47% done". That is the entire gap this app fills. Every applet
+below is on the state side of that line. Anything that is really a document
+belongs in Teams, linked from here.
+
+## The lesson from the Notion tracker
+
+The Notion tasks/epics build died in **March** — peak manufacturing crunch, the
+month it should have been most useful. That timing is the whole diagnosis: it
+wasn't a discipline problem, it was that the tool was never load-bearing. When
+people got busy they routed around it, and nothing broke, so it stayed routed
+around.
+
+Meanwhile the **PT Manufacturing Plan is at 89% with a full audit log** and is
+still being ticked off. Same team, same year, opposite outcome. The differences:
+
+| Notion tasks DB | PT plan |
+|---|---|
+| generic — could hold anything | shaped like one real job |
+| a list you must read | a picture you can see |
+| creating a task = filling a form | ticking a node = one click |
+| no shared view of "where are we" | the whole build at a glance |
+| told you nothing was blocked | dependency arrows show it |
+
+**So: do not rebuild Jira.** The pattern that works here is already in the repo.
+Generalise it (see "Build Plans") rather than starting a generic task tracker
+that will die next March for the same reasons.
+
+---
+
+## Near-term: cheap dashboard wins
+
+Small things, mostly reusing data we already store. Worth doing before any new
+applet because they make the homepage worth opening daily.
+
+### 1. Days to competition — *tiny*
+A countdown on the dashboard. FSUK is a fixed date; a number that goes down is
+free motivation and instantly orients anyone opening the page. Put the season
+milestones behind it (design freeze, manufacturing deadline, first test day).
+
+### 2. Activity feed — *small*
+`pt_done_log` already stores `node_id`, `user_name`, `created_at`. That's a feed
+with no new schema: *"Shane ticked off Mount cooling fan · 2h ago"*. Extend the
+same append-only log pattern to other applets and the dashboard gets a live
+pulse of the whole team's work.
+
+Worth generalising into one `activity_log` table (`applet`, `actor`, `verb`,
+`subject`, `created_at`) that every applet writes to.
+
+### 3. Who's in the workshop right now — *small*
+`attendance` already has arrival and departure times. The dashboard says
+"nobody logged in yet"; it could say *"4 people in now — Shane, Aoife, +2, until
+17:00"*. Makes the attendance log useful rather than just a record.
+
+### 4. Your own stuff — *small*
+"3 tasks assigned to you", "you owe Aoife £14.20". Personalises the homepage,
+which is the single biggest driver of repeat visits.
+
+---
+
+## Tier 1 — build these first
+
+### Team Profiles  🧑‍🔧
+*The idea from the chat, and I think it's the right one to do first.*
+
+Not because it's the most useful — because it's the only one with a **social**
+reason to open the site. Adoption is the thing that killed the last attempt, and
+a tool nobody opens in October is a tool nobody trusts in March. Ship this in
+**September during recruitment** when 30 new people need to learn who everyone
+is, and the platform gets a captive audience on day one.
+
+The Hinge-style prompts are a genuinely good instinct. Free-text "write a bio"
+fields produce empty profiles; picking from a list produces filled ones because
+choosing is easier than composing.
+
+**Fixed fields** (auto-fill name + email from their account):
+- Photo
+- Year (1st–5th / MSc / PhD) and course
+- **Subteam** — Powertrain / Mechanical / Operations (see next section)
+- Role (member / lead / committee)
+- Joined (year)
+
+**Chosen prompts** — pick any 3 from a list of ~15:
+- Why I joined UCDFS
+- Favourite team memory
+- The part I'm proudest of
+- My worst workshop moment
+- What I'd tell a first-year
+- The tool I can't work without
+- Dream job after this
+- Most useless skill I have
+- What I'm working on this season
+- Song that gets me through a build night
+
+**The bit that makes it matter in November, not just September:** add
+**skills/subsystem tags** and make the grid filterable. Then it stops being a
+fun page and becomes *"who do I ask about CAN bus?"* — a directory. That's what
+gives it a reason to exist after the novelty wears off.
+
+Notes:
+- Photos need **Supabase Storage** — first time we'd use it. Bucket with the
+  service key, same as the DB. Resize on upload; a 4 MB phone photo per person
+  adds up fast.
+- Privacy: members-only by default, with a per-profile "show on public page"
+  toggle. That gives us a **recruitment / sponsor page** for free — a real
+  external win, and a reason for the business side to care.
+- I'd skip **age**. Year + course already says it, and some people won't want it
+  on a page sponsors might see. Easy to add later if people ask.
+
+**New tables:** `profile_details` (extends `profiles`), `profile_prompts`.
+
+---
+
+### Subteams — self-assignment + applet filtering  🏷️
+People pick **Powertrain**, **Mechanical** or **Operations**, applets get tagged
+with the same three, and the dashboard filters to what's relevant to you.
+
+Worth doing early because it's cross-cutting: it feeds Team Profiles, the applet
+registry, the dashboard, Build Plans and Teams notification routing. Cheap now,
+annoying to retrofit once there are ten applets.
+
+**Where to ask.** Not on the signup form. That screen has one job and every extra
+field costs completions — and during September recruitment half of them genuinely
+don't know their subteam yet. Instead:
+
+- A **one-time onboarding step on first sign-in**: three big cards, *"Which
+  subteam are you on?"*, plus a **Not sure yet** option that doesn't block them.
+- Editable afterwards from their profile, because people move around.
+
+That also merges cleanly with the Team Profiles "finish your profile" flow —
+one onboarding sequence, not two.
+
+**Let people be on more than one.** Powertrain people do mechanical work all the
+time. Store a **primary** subteam (drives defaults and filtering) plus optional
+extras:
+
+```sql
+alter table profiles add column subteam       text,          -- 'pt' | 'mech' | 'ops' | null
+                     add column subteams_extra text[] default '{}';
+```
+
+**Applet tagging** — one more field in the `APPLETS` registry, so it stays the
+single source of truth:
+
+```python
+{"id": "pt", "name": "PT Manufacturing Plan", ...,
+ "subteams": ["pt"]},          # omit or ["all"] = everyone
+```
+
+Current applets would map:
+
+| applet | subteam |
+|---|---|
+| Attendance | all |
+| Team Profiles | all |
+| PT Manufacturing Plan | pt |
+| Wiring Harness Mapper | pt |
+| Mech Manufacturing Plan | mech |
+| Competition Hub | ops |
+
+**Filter, never hide.** Filter chips along the top of the dashboard —
+*All · Powertrain · Mechanical · Operations* — defaulting to your subteam, with
+`all`-tagged applets always shown. Nothing ever becomes unreachable; a filter
+that hides something someone needs is worse than no filter at all. Remember the
+last choice per device.
+
+**Tags are not permissions.** Worth keeping these separate in our heads:
+
+- `subteams` — *relevance*. Soft, user-facing, changeable, purely presentational.
+- `requires_role` — *permission*. Hard, server-enforced, not a display concern.
+
+An Operations member must still be able to open the PT plan; it just shouldn't be
+the first thing they see. If we ever conflate the two we'll end up locking people
+out of things they need at 2am before a deadline.
+
+**Downstream wins once subteam exists:**
+- Build Plans open your subteam's plan by default
+- Teams notifications route to the right channel instead of spamming everyone
+- Profiles filter by subteam — *"who's on Powertrain?"*
+- Dashboard headline can prioritise your subteam's blockers
+
+---
+
+### Build Plans  🔧  *(generalise the PT plan)*
+The replacement for the Notion tracker, built from the thing that already works.
+
+Today `pt_nodes` / `pt_edges` / `pt_done` are hardcoded to one plan. Add a
+`plan_id` column and the exact same canvas serves **Powertrain, Chassis, Aero,
+Electronics, Business** — five plans, one proven UI, no new interaction model to
+teach anyone.
+
+This also kills the odd one out: the Mech Manufacturing Plan is currently an
+external Canva link in the registry. It's a build plan that wants to be a build
+plan.
+
+Add per node:
+- **Assignee** (from `profiles` — we have accounts now)
+- **Due date**, so the countdown can flag what's late
+- **Blocked** flag distinct from not-started — "waiting on a part" is the single
+  most common real state and neither Notion nor the current plan can express it
+
+Then the dashboard can say *"Chassis is 12% behind, 3 tasks blocked on parts"*,
+which is the sentence a team lead actually wants.
+
+**Migration:** `alter table pt_nodes add column plan_id text default 'pt'` and
+the same for the related tables. Existing data keeps working untouched.
+
+---
+
+### Teams notifications  🔔
+*Highest value per line of code on this list.*
+
+Everything above assumes people visit the site. They won't, reliably — but they
+are in Teams all day. An **Incoming Webhook** (or Power Automate) per channel and
+the app can push:
+
+- "🛒 Shop run closes in 1 hour — 3 requests pending"
+- "🔴 Chassis task blocked: waiting on M6 bolts"
+- "📋 Nobody has logged attendance for tomorrow"
+- "✅ Aoife finished the accumulator container"
+- Weekly Monday digest: what moved, what's late, who's in this week
+
+This inverts the adoption problem. Instead of asking people to come to the app,
+the app goes to where they already are, and every message is a deep link back.
+It's one webhook URL in an env var and a small `notify()` helper.
+
+---
+
+## Tier 2 — once Tier 1 has stuck
+
+### Inventory & Orders  📦
+Extend the comp-hub shop-run idea to the whole year. Every FS team loses parts
+and re-buys things it already owns.
+
+- Request → approved → ordered → arrived → in stock
+- Where it physically lives (shelf/bin)
+- Link to the supplier order + tracking
+- Low-stock flags for consumables
+
+`comp_requests` is already 80% of the request half of this — generalise rather
+than start fresh.
+
+### Budget  💷
+Per-subsystem season budget vs spend-to-date. The treasurer needs it, and the
+**FS Cost Event** requires the data anyway, so it's not overhead — it's a
+deliverable we currently assemble by hand at the end.
+
+`comp_expenses` already does splitting and GBP→EUR. Same shape.
+
+### Scrutineering checklist  ✅
+Very FS-specific and very deadline-driven. Teams fail at scrutineering, not at
+design. A checklist built from the FSUK rules (we already keep
+`fsuk-2026-rules-v1.pdf` in `circuits/`), tracking for each requirement:
+
+- rule reference
+- status: not started / in progress / evidence attached / signed off
+- evidence link (photo, test result, Teams doc)
+- who signed it off
+
+EV items especially — TSAL, BSPD, IMD, shutdown circuit, precharge, accumulator
+— which map directly onto the `circuits/` KiCad projects already in the repo.
+Turning "we think we comply" into "here is the evidence" is worth real points.
+
+---
+
+## Tier 3 — good ideas, no rush
+
+- **Design decision log** — what we chose, what we rejected, why. Judges ask
+  "why" at Design Event and we currently reconstruct it from memory in June.
+  Lightweight: title, options, decision, rationale, date, who.
+- **Testing log** — test sessions, what ran, faults found, links to attendance
+  (who was there) and build plans (what it unblocks).
+- **Onboarding trail** — a "start here" for September: safety induction, tools
+  training, who's who, first task. Pairs naturally with Team Profiles.
+- **Sponsor tracker** — contacted / in talks / signed, tier, deliverables owed
+  (logo placement, social posts). Gives the business side a tool of their own.
+- **Car status board** — one page aggregating subsystem readiness. "Is the car
+  drivable this weekend?" answered without asking five people.
+
+---
+
+## Finish before starting
+
+**The Wiring Harness Mapper is incomplete.** Worth saying plainly: a platform
+with one half-finished tool on it teaches people the tools here are unreliable,
+and that reputation is what makes the *next* launch fail. Finishing harness is
+worth more than starting two new applets.
+
+Also outstanding from the auth work:
+- Assign `committee` / `admin` roles to the rest of the committee, then drop
+  `COMP_ADMIN_PASSWORD` entirely (it's still accepted as a fallback).
+- Add `requires_role` to registry entries so applets can be gated in one place.
+- Move the Supabase keys out of `docker-compose.yml` into a gitignored `.env`.
+
+---
+
+## Explicitly not building
+
+- **Chat** — Teams.
+- **File storage / wiki** — Teams and SharePoint. Link into them, don't mirror
+  them. Mirrored files go stale and then actively mislead.
+- **Calendar** — Outlook. A read-only "next 3 events" strip on the dashboard is
+  fine; owning the calendar is not.
+- **A generic task tracker** — see the Notion post-mortem above. Domain-shaped
+  build plans instead.
+
+---
+
+## Suggested order
+
+1. Dashboard wins — countdown, activity feed, who's in now  *(days)*
+2. **Subteams** — profile field + registry tags + dashboard filter. Do it before
+   Profiles so the onboarding flow is built once  *(days)*
+3. **Team Profiles** — ship for September recruitment  *(1–2 weeks)*
+4. **Teams notifications** — make everything else visible  *(days)*
+5. Finish the Wiring Harness Mapper
+6. **Build Plans** — generalise PT, land it before the design phase ends so it's
+   in place *before* the March crunch that killed the last one
+7. Inventory & Orders, then Budget
+8. Scrutineering checklist — start it by January, not May

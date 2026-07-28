@@ -1,0 +1,2821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harness Mapper</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#f6f8fd;
+  --ink:#1d2b45;
+  --muted:#7585a3;
+  --line:#aebbd6;
+  --accent:#4a7de0;
+  --accent2:#8a64d6;
+  --ok:#2fab6e;
+  --warn:#ff9f1c;
+  --danger:#ef6351;
+  --card-border:#e2e8f5;
+  --pin:#eef2fb;
+  --pin-edge:#cdd7ea;
+}
+html,body{height:100%;}
+body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,sans-serif;overflow:hidden;color:var(--ink);}
+#scroll{width:100vw;height:100vh;overflow:auto;padding-top:52px;cursor:grab;}
+#scroll.panning{cursor:grabbing;}
+#scroll::-webkit-scrollbar{width:10px;height:10px;}
+#scroll::-webkit-scrollbar-track{background:var(--bg);}
+#scroll::-webkit-scrollbar-thumb{background:#c8d3e8;border-radius:5px;}
+#scroll::-webkit-scrollbar-thumb:hover{background:#aebbd6;}
+#zoomwrap{position:relative;}
+#canvas{position:relative;transform-origin:0 0;}
+#canvas::before{
+  content:'';position:absolute;inset:0;
+  background-image:radial-gradient(#d4ddef 1.2px, transparent 1.2px);
+  background-size:26px 26px;pointer-events:none;z-index:0;
+}
+#svg-layer{position:absolute;top:0;left:0;pointer-events:none;z-index:6;}  /* wires above connectors so routing is always visible */
+
+/* ── Connector cards ───────────────────────────────────────────── */
+.conn{
+  position:absolute;z-index:2;background:#fff;border:1.5px solid var(--card-border);
+  border-radius:14px;box-shadow:0 3px 10px rgba(29,43,69,.10),0 1px 3px rgba(29,43,69,.07);
+  user-select:none;transition:box-shadow .14s;
+}
+.conn:hover{box-shadow:0 8px 22px rgba(29,43,69,.18);z-index:20;}
+.conn.sel{box-shadow:0 0 0 2.5px rgba(74,125,224,.45),0 10px 26px rgba(29,43,69,.2);z-index:25;}
+.conn.dim{opacity:.32;filter:saturate(.5);}
+.conn-hdr{
+  display:flex;align-items:center;gap:7px;height:38px;padding:0 12px;cursor:grab;
+  border-top-left-radius:13px;border-top-right-radius:13px;color:#fff;font-weight:700;
+  border-bottom:1px solid rgba(255,255,255,.25);position:relative;
+}
+.conn-hdr:active{cursor:grabbing;}
+.conn-hdr .cname{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;}
+.conn-hdr .ctag{
+  font-size:9px;font-weight:800;letter-spacing:.4px;background:rgba(255,255,255,.28);
+  border-radius:6px;padding:2px 6px;white-space:nowrap;
+}
+.conn-hdr .gtag{
+  font-size:9px;font-weight:800;width:17px;height:17px;border-radius:50%;
+  background:rgba(255,255,255,.32);display:flex;align-items:center;justify-content:center;
+}
+.conn-sub{
+  font-size:9.5px;color:var(--muted);font-weight:600;text-align:center;
+  padding:3px 0 0;letter-spacing:.3px;
+}
+.pin-grid{position:relative;}
+.pin{
+  position:absolute;width:30px;height:30px;border-radius:8px;background:var(--pin);
+  border:2px solid var(--pin-edge);display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;font-weight:800;color:var(--muted);cursor:crosshair;
+  transition:transform .1s,border-color .12s,box-shadow .12s;
+}
+.pin:hover{transform:scale(1.12);border-color:var(--accent);box-shadow:0 2px 8px rgba(74,125,224,.3);z-index:5;}
+.pin.wired{color:#fff;border-color:#fff;}
+.pin.key::after{
+  content:'';position:absolute;top:-3px;left:50%;transform:translateX(-50%);
+  border-left:4px solid transparent;border-right:4px solid transparent;
+  border-bottom:5px solid var(--warn);
+}
+.pin.pin-hl{box-shadow:0 0 0 3px rgba(74,125,224,.45);transform:scale(1.15);z-index:6;}
+
+/* ── Header ────────────────────────────────────────────────────── */
+#hdr{
+  position:fixed;top:0;left:0;right:0;height:52px;
+  background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+  border-bottom:1.5px solid var(--card-border);
+  display:flex;align-items:center;gap:10px;padding:0 16px;z-index:300;
+}
+#hdr .ttl{font-weight:800;font-size:14px;letter-spacing:.2px;white-space:nowrap;}
+#hdr .ttl span{color:var(--accent);}
+#hdr .sub{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#hdr .spacer{flex:1;}
+#savestat{font-size:10.5px;color:var(--muted);font-weight:600;white-space:nowrap;min-width:46px;}
+.tbtn{
+  height:30px;padding:0 12px;border:1.5px solid var(--card-border);border-radius:9px;
+  background:#fff;color:var(--ink);font-size:12px;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;gap:6px;white-space:nowrap;
+  transition:background .12s,border-color .12s,transform .1s;
+}
+.tbtn:hover{background:#eef2fb;border-color:#c4d0e8;}
+.tbtn:active{transform:scale(.97);}
+.tbtn.primary{background:var(--accent);color:#fff;border-color:transparent;box-shadow:0 2px 6px rgba(74,125,224,.35);}
+.tbtn.primary:hover{background:#3f6fce;}
+.tbtn.on{background:#eef2fb;border-color:var(--accent);color:var(--accent);}
+.zbtn{
+  width:30px;height:30px;border:1.5px solid var(--card-border);border-radius:9px;
+  background:#fff;color:var(--ink);font-size:15px;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:background .12s,border-color .12s;
+}
+.zbtn:hover{background:#eef2fb;border-color:#c4d0e8;}
+#zlevel{font-size:11px;color:var(--muted);min-width:38px;text-align:center;font-weight:600;}
+.unitsel{height:30px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;
+  font-size:11px;font-weight:700;color:var(--ink);padding:0 6px;font-family:inherit;cursor:pointer;}
+
+/* export menu */
+.menu-wrap{position:relative;}
+.menu{
+  position:absolute;top:36px;right:0;background:#fff;border:1.5px solid var(--card-border);
+  border-radius:11px;box-shadow:0 12px 30px rgba(29,43,69,.22);padding:6px;min-width:180px;display:none;z-index:350;
+}
+.menu.show{display:block;}
+.menu button{
+  width:100%;text-align:left;background:none;border:none;padding:9px 11px;border-radius:8px;
+  font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;font-family:inherit;
+  display:flex;align-items:center;gap:9px;
+}
+.menu button:hover{background:#eef2fb;}
+.menu .sep{height:1px;background:var(--card-border);margin:5px 4px;}
+
+/* ── Legend ────────────────────────────────────────────────────── */
+#legend{
+  position:fixed;bottom:16px;right:16px;
+  background:rgba(255,255,255,.96);border:1.5px solid var(--card-border);
+  border-radius:14px;padding:12px 15px;z-index:200;min-width:198px;
+  box-shadow:0 6px 24px rgba(29,43,69,.12);
+}
+#legend h4{font-size:10.5px;font-weight:800;margin-bottom:9px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);}
+.lr{display:flex;align-items:center;gap:9px;color:var(--ink);font-size:11px;margin:5px 0;font-weight:600;}
+.lr .lk{width:34px;flex-shrink:0;display:flex;align-items:center;}
+.lr .lk svg{display:block;}
+#legend .stat{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-weight:600;margin:3px 0;}
+#legend .stat b{color:var(--ink);}
+#legend .hint{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.5;border-top:1px solid var(--card-border);padding-top:8px;}
+
+/* ── Slide panels ──────────────────────────────────────────────── */
+.panel{
+  position:fixed;top:52px;right:0;bottom:0;width:340px;background:#fff;z-index:280;
+  border-left:1.5px solid var(--card-border);box-shadow:-8px 0 28px rgba(29,43,69,.10);
+  transform:translateX(100%);transition:transform .22s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;
+}
+.panel.show{transform:translateX(0);}
+.panel-hdr{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1.5px solid var(--card-border);}
+.panel-hdr h3{font-size:14px;font-weight:800;flex:1;}
+.panel-hdr .x{cursor:pointer;color:var(--muted);font-size:18px;line-height:1;background:none;border:none;}
+.panel-hdr .x:hover{color:var(--ink);}
+.panel-body{flex:1;overflow-y:auto;padding:14px 16px;}
+.panel-body::-webkit-scrollbar{width:8px;}
+.panel-body::-webkit-scrollbar-thumb{background:#c8d3e8;border-radius:4px;}
+
+/* colour code rules */
+.cc-intro{font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:12px;}
+.cc-auto{display:flex;align-items:center;gap:10px;background:#eef2fb;border-radius:11px;padding:10px 12px;margin-bottom:14px;}
+.cc-auto .lbl{flex:1;font-size:12px;font-weight:700;}
+.cc-auto .sub{font-size:10px;color:var(--muted);font-weight:500;}
+.switch{position:relative;width:42px;height:24px;flex-shrink:0;}
+.switch input{display:none;}
+.switch .sl{position:absolute;inset:0;background:#cdd7ea;border-radius:99px;transition:background .15s;cursor:pointer;}
+.switch .sl::before{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;background:#fff;border-radius:50%;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.2);}
+.switch input:checked + .sl{background:var(--accent);}
+.switch input:checked + .sl::before{transform:translateX(18px);}
+.cc-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.cc-row input[type=color]{width:30px;height:30px;border:1.5px solid var(--card-border);border-radius:8px;padding:0;background:#fff;cursor:pointer;flex-shrink:0;}
+.cc-row .pat{flex:1;min-width:0;padding:7px 9px;border:1.5px solid var(--card-border);border-radius:8px;font-size:12px;font-family:inherit;outline:none;}
+.cc-row .pat:focus{border-color:var(--accent);}
+.cc-row .del{width:28px;height:28px;border:none;background:#f1f4fb;border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px;flex-shrink:0;}
+.cc-row .del:hover{background:#fde4e1;color:var(--danger);}
+.cc-add{width:100%;margin-top:6px;padding:9px;border:1.5px dashed var(--card-border);border-radius:9px;background:#fff;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
+.cc-add:hover{background:#eef2fb;}
+.cc-palette{margin-top:18px;border-top:1px solid var(--card-border);padding-top:14px;}
+.cc-palette h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:8px;}
+.cc-swatches{display:flex;flex-wrap:wrap;gap:6px;}
+.cc-swatches .sw{width:22px;height:22px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);}
+
+/* schedule table */
+.sched-tot{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+.sched-tot .tcard{flex:1;min-width:92px;background:#eef2fb;border-radius:10px;padding:9px 11px;}
+.sched-tot .tcard .n{font-size:17px;font-weight:800;}
+.sched-tot .tcard .l{font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;}
+table.sched{width:100%;border-collapse:collapse;font-size:11px;}
+table.sched th{text-align:left;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.3px;font-size:9px;padding:6px 5px;border-bottom:1.5px solid var(--card-border);}
+table.sched td{padding:7px 5px;border-bottom:1px solid #eef1f8;vertical-align:middle;}
+table.sched tr:hover td{background:#f7f9fe;cursor:pointer;}
+table.sched .sw{width:13px;height:13px;border-radius:4px;display:inline-block;vertical-align:middle;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);}
+.sched-empty{text-align:center;color:var(--muted);font-size:12px;padding:30px 0;}
+.sub-tot{margin-top:16px;border-top:1px solid var(--card-border);padding-top:12px;}
+.sub-tot h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:8px;}
+.sub-tot .row{display:flex;align-items:center;gap:8px;font-size:11px;margin:4px 0;}
+.sub-tot .row .nm{flex:1;font-weight:600;}
+.sub-tot .row .vl{font-weight:700;color:var(--ink);}
+
+/* ── Modal ─────────────────────────────────────────────────────── */
+.modal-bg{position:fixed;inset:0;background:rgba(29,43,69,.45);z-index:500;display:none;align-items:center;justify-content:center;padding:20px;}
+.modal-bg.show{display:flex;}
+.modal{background:#fff;border-radius:18px;width:100%;max-width:440px;box-shadow:0 20px 50px rgba(29,43,69,.3);padding:24px;}
+.modal h3{font-size:16px;font-weight:800;margin-bottom:4px;}
+.modal .msub{font-size:12px;color:var(--muted);margin-bottom:18px;}
+.fld{margin-bottom:14px;}
+.fld label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:6px;}
+.fld input[type=text],.fld input[type=number],.fld select{
+  width:100%;padding:10px 12px;font-size:14px;border:1.5px solid var(--card-border);
+  border-radius:10px;outline:none;background:#fff;font-family:inherit;transition:border-color .15s;
+}
+.fld input:focus,.fld select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(74,125,224,.12);}
+.row2{display:flex;gap:12px;}
+.row2 .fld{flex:1;}
+.seg{display:flex;gap:5px;}
+.seg button{flex:1;padding:9px 4px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .12s;}
+.seg button.sel{border-color:transparent;background:var(--accent);color:#fff;}
+.modal-actions{display:flex;gap:10px;margin-top:18px;}
+.mbtn{flex:1;padding:11px;border:none;border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;transition:transform .1s;}
+.mbtn:active{transform:scale(.97);}
+.mbtn-primary{background:var(--accent);color:#fff;box-shadow:0 3px 10px rgba(74,125,224,.35);}
+.mbtn-ghost{background:#eef2fb;color:var(--ink);}
+
+/* ── Popover (wire / connector edit) ───────────────────────────── */
+.pop{
+  position:fixed;z-index:400;background:#fff;border:1.5px solid var(--card-border);
+  border-radius:14px;box-shadow:0 14px 36px rgba(29,43,69,.28);padding:14px;width:290px;display:none;
+}
+#wpop{width:326px;max-height:92vh;overflow:auto;}
+.wpop-eng{margin-top:6px;background:#f7f9fe;border:1px solid var(--card-border);border-radius:9px;padding:7px 10px;}
+.eng-row{display:flex;justify-content:space-between;font-size:11px;margin:3px 0;color:var(--muted);}
+.eng-row b{color:var(--ink);font-weight:700;}
+.eng-row b.bad{color:var(--danger);}
+.pop .pttl{font-size:12px;font-weight:800;margin-bottom:11px;line-height:1.35;}
+.pop .pttl b{color:var(--accent);}
+.pop .pfld{margin-bottom:10px;}
+.pop .pfld label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:5px;}
+.pop input[type=text],.pop input[type=number],.pop select{
+  width:100%;padding:8px 10px;font-size:13px;border:1.5px solid var(--card-border);border-radius:9px;outline:none;font-family:inherit;background:#fff;
+}
+.pop input:focus,.pop select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(74,125,224,.12);}
+.colorline{display:flex;align-items:center;gap:7px;}
+.colorline input[type=color]{width:34px;height:34px;border:1.5px solid var(--card-border);border-radius:9px;padding:0;background:#fff;cursor:pointer;flex-shrink:0;}
+.colorline input[type=text]{flex:1;}
+.colorline .auto{padding:8px 10px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;white-space:nowrap;}
+.colorline .auto.on{border-color:var(--accent);background:#eef2fb;color:var(--accent);}
+.pop-actions{display:flex;gap:8px;margin-top:13px;}
+.pop-actions button{padding:8px 12px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;}
+.pop-actions .save{flex:1;background:var(--accent);color:#fff;}
+.pop-actions .del{background:#fde4e1;color:var(--danger);}
+
+/* empty state */
+#empty{
+  position:fixed;inset:52px 0 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  z-index:1;pointer-events:none;color:var(--muted);gap:14px;
+}
+#empty .big{font-size:42px;opacity:.5;}
+#empty .t1{font-size:16px;font-weight:800;color:var(--ink);}
+#empty .t2{font-size:12.5px;}
+#empty .go{pointer-events:auto;}
+
+/* loading */
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:600;}
+#loading .spinner{width:36px;height:36px;border:3.5px solid var(--card-border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── JST connectors ────────────────────────────────────────────── */
+.conn-sub.jst-sub{display:flex;align-items:center;justify-content:center;gap:6px;padding-top:1px;}
+.jstg{display:block;flex:0 0 auto;}
+.conn.jst .pin{border-radius:3px 3px 6px 6px;}
+.conn.jst .pin:not(.wired){background:#f3e8cf;border-color:#cdb277;color:#9a7b3a;}
+.conn.jst .conn-hdr{background:linear-gradient(135deg,var(--ja,#c79a3a),#a87f2c)!important;}
+.pin-cap{position:absolute;font-size:8px;font-weight:700;color:#56627e;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;line-height:1.1;}
+
+/* ── Splices (net junctions) ─────────────────────────────────────── */
+.splice{position:absolute;z-index:3;width:20px;height:20px;border-radius:50%;background:#cdd7ea;border:2.5px solid #fff;
+  box-shadow:0 2px 6px rgba(29,43,69,.32);cursor:grab;}
+.splice:active{cursor:grabbing;}
+.splice.sel{box-shadow:0 0 0 3px rgba(74,125,224,.5),0 2px 6px rgba(29,43,69,.32);}
+.splice-hl{box-shadow:0 0 0 3px rgba(74,125,224,.55)!important;}
+.splice .splice-handle{position:absolute;inset:-5px;border-radius:50%;border:2px dashed transparent;cursor:crosshair;}
+.splice:hover .splice-handle{border-color:rgba(74,125,224,.6);}
+.splice .slabel{position:absolute;top:22px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--muted);
+  white-space:nowrap;pointer-events:none;background:rgba(246,248,253,.85);padding:0 3px;border-radius:4px;}
+
+/* voltage-class tags + DRC states */
+.vtag{font-size:8px;font-weight:800;padding:1px 4px;border-radius:5px;vertical-align:middle;letter-spacing:.3px;}
+.vtag.HV{background:#fde0db;color:#c0392b;}
+.vtag.LV{background:#e3f0ff;color:#2456b8;}
+table.sched td.bad{color:var(--danger);font-weight:800;}
+
+/* netsearch + DRC badge */
+.netsearch{height:30px;width:130px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;font-size:12px;font-family:inherit;padding:0 9px;outline:none;color:var(--ink);}
+.netsearch:focus{border-color:var(--accent);width:170px;}
+.drc-badge{display:inline-block;margin-left:5px;min-width:16px;height:16px;line-height:16px;text-align:center;border-radius:8px;background:var(--danger);color:#fff;font-size:9px;font-weight:800;padding:0 4px;}
+#btn-drc.ok .drc-badge{background:var(--ok);}
+/* DRC list */
+.drc-item{display:flex;gap:9px;padding:9px 8px;border-radius:9px;cursor:pointer;align-items:flex-start;}
+.drc-item:hover{background:#f7f9fe;}
+.drc-item + .drc-item{border-top:1px solid #eef1f8;}
+.drc-ico{flex:0 0 auto;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;margin-top:1px;}
+.drc-err .drc-ico{background:var(--danger);} .drc-warn .drc-ico{background:var(--warn);} .drc-info .drc-ico{background:#7585a3;}
+.drc-msg{font-size:12px;line-height:1.4;} .drc-msg .ref{color:var(--muted);font-size:10.5px;}
+.drc-clean{text-align:center;color:var(--ok);font-weight:700;font-size:13px;padding:28px 0;}
+.drc-group-h{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:800;margin:12px 0 4px;}
+/* BOM */
+table.bom{width:100%;border-collapse:collapse;font-size:11px;}
+table.bom th{text-align:left;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.3px;font-size:9px;padding:6px 5px;border-bottom:1.5px solid var(--card-border);}
+table.bom td{padding:6px 5px;border-bottom:1px solid #eef1f8;vertical-align:top;}
+table.bom td.qty{text-align:right;font-weight:700;white-space:nowrap;}
+.bom-cat{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);font-weight:800;padding:10px 5px 4px;}
+.pop .seg button.sel{background:var(--accent);color:#fff;border-color:transparent;}
+/* per-pin label editor */
+.pinlbl-grid{max-height:170px;overflow:auto;border:1.5px solid var(--card-border);border-radius:9px;padding:5px;}
+.pinlbl-row{display:flex;align-items:center;gap:7px;margin:3px 0;}
+.pinlbl-row .pn{flex:0 0 26px;font-size:11px;font-weight:700;color:var(--muted);text-align:right;}
+.pinlbl-row input{flex:1;padding:5px 7px;border:1.5px solid var(--card-border);border-radius:7px;font-size:12px;font-family:inherit;outline:none;}
+.pinlbl-row input:focus{border-color:var(--accent);}
+/* print reports */
+#report{display:none;}
+@media print{
+  body.printing #scroll,body.printing #hdr,body.printing #legend,body.printing .panel,body.printing .pop,body.printing .modal-bg,body.printing #empty{display:none!important;}
+  body.printing #report{display:block;position:static;}
+}
+#report .rep-page{padding:24px;}
+.rep-title{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--ink);padding-bottom:8px;margin-bottom:14px;}
+.rep-title h1{font-size:18px;} .rep-title .meta{font-size:11px;color:var(--muted);text-align:right;}
+table.rep{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:18px;}
+table.rep th{background:#eef2fb;text-align:left;padding:5px 6px;border:1px solid var(--card-border);font-size:9px;text-transform:uppercase;}
+table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
+.rep-sw{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);}
+.lbl-sheet{display:flex;flex-wrap:wrap;gap:6px;}
+.lbl-chip{border:1px solid var(--ink);border-radius:4px;padding:4px 7px;font-size:9px;font-family:monospace;width:150px;}
+.lbl-chip b{font-size:10px;}
+
+/* ── KiCad import list ─────────────────────────────────────────── */
+.ki-row{display:flex;align-items:center;gap:7px;padding:6px 5px;border-radius:8px;}
+.ki-row:hover{background:#f7f9fe;}
+.ki-row + .ki-row{border-top:1px solid #eef1f8;}
+.ki-row input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;}
+.ki-row .kn{flex:1;min-width:0;padding:6px 8px;border:1.5px solid var(--card-border);border-radius:7px;font-size:12.5px;font-family:inherit;outline:none;}
+.ki-row .kn:focus{border-color:var(--accent);}
+.ki-row select,.ki-row .kp{padding:6px 6px;border:1.5px solid var(--card-border);border-radius:7px;font-size:11.5px;font-family:inherit;outline:none;background:#fff;}
+.ki-row .kt{flex:0 0 132px;max-width:132px;}
+.ki-row .kp{width:52px;flex:0 0 52px;text-align:center;}
+.ki-row .kg{flex:0 0 56px;}
+.ki-row .ko{flex:0 0 88px;font-size:10px;color:var(--muted);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ki-empty{padding:24px;text-align:center;color:var(--muted);font-size:12.5px;}
+
+/* ── Boards / PCBs ─────────────────────────────────────────────── */
+.board{
+  position:absolute;z-index:0;background:rgba(255,255,255,.5);
+  border:1.8px solid var(--bc,#4a7de0);border-radius:18px;cursor:grab;
+  box-shadow:0 6px 22px rgba(29,43,69,.05);transition:box-shadow .14s;
+}
+.board:hover{box-shadow:0 10px 28px rgba(29,43,69,.10);}
+.board:active{cursor:grabbing;}
+.board-label{
+  position:absolute;top:-15px;left:18px;display:flex;align-items:center;gap:7px;
+  background:var(--bc,#4a7de0);color:#fff;border-radius:999px;padding:4px 7px 4px 13px;
+  font-size:12px;font-weight:800;white-space:nowrap;box-shadow:0 2px 7px rgba(29,43,69,.2);cursor:grab;
+}
+.board-label .bdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.9);}
+.board-label .bbtns{display:flex;gap:3px;margin-left:3px;opacity:0;transition:opacity .12s;}
+.board:hover .board-label .bbtns,.board-label:hover .bbtns{opacity:1;}
+.board-label button{
+  border:none;background:rgba(255,255,255,.25);color:#fff;width:19px;height:19px;border-radius:6px;
+  cursor:pointer;font-size:11px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;
+}
+.board-label button:hover{background:rgba(255,255,255,.45);}
+.board-empty{
+  position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+  color:var(--muted);font-size:11px;font-weight:600;pointer-events:none;
+}
+.colorseg{display:flex;gap:6px;flex-wrap:wrap;}
+.cswatch{width:26px;height:26px;border:2.5px solid transparent;border-radius:8px;cursor:pointer;padding:0;}
+.cswatch.sel{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset;}
+
+/* ── Presence + remote cursors (shared identity with /pt) ───────── */
+#presence{display:flex;align-items:center;gap:5px;margin-right:4px;}
+#presence .pcount{font-size:11px;color:var(--muted);font-weight:600;margin-right:4px;white-space:nowrap;}
+#presence .pav{
+  width:24px;height:24px;border-radius:50%;color:#fff;font-size:9px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;border:2px solid #fff;
+  box-shadow:0 1px 3px rgba(29,43,69,.25);margin-left:-8px;
+}
+#presence .pav:first-of-type{margin-left:0;}
+.rcursor{position:absolute;left:0;top:0;z-index:60;pointer-events:none;transform-origin:top left;will-change:transform;}
+.rcursor .rclabel{
+  position:absolute;left:13px;top:11px;color:#fff;font-size:10px;font-weight:700;
+  padding:1px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.25);
+}
+
+@media print{
+  #hdr,#legend,.panel,.menu,#empty,.pop,.modal-bg{display:none!important;}
+  #scroll{overflow:visible;padding-top:0;}
+  #canvas::before{display:none;}
+  body{overflow:visible;}
+}
+.homelink{
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  width:28px;height:28px;border-radius:8px;margin-right:-6px;
+  color:var(--muted);text-decoration:none;font-size:15px;font-weight:700;
+  transition:background .12s,color .12s;
+}
+.homelink:hover{background:#eef2fb;color:var(--ink);}
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  <a class="homelink" href="/" title="All tools" aria-label="All tools">←</a>
+  <span class="ttl">🔌 <span>Harness</span> Mapper</span>
+  <span class="sub" id="hdrsub">Drag a pin to another pin to add a wire · Click a wire to edit · Drag header to move</span>
+  <div class="spacer"></div>
+  <div id="presence"></div>
+  <span id="savestat">saved</span>
+  <select class="unitsel" id="unitsel" title="Length unit">
+    <option value="mm">mm</option>
+    <option value="cm">cm</option>
+    <option value="m">m</option>
+  </select>
+  <button class="zbtn" id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
+  <button class="zbtn" id="btn-redo" title="Redo (Ctrl+Y)">↷</button>
+  <input id="netsearch" class="netsearch" placeholder="🔍 find net…" autocomplete="off" title="Highlight a net by signal name">
+  <button class="tbtn" id="btn-cc" title="Wiring colour code">🎨 Colours</button>
+  <button class="tbtn" id="btn-sched" title="Wire schedule / cut list">📋 Schedule</button>
+  <button class="tbtn" id="btn-bom" title="Bill of materials">🧾 BOM</button>
+  <button class="tbtn" id="btn-drc" title="Electrical rule check">✔ Check<span class="drc-badge" id="drc-badge" style="display:none">0</span></button>
+  <div class="menu-wrap">
+    <button class="tbtn" id="btn-exp">⋯ File</button>
+    <div class="menu" id="expmenu">
+      <button id="exp-json">💾 Export design (JSON)</button>
+      <button id="exp-import">📂 Import design (JSON)</button>
+      <div class="sep"></div>
+      <button id="exp-kicad">🧩 Import KiCad (.sch/.net) → PCB</button>
+      <button id="exp-kicad-update">🔄 Update PCB from netlist…</button>
+      <div class="sep"></div>
+      <button id="exp-csv">📄 Cut-list (CSV)</button>
+      <button id="exp-bom-csv">🧾 BOM (CSV)</button>
+      <button id="exp-fromto">↔ From-To list (CSV)</button>
+      <button id="exp-wireviz">🧶 WireViz (YAML)</button>
+      <div class="sep"></div>
+      <button id="exp-print">🖨 Print diagram</button>
+      <button id="rep-cutlist">🖨 Cut-list report</button>
+      <button id="rep-bom">🖨 BOM report</button>
+      <button id="rep-pinout">🖨 Connector pinouts</button>
+      <button id="rep-labels">🏷 Wire labels</button>
+      <button id="rep-formboard">📐 Formboard (lay-flat)</button>
+      <div class="sep"></div>
+      <button id="tool-ortho">📐 Toggle orthogonal routing</button>
+      <button id="tool-snap">▦ Toggle snap-to-grid</button>
+      <button id="tool-rev">🕒 Revisions…</button>
+      <button id="tool-lib">📚 Library…</button>
+      <div class="sep"></div>
+      <button id="exp-clear">🗑 Clear all</button>
+    </div>
+  </div>
+  <button class="tbtn" id="btn-board">＋ PCB</button>
+  <button class="tbtn" id="btn-splice" title="Add a splice / junction">＋ Splice</button>
+  <button class="tbtn primary" id="btn-add">＋ Connector</button>
+  <button class="zbtn" id="zout" title="Zoom out">−</button>
+  <span id="zlevel">100%</span>
+  <button class="zbtn" id="zin" title="Zoom in">+</button>
+  <button class="zbtn" id="zfit" title="Fit to view" style="font-size:11px;width:auto;padding:0 10px;">Fit</button>
+  <input type="file" id="fileinput" accept="application/json" style="display:none">
+  <input type="file" id="kicadfile" accept=".kicad_sch,.sch,.net,.kicad_pro,.cmp" style="display:none">
+  <input type="file" id="kicadupdate" accept=".net,.kicad_sch,.sch" style="display:none">
+  <input type="file" id="libimport" accept="application/json" style="display:none">
+</div>
+
+<div id="legend">
+  <h4>Legend</h4>
+  <div class="lr"><span class="lk"><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="#e23b3b" stroke-width="2.6" stroke-linecap="round"/></svg></span>Wire (colour = code)</div>
+  <div class="lr"><span class="lk"><svg width="34" height="14"><rect x="9" y="1" width="16" height="12" rx="3" fill="#eef2fb" stroke="#cdd7ea" stroke-width="2"/></svg></span>Empty pin</div>
+  <div class="lr"><span class="lk"><svg width="34" height="14"><rect x="9" y="1" width="16" height="12" rx="3" fill="#4a7de0" stroke="#fff" stroke-width="2"/></svg></span>Wired pin</div>
+  <div class="lr"><span class="lk"><svg width="34" height="12"><polygon points="13,2 21,2 17,8" fill="#ff9f1c"/></svg></span>Pin&nbsp;1 (keyed)</div>
+  <div class="lr"><span class="lk"><svg width="34" height="15" viewBox="0 0 44 18"><path d="M15 5 q7 -4.5 14 0" fill="none" stroke="#9aa7c2" stroke-width="1.3"/><rect x="4" y="4.5" width="36" height="10.5" rx="2.4" fill="#eef2f8" stroke="#9aa7c2" stroke-width="1.4"/><g fill="#c79a3a"><rect x="8" y="11" width="2.6" height="6" rx="1"/><rect x="15" y="11" width="2.6" height="6" rx="1"/><rect x="22" y="11" width="2.6" height="6" rx="1"/><rect x="29" y="11" width="2.6" height="6" rx="1"/><rect x="36" y="11" width="2.6" height="6" rx="1"/></g></svg></span>JST connector</div>
+  <div style="height:8px;"></div>
+  <div class="stat">PCBs <b id="stat-b">0</b></div>
+  <div class="stat">Connectors <b id="stat-c">0</b></div>
+  <div class="stat">Wires <b id="stat-w">0</b></div>
+  <div class="stat">Cut length <b id="stat-l">0</b></div>
+  <div class="stat">Wire mass <b id="stat-m">0 g</b></div>
+  <div class="hint">Drag pin→pin to wire · drag a wire to bend it (double-click a bend to remove) · Shift-drag to box-select · S = splice · R = rotate connector.</div>
+</div>
+
+<!-- Colour code panel -->
+<div class="panel" id="ccpanel">
+  <div class="panel-hdr">
+    <h3>🎨 Wiring colour code</h3>
+    <button class="x" data-close="ccpanel">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="cc-intro">Define your colour code as <b>signal&nbsp;→&nbsp;colour</b> rules. A wire whose signal name contains the text gets that colour automatically. First match wins, so put specific rules on top.</div>
+    <div class="cc-auto">
+      <div>
+        <div class="lbl">Automatic colours</div>
+        <div class="sub">Unmatched wires get a distinct colour each.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="cc-auto-tog"><span class="sl"></span></label>
+    </div>
+    <div id="cc-rules"></div>
+    <button class="cc-add" id="cc-add">＋ Add colour rule</button>
+    <div class="cc-palette">
+      <h4>Auto-colour palette</h4>
+      <div class="cc-swatches" id="cc-swatches"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule panel -->
+<div class="panel" id="schedpanel">
+  <div class="panel-hdr">
+    <h3>📋 Wire schedule</h3>
+    <button class="x" data-close="schedpanel">✕</button>
+  </div>
+  <div class="panel-body" id="sched-body"></div>
+</div>
+
+<!-- BOM panel -->
+<div class="panel" id="bompanel">
+  <div class="panel-hdr">
+    <h3>🧾 Bill of materials</h3>
+    <button class="x" data-close="bompanel">✕</button>
+  </div>
+  <div class="panel-body" id="bom-body"></div>
+</div>
+
+<!-- DRC panel -->
+<div class="panel" id="drcpanel">
+  <div class="panel-hdr">
+    <h3>✔ Rule check</h3>
+    <button class="x" data-close="drcpanel">✕</button>
+  </div>
+  <div class="panel-body" id="drc-body"></div>
+</div>
+
+<!-- Revisions panel -->
+<div class="panel" id="revpanel">
+  <div class="panel-hdr">
+    <h3>🕒 Revisions</h3>
+    <button class="x" data-close="revpanel">✕</button>
+  </div>
+  <div class="panel-body" id="rev-body"></div>
+</div>
+
+<!-- Library panel -->
+<div class="panel" id="libpanel">
+  <div class="panel-hdr">
+    <h3>📚 Library</h3>
+    <button class="x" data-close="libpanel">✕</button>
+  </div>
+  <div class="panel-body" id="lib-body"></div>
+</div>
+
+<!-- Add connector modal -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3>Add connector</h3>
+    <div class="msub">Pick a type to auto-set the pin layout — everything stays editable.</div>
+    <div class="fld">
+      <label for="m-name">Name / location</label>
+      <input type="text" id="m-name" placeholder="e.g. ECU, Front-left wheel speed" autocomplete="off">
+    </div>
+    <div class="fld">
+      <label for="m-type">Connector type</label>
+      <select id="m-type"></select>
+    </div>
+    <div class="row2">
+      <div class="fld">
+        <label for="m-pins">Pins</label>
+        <input type="number" id="m-pins" min="1" max="64" value="2">
+      </div>
+      <div class="fld">
+        <label for="m-cols">Columns</label>
+        <input type="number" id="m-cols" min="1" max="16" value="2">
+      </div>
+      <div class="fld">
+        <label>Gender</label>
+        <div class="seg" id="m-gender">
+          <button data-g="">—</button>
+          <button data-g="M">Male</button>
+          <button data-g="F">Female</button>
+        </div>
+      </div>
+    </div>
+    <div class="fld">
+      <label for="m-board">Mounted on</label>
+      <select id="m-board"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="mbtn mbtn-ghost" id="m-cancel">Cancel</button>
+      <button class="mbtn mbtn-primary" id="m-save">Add connector</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add PCB / board modal -->
+<div class="modal-bg" id="bmodal">
+  <div class="modal">
+    <h3>Add PCB / board</h3>
+    <div class="msub">A board groups its own connectors (e.g. PDU, BMS, Dash). Add connectors onto it afterwards, then wire across boards.</div>
+    <div class="fld">
+      <label for="bm-name">Name</label>
+      <input type="text" id="bm-name" placeholder="e.g. PDU" autocomplete="off">
+    </div>
+    <div class="fld">
+      <label>Colour</label>
+      <div class="colorseg" id="bm-colors"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="mbtn mbtn-ghost" id="bm-cancel">Cancel</button>
+      <button class="mbtn mbtn-primary" id="bm-save">Add PCB</button>
+    </div>
+  </div>
+</div>
+
+<!-- KiCad import preview modal -->
+<div class="modal-bg" id="kimodal">
+  <div class="modal" style="max-width:540px">
+    <h3>Import KiCad → PCB</h3>
+    <div class="msub" id="ki-sub"></div>
+    <div class="fld">
+      <label for="ki-name">PCB name</label>
+      <input type="text" id="ki-name" autocomplete="off">
+    </div>
+    <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:6px;">Connectors found</label>
+    <div id="ki-list" style="max-height:300px;overflow:auto;border:1.5px solid var(--card-border);border-radius:12px;padding:5px;"></div>
+    <label id="ki-wires-wrap" style="display:none;align-items:center;gap:8px;margin-top:12px;font-size:12px;font-weight:600;cursor:pointer;">
+      <input type="checkbox" id="ki-wires"> Also create wires from 2-pin nets (signal = net name)
+    </label>
+    <div class="modal-actions">
+      <button class="mbtn mbtn-ghost" id="ki-cancel">Cancel</button>
+      <button class="mbtn mbtn-primary" id="ki-save">Import as PCB</button>
+    </div>
+  </div>
+</div>
+
+<div id="empty">
+  <div class="big">🔌</div>
+  <div class="t1">Map your wiring harness</div>
+  <div class="t2">Add a PCB (e.g. PDU) or a standalone connector, then drag pin-to-pin to lay in wires.</div>
+  <div class="go" style="display:flex;gap:10px;">
+    <button class="tbtn" id="empty-board">＋ Add a PCB</button>
+    <button class="tbtn primary" id="empty-add">＋ Add a connector</button>
+  </div>
+</div>
+
+<div id="loading"><div class="spinner"></div></div>
+<div id="scroll"><div id="zoomwrap"><div id="canvas"><svg id="svg-layer"></svg></div></div></div>
+<div id="report"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+// ── Layout constants ────────────────────────────────────────────────
+const CANVAS_W=6000, CANVAS_H=4000;
+const HEADERH=38, SUBH=15, PAD=12, PINSIZE=30, PINGAP=9, MINW=158;
+const PADB=20, GAPB=18, MINBW=200, BOARD_PERROW=4;   // board (PCB) layout
+const LBLH=15;   // extra height for per-pin signal captions (single-row connectors)
+
+// ── Connector type presets ──────────────────────────────────────────
+const TYPES=[
+  {id:'dt2',  name:'Deutsch DT 2-way',  pins:2,  cols:2},
+  {id:'dt3',  name:'Deutsch DT 3-way',  pins:3,  cols:3},
+  {id:'dt4',  name:'Deutsch DT 4-way',  pins:4,  cols:2},
+  {id:'dt6',  name:'Deutsch DT 6-way',  pins:6,  cols:3},
+  {id:'dt8',  name:'Deutsch DT 8-way',  pins:8,  cols:4},
+  {id:'dt12', name:'Deutsch DT 12-way', pins:12, cols:4},
+  {id:'dtm2', name:'Deutsch DTM 2-way', pins:2,  cols:2},
+  {id:'dtm3', name:'Deutsch DTM 3-way', pins:3,  cols:3},
+  {id:'dtm4', name:'Deutsch DTM 4-way', pins:4,  cols:2},
+  {id:'dtm6', name:'Deutsch DTM 6-way', pins:6,  cols:3},
+  {id:'dtm8', name:'Deutsch DTM 8-way', pins:8,  cols:4},
+  {id:'dtm12',name:'Deutsch DTM 12-way',pins:12, cols:6},
+  {id:'ss1',  name:'Superseal 1.5 1-way',pins:1, cols:1},
+  {id:'ss2',  name:'Superseal 1.5 2-way',pins:2, cols:2},
+  {id:'ss3',  name:'Superseal 1.5 3-way',pins:3, cols:3},
+  {id:'ss4',  name:'Superseal 1.5 4-way',pins:4, cols:2},
+  {id:'ss5',  name:'Superseal 1.5 5-way',pins:5, cols:5},
+  {id:'ss6',  name:'Superseal 1.5 6-way',pins:6, cols:3},
+  {id:'amphd', name:'AMPSEAL 23-way',   pins:23, cols:8},
+  {id:'molex', name:'Molex Micro-Fit',  pins:4,  cols:2},
+  // ── JST families (single-row; pick pin count + male/female) ──
+  {id:'jst_ph', name:'JST PH 2.0mm',   pins:2, cols:2, single:true, jst:true, series:'PH'},
+  {id:'jst_xh', name:'JST XH 2.5mm',   pins:2, cols:2, single:true, jst:true, series:'XH'},
+  {id:'jst_sh', name:'JST SH 1.0mm',   pins:2, cols:2, single:true, jst:true, series:'SH'},
+  {id:'jst_gh', name:'JST GH 1.25mm',  pins:2, cols:2, single:true, jst:true, series:'GH'},
+  {id:'jst_zh', name:'JST ZH 1.5mm',   pins:2, cols:2, single:true, jst:true, series:'ZH'},
+  {id:'jst_eh', name:'JST EH 2.5mm',   pins:2, cols:2, single:true, jst:true, series:'EH'},
+  {id:'jst_vh', name:'JST VH 3.96mm',  pins:2, cols:2, single:true, jst:true, series:'VH'},
+  {id:'ring',  name:'Ring terminal / lug',pins:1,cols:1},
+  {id:'mxn',   name:'M-series / stud',  pins:1,  cols:1},
+  {id:'splice',name:'Splice / butt join',pins:2, cols:2},
+  {id:'header',name:'Generic header',   pins:4,  cols:4},
+  {id:'custom',name:'Custom…',          pins:2,  cols:2},
+];
+const TYPE_BY_ID={}; TYPES.forEach(t=>TYPE_BY_ID[t.id]=t);
+function typeLabel(id){ const t=TYPE_BY_ID[id]; return t?t.name:(id||'Custom'); }
+function isSingle(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.single); }
+function isJst(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.jst); }
+// Little JST connector housing glyph (decorative, scalable)
+function jstGlyph(){
+  return `<svg class="jstg" viewBox="0 0 44 18" width="40" height="16" aria-hidden="true">
+    <path d="M15 5 q7 -4.5 14 0" fill="none" stroke="#9aa7c2" stroke-width="1.3"/>
+    <rect x="4" y="4.5" width="36" height="10.5" rx="2.4" fill="#eef2f8" stroke="#9aa7c2" stroke-width="1.4"/>
+    <g fill="#c79a3a">
+      <rect x="8"  y="11" width="2.6" height="6" rx="1"/>
+      <rect x="15" y="11" width="2.6" height="6" rx="1"/>
+      <rect x="22" y="11" width="2.6" height="6" rx="1"/>
+      <rect x="29" y="11" width="2.6" height="6" rx="1"/>
+      <rect x="36" y="11" width="2.6" height="6" rx="1"/>
+    </g>
+  </svg>`;
+}
+
+// ── Gauge → drawn thickness ─────────────────────────────────────────
+const GAUGES=['8','10','12','14','16','18','20','22','24'];
+const AWG_W={'8':6,'10':5.5,'12':5,'14':4.3,'16':3.7,'18':3.1,'20':2.6,'22':2.2,'24':1.9};
+
+// ── Auto-colour fallback palette (distinct on light bg) ─────────────
+const PALETTE=['#e6194B','#3cb44b','#4363d8','#f58231','#911eb4','#16b8c4',
+  '#f032e6','#bfa800','#9A6324','#469990','#a05195','#d45087','#2f4b7c',
+  '#665191','#ff7c43','#008080','#7c5cff','#c41e3a'];
+
+// ── Header accent palette for connector cards ───────────────────────
+const ACCENTS=['#4a7de0','#8a64d6','#2fab6e','#ef6351','#e0a400','#3aa8b8','#d65a9c','#5b8c5a','#c0794a'];
+
+// ── Default colour-code rules (editable seed) ───────────────────────
+const DEFAULT_RULES=[
+  {pat:'GND',   color:'#1d2b45'},
+  {pat:'0V',    color:'#1d2b45'},
+  {pat:'+12V',  color:'#e23b3b'},
+  {pat:'12V',   color:'#e23b3b'},
+  {pat:'VBAT',  color:'#e23b3b'},
+  {pat:'PWR',   color:'#e23b3b'},
+  {pat:'+5V',   color:'#f5821f'},
+  {pat:'5V',    color:'#f5821f'},
+  {pat:'3V3',   color:'#f0a818'},
+  {pat:'CAN-H', color:'#f2c200'},
+  {pat:'CANH',  color:'#f2c200'},
+  {pat:'CAN-L', color:'#2fab6e'},
+  {pat:'CANL',  color:'#2fab6e'},
+  {pat:'SHIELD',color:'#7585a3'},
+  {pat:'SIG',   color:'#4a7de0'},
+];
+
+// ── Helpers ─────────────────────────────────────────────────────────
+const uid=p=>p+Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-3);
+function hash(s){ s=s||''; let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h; }
+const UNIT_FACTOR={mm:1,cm:10,m:1000};
+function fmtLen(mm){ const u=DOC.unit||'mm'; const v=mm/UNIT_FACTOR[u]; return (Math.round(v*10)/10)+' '+u; }
+
+// ── Document state ──────────────────────────────────────────────────
+let DOC={boards:[],connectors:[],splices:[],wires:[],rules:[],autoColors:true,unit:'mm',sysV:24};
+const cmap={};   // id -> connector
+const wmap={};   // id -> wire
+const bmap={};   // id -> board (PCB)
+const smap={};   // id -> splice
+const connEls={};// id -> {root, pins:[...]}
+const wireEls={};// id -> {g, casing, core, hit}
+const boardEls={};// id -> board element
+const spliceEls={};// id -> splice element
+let selWire=null, selConn=null, selSplice=null;
+let applyingRemote=false;   // true while applying a change received over the websocket
+
+// ── DOM refs ────────────────────────────────────────────────────────
+const canvas=document.getElementById('canvas');
+const zoomwrap=document.getElementById('zoomwrap');
+const scroll=document.getElementById('scroll');
+const svg=document.getElementById('svg-layer');
+canvas.style.width=CANVAS_W+'px'; canvas.style.height=CANVAS_H+'px';
+svg.setAttribute('width',CANVAS_W); svg.setAttribute('height',CANVAS_H);
+svg.setAttribute('viewBox',`0 0 ${CANVAS_W} ${CANVAS_H}`);
+
+// ── Geometry ────────────────────────────────────────────────────────
+function hasPinLabels(c){ return c.pinLabels && Object.keys(c.pinLabels).length>0; }
+function geom(c){
+  const single=isSingle(c.type);
+  const cols=single?Math.max(1,c.pins):Math.max(1,c.cols||1);  // JST etc. = one row
+  const rows=Math.ceil(c.pins/cols);
+  const caps=single&&hasPinLabels(c);                          // per-pin caption band (single-row only)
+  const bodyW=cols*PINSIZE+(cols-1)*PINGAP;
+  const bodyH=rows*PINSIZE+(rows-1)*PINGAP;
+  const width=Math.max(MINW,bodyW+2*PAD);
+  const height=HEADERH+SUBH+PAD+bodyH+(caps?LBLH:0)+PAD;
+  return {cols,rows,caps,bodyW,bodyH,width,height,gridLeft:(width-bodyW)/2,gridTop:HEADERH+SUBH+PAD};
+}
+// Absolute connector position. Board members store x,y RELATIVE to their board's
+// anchor (b.x,b.y), so they can be freely placed to mirror the real PCB layout and
+// the board can be moved as a unit; standalone connectors store absolute x,y.
+function ax(c){ const b=c.board&&bmap[c.board]; return (b?b.x:0)+c.x; }
+function ay(c){ const b=c.board&&bmap[c.board]; return (b?b.y:0)+c.y; }
+function pinLocal(c,i){ const g=geom(c), row=Math.floor(i/g.cols), col=i%g.cols;
+  return {x:g.gridLeft+col*(PINSIZE+PINGAP)+PINSIZE/2, y:g.gridTop+row*(PINSIZE+PINGAP)+PINSIZE/2}; }
+function rotPt(px,py,cx,cy,rot){ if(!rot) return {x:px,y:py}; const a=rot*Math.PI/180,s=Math.sin(a),co=Math.cos(a),dx=px-cx,dy=py-cy;
+  return {x:cx+dx*co-dy*s, y:cy+dx*s+dy*co}; }
+function pinCenter(c,i){ const g=geom(c), L=pinLocal(c,i), r=rotPt(L.x,L.y,g.width/2,g.height/2,c.rot||0);
+  return {x:ax(c)+r.x, y:ay(c)+r.y}; }
+// axis-aligned bounding box of the (possibly 90°-rotated) card, centred on the card centre
+function box(c){ const g=geom(c); const cx=ax(c)+g.width/2, cy=ay(c)+g.height/2, swap=((c.rot||0)%180)!==0;
+  const w=swap?g.height:g.width, h=swap?g.width:g.height; return {x:cx-w/2,y:cy-h/2,w,h,cx,cy}; }
+
+// ════════════════════════════════════════════════════════════════════
+//  ENDPOINTS, NETS & WIRE ENGINEERING TABLES
+// ════════════════════════════════════════════════════════════════════
+// A wire endpoint is either a connector pin {c,p} or a splice {s}.
+function epIsSplice(ep){ return !!(ep && ep.s!=null); }
+function epKey(ep){ return epIsSplice(ep)?('S'+ep.s):(ep.c+':'+ep.p); }
+function epExists(ep){ if(!ep) return false; if(epIsSplice(ep)) return !!smap[ep.s]; const c=cmap[ep.c]; return !!(c && ep.p<c.pins); }
+function epPos(ep){ if(epIsSplice(ep)){ const s=smap[ep.s]; return s?{x:s.x,y:s.y}:{x:0,y:0}; } return pinCenter(cmap[ep.c],ep.p); }
+function epExit(ep){ const p=epPos(ep); return epIsSplice(ep)?{x:p.x,y:p.y,ex:p.y}:{x:p.x,y:p.y,ex:p.y+22}; }
+function epLabel(ep){ if(epIsSplice(ep)){ const s=smap[ep.s]; return s?(s.name||'Splice'):'?'; } return connFullName(cmap[ep.c])+' p'+(ep.p+1); }
+function epShort(ep){ if(epIsSplice(ep)){ const s=smap[ep.s]; return s?(s.name||'SPL'):'?'; } const c=cmap[ep.c]; return (c?c.name:'?')+'·'+(ep.p+1); }
+function epTouches(ep,id){ return epIsSplice(ep)?(ep.s===id):(ep.c===id); }
+
+// AWG → metric area (mm²), DC resistance (Ω/m @20°C), continuous ampacity (A, chassis-ish),
+// copper mass incl. typical insulation (g/m). Conservative, good enough for FS sizing.
+const AWG_SPEC={
+  '8' :{mm2:8.37, ohm:0.00208, amp:73, gpm:78},
+  '10':{mm2:5.26, ohm:0.00331, amp:55, gpm:50},
+  '12':{mm2:3.31, ohm:0.00527, amp:41, gpm:33},
+  '14':{mm2:2.08, ohm:0.00838, amp:32, gpm:21},
+  '16':{mm2:1.31, ohm:0.01333, amp:22, gpm:14},
+  '18':{mm2:0.823,ohm:0.02121, amp:16, gpm:9.5},
+  '20':{mm2:0.518,ohm:0.03372, amp:11, gpm:6.5},
+  '22':{mm2:0.326,ohm:0.05363, amp:7,  gpm:4.5},
+  '24':{mm2:0.205,ohm:0.08531, amp:3.5,gpm:3.2},
+};
+function awgSpec(g){ return AWG_SPEC[g]||AWG_SPEC['20']; }
+
+// ── Parts library: harness-side housings + crimp contacts ────────────
+// JST harness-side (the plug that mates the PCB B*B header).
+const JST_PARTS={
+  PH:{hb:'PHR', contact:'SPH-002T-P0.5S', awg:'24-28'},
+  XH:{hb:'XHP', contact:'SXH-001T-P0.6N', awg:'22-28'},
+  SH:{hb:'SHR', hsuf:'V-S-B', pad:2, contact:'SSHL-002T-P0.2', awg:'28-32'},
+  GH:{hb:'GHR', hsuf:'V-S',   pad:2, contact:'SSHL-003T-P0.2', awg:'26-30'},
+  ZH:{hb:'ZHR', contact:'SZH-002T-P0.5', awg:'24-30'},
+  EH:{hb:'EHR', contact:'SEH-001T-P0.6', awg:'22-28'},
+  VH:{hb:'VHR', hsuf:'N', contact:'SVH-21T-P1.1', awg:'18-22'},
+};
+function jstSeries(typeId){ const t=TYPE_BY_ID[typeId]; return (t&&t.jst)?t.series:null; }
+function jstHousingPN(series,pins){ const p=JST_PARTS[series]; if(!p) return ''; return p.pad?`${p.hb}-${String(pins).padStart(p.pad,'0')}${p.hsuf||''}`:`${p.hb}-${pins}${p.hsuf||''}`; }
+function jstContactPN(series){ return (JST_PARTS[series]||{}).contact||''; }
+// Deutsch DT (size-16 contacts, 14-20 AWG). Gender M = pin housing (DT04), F = socket housing (DT06).
+function dtHousingPN(pins,gender){ return (gender==='M'?'DT04-':'DT06-')+pins+(gender==='M'?'P':'S'); }
+function dtWedgePN(pins,gender){ return 'W'+pins+(gender==='M'?'P':'S'); }
+function dtContactPN(gender){ return gender==='M'?'0460-202-16141':'0462-201-16141'; }
+// Per-connector parts → [{pn,desc,per}] where per='conn' (1 each) or 'contact' (1 per populated pin)
+function connParts(c){
+  const series=jstSeries(c.type), out=[];
+  if(c.partno) out.push({pn:c.partno,desc:'Housing (specified)',per:'conn'});
+  if(series){
+    if(!c.partno) out.push({pn:jstHousingPN(series,c.pins),desc:`JST ${series} ${c.pins}-way housing`,per:'conn'});
+    out.push({pn:jstContactPN(series),desc:`JST ${series} crimp contact (${JST_PARTS[series].awg} AWG)`,per:'contact'});
+  } else if(/^dtm?\d/.test(c.type||'')){
+    if(!c.partno) out.push({pn:dtHousingPN(c.pins,c.gender),desc:`Deutsch DT ${c.pins}-way ${c.gender==='M'?'pin':'socket'} housing`,per:'conn'});
+    out.push({pn:dtWedgePN(c.pins,c.gender),desc:'Deutsch DT wedgelock',per:'conn'});
+    out.push({pn:dtContactPN(c.gender),desc:`Deutsch size-16 ${c.gender==='M'?'pin':'socket'} (14-20 AWG)`,per:'contact'});
+  } else if(c.type==='ring'){
+    out.push({pn:'RING-TERM',desc:'Ring terminal (set gauge/stud)',per:'contact'});
+  }
+  return out;
+}
+// crimp terminal PN for whichever connector a wire end lands on (''=splice/none)
+function terminalPN(ep){ if(!ep||epIsSplice(ep)) return ''; const c=cmap[ep.c]; if(!c) return '';
+  const s=jstSeries(c.type); if(s) return jstContactPN(s);
+  if(/^dtm?\d/.test(c.type||'')) return dtContactPN(c.gender);
+  if(c.type==='ring') return 'ring'; return ''; }
+
+// Union-find over endpoints → logical nets. Returns array of
+// {id, eps:[ep], wires:[w], pins:[{c,p}], signals:Set, signal, current, vclass, lengthMm}
+function computeNets(){
+  const parent={};
+  const find=x=>{ while(parent[x]!==undefined && parent[x]!==x){ parent[x]=parent[parent[x]]!==undefined?parent[parent[x]]:parent[x]; x=parent[x]; } return x; };
+  const root=x=>{ if(parent[x]===undefined) parent[x]=x; return find(x); };
+  const uni=(a,b)=>{ const ra=root(a), rb=root(b); if(ra!==rb) parent[ra]=rb; };
+  DOC.wires.forEach(w=>{ if(epExists(w.from)&&epExists(w.to)) uni(epKey(w.from),epKey(w.to)); });
+  const byRoot={};
+  DOC.wires.forEach(w=>{
+    if(!epExists(w.from)||!epExists(w.to)) return;
+    const r=root(epKey(w.from));
+    const n=byRoot[r]||(byRoot[r]={id:r,eps:[],epSeen:new Set(),wires:[],pins:[],signals:new Set(),current:0,vclass:'',lengthMm:0});
+    n.wires.push(w);
+    n.lengthMm+=(w.length||0);
+    if(w.signal) n.signals.add(w.signal);
+    if(w.current) n.current=Math.max(n.current,+w.current||0);
+    if(w.vclass==='HV') n.vclass='HV'; else if(w.vclass==='LV'&&n.vclass!=='HV') n.vclass='LV';
+    [w.from,w.to].forEach(ep=>{ const k=epKey(ep); if(!n.epSeen.has(k)){ n.epSeen.add(k); n.eps.push(ep); if(!epIsSplice(ep)) n.pins.push({c:ep.c,p:ep.p}); } });
+  });
+  return Object.values(byRoot).map(n=>{ n.signal=[...n.signals][0]||''; return n; });
+}
+function netOfWire(id){ return computeNets().find(n=>n.wires.some(w=>w.id===id)); }
+// propagate net-level fields (signal/current/vclass) to every wire on the same net
+function propagateNet(seedWire,fields){
+  const nets=computeNets(); const net=nets.find(n=>n.wires.some(w=>w.id===seedWire.id)); if(!net) return [seedWire];
+  net.wires.forEach(w=>{ Object.assign(w,fields); }); return net.wires;
+}
+
+// Each board hugs the bounding box of its (freely placed) connectors.
+function layoutBoards(){
+  (DOC.boards||[]).forEach(b=>{
+    const mem=DOC.connectors.filter(c=>c.board===b.id);
+    if(!mem.length){ b._x=b.x; b._y=b.y; b._w=MINBW; b._h=PADB*2+46; return; }
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    mem.forEach(c=>{ const bb=box(c); x0=Math.min(x0,bb.x); y0=Math.min(y0,bb.y); x1=Math.max(x1,bb.x+bb.w); y1=Math.max(y1,bb.y+bb.h); });
+    b._x=x0-PADB; b._y=y0-PADB; b._w=Math.max(MINBW,(x1-x0)+2*PADB); b._h=(y1-y0)+2*PADB;
+  });
+}
+// Push computed positions to the DOM and redraw everything that depends on them.
+function syncPositions(){
+  layoutBoards();
+  DOC.connectors.forEach(c=>{ const e=connEls[c.id]; if(e){ e.root.style.left=ax(c)+'px'; e.root.style.top=ay(c)+'px'; } });
+  (DOC.boards||[]).forEach(b=>{ const e=boardEls[b.id]; if(e){
+    e.style.left=b._x+'px'; e.style.top=b._y+'px'; e.style.width=b._w+'px'; e.style.height=b._h+'px';
+    const em=e.querySelector('.board-empty'); if(em) em.style.display=DOC.connectors.some(c=>c.board===b.id)?'none':'block';
+  } });
+  (DOC.splices||[]).forEach(s=>{ const e=spliceEls[s.id]; if(e){ e.style.left=(s.x-10)+'px'; e.style.top=(s.y-10)+'px'; } });
+  redrawAllWires(); repaintPins();
+}
+
+// ── Colour resolution ───────────────────────────────────────────────
+function ruleColor(signal){
+  if(!signal) return null;
+  const s=signal.toUpperCase();
+  for(const r of DOC.rules){ if(r.pat && s.includes(r.pat.toUpperCase())) return r.color; }
+  return null;
+}
+function wireColor(w){
+  if(!w.auto && w.color) return w.color;       // manual override
+  const rc=ruleColor(w.signal);                // colour-code match
+  if(rc) return rc;
+  if(DOC.autoColors) return PALETTE[hash(w.signal||w.id)%PALETTE.length];
+  return '#9aa7c2';                            // neutral when auto-colours off
+}
+function accentFor(c){ return ACCENTS[hash(c.id)%ACCENTS.length]; }
+
+// ════════════════════════════════════════════════════════════════════
+//  CONNECTOR RENDERING
+// ════════════════════════════════════════════════════════════════════
+function renderConnector(c){
+  const g=geom(c), accent=accentFor(c), jst=isJst(c.type);
+  const root=document.createElement('div');
+  root.className='conn'+(jst?' jst':''); root.dataset.id=c.id;
+  Object.assign(root.style,{left:ax(c)+'px',top:ay(c)+'px',width:g.width+'px',height:g.height+'px',
+    transform:(c.rot?`rotate(${c.rot}deg)`:''),transformOrigin:'center center'});
+
+  const hdr=document.createElement('div');
+  hdr.className='conn-hdr'; if(!jst) hdr.style.background=accent;
+  hdr.innerHTML=`<span class="cname">${esc(c.name||'Connector')}</span>`+
+    (c.gender?`<span class="gtag">${c.gender}</span>`:'')+
+    `<span class="ctag">${c.pins}P</span>`;
+  root.appendChild(hdr);
+
+  const sub=document.createElement('div');
+  sub.className='conn-sub';
+  if(jst){ sub.classList.add('jst-sub'); sub.innerHTML=jstGlyph()+`<span>${esc(typeLabel(c.type))}</span>`; }
+  else sub.textContent=typeLabel(c.type);
+  root.appendChild(sub);
+
+  const grid=document.createElement('div');
+  grid.className='pin-grid';
+  Object.assign(grid.style,{left:g.gridLeft+'px',top:g.gridTop+'px',width:g.bodyW+'px',height:g.bodyH+'px',position:'absolute'});
+  const pins=[], labels=c.pinLabels||{};
+  for(let i=0;i<c.pins;i++){
+    const row=Math.floor(i/g.cols), col=i%g.cols;
+    const p=document.createElement('div');
+    p.className='pin'+(i===0?' key':''); p.dataset.pin=i;
+    p.textContent=(i+1);
+    Object.assign(p.style,{left:col*(PINSIZE+PINGAP)+'px',top:row*(PINSIZE+PINGAP)+'px'});
+    const lbl=labels[i];
+    p.title=lbl?('Pin '+(i+1)+': '+lbl):('Pin '+(i+1)+' — drag to another pin to wire');
+    if(lbl) p.dataset.sig=lbl;
+    attachPinWire(c.id,i,p);
+    grid.appendChild(p); pins.push(p);
+    if(g.caps && lbl){   // per-pin signal caption below the (single) row
+      const cap=document.createElement('div'); cap.className='pin-cap'; cap.textContent=lbl; cap.title=lbl;
+      Object.assign(cap.style,{left:(g.gridLeft+col*(PINSIZE+PINGAP)-3)+'px',top:(g.gridTop+PINSIZE+3)+'px',width:(PINSIZE+6)+'px'});
+      root.appendChild(cap);
+    }
+  }
+  root.appendChild(grid);
+
+  attachConnDrag(c,hdr,root);
+  hdr.addEventListener('dblclick',ev=>{ ev.stopPropagation(); openConnEdit(c.id,root); });
+  root.addEventListener('mouseenter',()=>{ if(!selWire&&!dragSt) highlightConn(c.id); });
+  root.addEventListener('mouseleave',()=>{ if(!selWire&&!dragSt) clearHighlight(); });
+
+  canvas.appendChild(root);
+  connEls[c.id]={root,pins};
+}
+
+function attachConnDrag(c,handle,root){
+  handle.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    e.preventDefault(); e.stopPropagation();
+    if(e.shiftKey){ toggleMulti(c.id); return; }       // shift-click → multi-select toggle
+    const group=selMulti.has(c.id)&&selMulti.size>1;
+    pushUndo();
+    const sx=e.clientX, sy=e.clientY, ox=c.x, oy=c.y; let moved=false, lastBc=0;
+    const mem=!!c.board;
+    const orig=group?[...selMulti].map(id=>({id,x:(cmap[id]||smap[id]).x,y:(cmap[id]||smap[id]).y})):null;
+    const mv=ev=>{
+      const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
+      if(Math.abs(dx)>2||Math.abs(dy)>2) moved=true;
+      if(group){ orig.forEach(o=>{ const it=cmap[o.id]||smap[o.id]; if(it){ it.x=Math.round(o.x+dx); it.y=Math.round(o.y+dy); } }); syncPositions(); }
+      else { c.x=Math.round(ox+dx); c.y=Math.round(oy+dy);
+        if(mem) syncPositions(); else { root.style.left=ax(c)+'px'; root.style.top=ay(c)+'px'; redrawWiresFor(c.id); } }
+      const now=performance.now();
+      if(now-lastBc>45){ lastBc=now; if(group) broadcastMoves([...selMulti]); else wsSend({type:'conn_move',id:c.id,x:c.x,y:c.y}); }
+    };
+    const up=()=>{
+      window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      if(moved){ if(group) broadcastMoves([...selMulti]); else wsSend({type:'conn_move',id:c.id,x:c.x,y:c.y}); scheduleSave(); }
+      else { if(!group){ clearMulti(); selectConn(c.id,root); } }
+    };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+}
+
+function rebuildConnector(c){
+  const old=connEls[c.id]; if(old) old.root.remove();
+  delete connEls[c.id];
+  renderConnector(c);
+  syncPositions();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  WIRE RENDERING
+// ════════════════════════════════════════════════════════════════════
+// Each wire leaves its OWN pin with a short downward stub, then routes to the
+// target pin's stub. An optional w.mid waypoint (set by dragging the wire) makes
+// the route pass through that point so wires can be moved out of the way.
+// control points routed between the two endpoint exits, through any waypoints
+function wireCtrl(w){ const A=epExit(w.from), B=epExit(w.to);
+  return [{x:A.x,y:A.ex}, ...((w.mids||[])), {x:B.x,y:B.ex}]; }
+function smoothThrough(pts){   // Catmull-Rom → cubic beziers (flexible cable through all points)
+  if(pts.length<2) return ''; let d='';
+  for(let i=0;i<pts.length-1;i++){ const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||pts[i+1];
+    const c1={x:p1.x+(p2.x-p0.x)/6,y:p1.y+(p2.y-p0.y)/6}, c2={x:p2.x-(p3.x-p1.x)/6,y:p2.y-(p3.y-p1.y)/6};
+    d+=` C${c1.x.toFixed(1)} ${c1.y.toFixed(1)}, ${c2.x.toFixed(1)} ${c2.y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`; }
+  return d;
+}
+function orthoThrough(pts){   // right-angle segments through each waypoint
+  let d=''; for(let i=1;i<pts.length;i++){ const a=pts[i-1],b=pts[i]; d+=` L${b.x} ${a.y} L${b.x} ${b.y}`; } return d;
+}
+function wirePath(w){
+  if(!epExists(w.from)||!epExists(w.to)) return '';
+  const A=epExit(w.from), B=epExit(w.to);
+  const pts=wireCtrl(w);
+  let d=`M${A.x} ${A.y} L${A.x} ${A.ex}`;     // stub out of pin A
+  d+=(orthoRouting?orthoThrough(pts):smoothThrough(pts));
+  d+=` L${B.x} ${B.y}`;                       // stub into pin B
+  return d;
+}
+function renderWire(w){
+  const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+  const casing=document.createElementNS('http://www.w3.org/2000/svg','path');
+  const core=document.createElementNS('http://www.w3.org/2000/svg','path');
+  const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
+  [casing,core,hit].forEach(p=>{ p.setAttribute('fill','none'); p.setAttribute('stroke-linecap','round'); p.setAttribute('stroke-linejoin','round'); });
+  casing.setAttribute('stroke','#fff');
+  casing.style.pointerEvents='none'; core.style.pointerEvents='none';
+  hit.setAttribute('stroke','transparent'); hit.setAttribute('stroke-width','13');
+  hit.style.pointerEvents='stroke'; hit.style.cursor='grab';
+  hit.addEventListener('mouseenter',()=>{ if(!selWire) hoverWire(w.id,true); });
+  hit.addEventListener('mouseleave',()=>{ if(!selWire) hoverWire(w.id,false); });
+  // double-click removes the nearest bend (or straightens if it was the last)
+  hit.addEventListener('dblclick',ev=>{ ev.stopPropagation(); ev.preventDefault(); removeNearestBend(w,canvasPt(ev)); });
+  hit.addEventListener('mousedown',ev=>{
+    if(ev.button!==0) return; ev.stopPropagation(); ev.preventDefault();
+    const start=canvasPt(ev); let moved=false, lastBc=0, gi=-1;
+    const mv=e2=>{
+      const p=canvasPt(e2);
+      if(!moved && (Math.abs(p.x-start.x)>3||Math.abs(p.y-start.y)>3)){ moved=true; pushUndo(); gi=grabWireBend(w,start); }
+      if(moved && gi>=0){ w.mids[gi]={x:Math.round(p.x),y:Math.round(p.y)}; updateWire(w);
+        const now=performance.now(); if(now-lastBc>45){ lastBc=now; wsSend({type:'wire_update',w}); } }
+    };
+    const up=e2=>{
+      window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      if(moved){ wsSend({type:'wire_update',w}); scheduleSave(); }
+      else selectWire(w.id,e2);
+    };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+  g.appendChild(casing); g.appendChild(core); g.appendChild(hit);
+  svg.appendChild(g);
+  wireEls[w.id]={g,casing,core,hit};
+  updateWire(w);
+}
+function updateWire(w){
+  const e=wireEls[w.id]; if(!e) return;
+  const d=wirePath(w);
+  const col=wireColor(w), cw=AWG_W[w.gauge]||2.6;
+  const sel=selWire===w.id;
+  [e.casing,e.core,e.hit].forEach(p=>p.setAttribute('d',d));
+  e.core.setAttribute('stroke',col);
+  e.core.setAttribute('stroke-width',cw);
+  e.casing.setAttribute('stroke',sel?'#1d2b45':'#fff');
+  e.casing.setAttribute('stroke-width',cw+(sel?4.5:2.4));
+  e.g.style.opacity=(dimWires&&!sel&&!dimWires.has(w.id))?'0.12':'1';
+}
+function straightenWire(id){ const w=wmap[id]; if(!w||!w.mids||!w.mids.length) return; pushUndo(); w.mids=[]; updateWire(w); wsSend({type:'wire_update',w}); scheduleSave(); }
+function distToSeg(p,a,b){ const dx=b.x-a.x,dy=b.y-a.y,L2=dx*dx+dy*dy; let t=L2?((p.x-a.x)*dx+(p.y-a.y)*dy)/L2:0; t=Math.max(0,Math.min(1,t)); const cx=a.x+t*dx,cy=a.y+t*dy; return Math.hypot(p.x-cx,p.y-cy); }
+// grab an existing bend near pt, else insert a new one on the nearest segment; returns its index in w.mids
+function grabWireBend(w,pt){
+  w.mids=w.mids||[]; const TH=14/scale;
+  let best=-1,bd=TH; w.mids.forEach((m,i)=>{ const dd=Math.hypot(m.x-pt.x,m.y-pt.y); if(dd<bd){ bd=dd; best=i; } });
+  if(best>=0) return best;
+  const ctrl=wireCtrl(w); let seg=0,sd=Infinity;
+  for(let i=0;i<ctrl.length-1;i++){ const d=distToSeg(pt,ctrl[i],ctrl[i+1]); if(d<sd){ sd=d; seg=i; } }
+  w.mids.splice(seg,0,{x:Math.round(pt.x),y:Math.round(pt.y)}); return seg;
+}
+function removeNearestBend(w,pt){
+  if(!w.mids||!w.mids.length) return; let best=-1,bd=20/scale;
+  w.mids.forEach((m,i)=>{ const dd=Math.hypot(m.x-pt.x,m.y-pt.y); if(dd<bd){ bd=dd; best=i; } });
+  pushUndo(); if(best>=0) w.mids.splice(best,1); else w.mids=[];
+  updateWire(w); wsSend({type:'wire_update',w}); scheduleSave();
+}
+function redrawWiresFor(id){      // id = connector OR splice id
+  DOC.wires.forEach(w=>{ if(epTouches(w.from,id)||epTouches(w.to,id)) updateWire(w); });
+  repaintPins(id);
+}
+function redrawAllWires(){ DOC.wires.forEach(updateWire); }
+
+// hover highlight a single wire (without full selection)
+function hoverWire(id,on){
+  const w=wmap[id], e=wireEls[id]; if(!w||!e) return;
+  e.casing.setAttribute('stroke',on?'#2456b8':'#fff');
+  e.casing.setAttribute('stroke-width',(AWG_W[w.gauge]||2.6)+(on?4:2.4));
+}
+
+// ── Pin / splice colour dots ────────────────────────────────────────
+function repaintPins(onlyConn){
+  const targets=onlyConn?[onlyConn]:Object.keys(connEls);
+  targets.forEach(cid=>{ const ce=connEls[cid]; if(!ce) return;
+    ce.pins.forEach(p=>{ p.classList.remove('wired'); p.style.background=''; p.style.borderColor=''; p.style.color=''; });
+  });
+  if(!onlyConn) Object.values(spliceEls).forEach(el=>{ el.style.background=''; });
+  DOC.wires.forEach(w=>{
+    const col=wireColor(w);
+    [w.from,w.to].forEach(ep=>{
+      if(epIsSplice(ep)){ if(onlyConn) return; const el=spliceEls[ep.s]; if(el) el.style.background=col; return; }
+      if(onlyConn && ep.c!==onlyConn) return;
+      const ce=connEls[ep.c]; if(!ce||!ce.pins[ep.p]) return;
+      const p=ce.pins[ep.p];
+      p.classList.add('wired'); p.style.background=col; p.style.color=textOn(col);
+      const sig=w.signal||p.dataset.sig||'';
+      p.title='Pin '+(ep.p+1)+(sig?(' — '+sig):'')+' → '+epLabel(ep===w.from?w.to:w.from);
+    });
+  });
+}
+function connFullName(c){ if(!c) return '?'; const b=c.board?bmap[c.board]:null; return (b?b.name+' / ':'')+c.name; }
+function endLabel(w,which){ return epLabel(which==='to'?w.to:w.from); }
+function textOn(hex){
+  const c=hex.replace('#',''); if(c.length<6) return '#fff';
+  const r=parseInt(c.slice(0,2),16),g=parseInt(c.slice(2,4),16),b=parseInt(c.slice(4,6),16);
+  return (0.299*r+0.587*g+0.114*b)>150?'#1d2b45':'#fff';
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  HIGHLIGHT / DIM
+// ════════════════════════════════════════════════════════════════════
+let dimWires=null;
+function highlightConn(connId){
+  const keepW=new Set(); const keepC=new Set([connId]);
+  DOC.wires.forEach(w=>{ if(epTouches(w.from,connId)||epTouches(w.to,connId)){ keepW.add(w.id);
+    if(!epIsSplice(w.from)) keepC.add(w.from.c); if(!epIsSplice(w.to)) keepC.add(w.to.c); } });
+  Object.keys(connEls).forEach(cid=>connEls[cid].root.classList.toggle('dim',!keepC.has(cid)));
+  dimWires=keepW; redrawAllWires();
+}
+function clearHighlight(){
+  Object.keys(connEls).forEach(cid=>connEls[cid].root.classList.remove('dim'));
+  dimWires=null; redrawAllWires();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ADD WIRE (drag pin → pin)
+// ════════════════════════════════════════════════════════════════════
+let dragSt=null, tempPath=null, dropTarget=null;
+function attachPinWire(connId,pinIdx,el){
+  el.addEventListener('mousedown',e=>{ if(e.button!==0) return; beginWire({c:connId,p:pinIdx},e); });
+}
+function beginWire(srcEp,e){
+    e.preventDefault(); e.stopPropagation();
+    dragSt=srcEp;
+    clearHighlight();
+    tempPath=document.createElementNS('http://www.w3.org/2000/svg','path');
+    tempPath.setAttribute('stroke','var(--accent2)'); tempPath.setAttribute('stroke-width','2.6');
+    tempPath.setAttribute('stroke-dasharray','6,5'); tempPath.setAttribute('fill','none');
+    tempPath.setAttribute('stroke-linecap','round');
+    svg.appendChild(tempPath);
+    const start=epPos(srcEp);
+    const mv=ev=>{
+      const p=canvasPt(ev);
+      const k=Math.max(30,Math.abs(start.x-p.x)*0.4);
+      tempPath.setAttribute('d',`M${start.x} ${start.y} C${start.x+k} ${start.y}, ${p.x-k} ${p.y}, ${p.x} ${p.y}`);
+      // look through the (on-top) wire layer to find a pin or splice under the cursor
+      const stack=document.elementsFromPoint(ev.clientX,ev.clientY)||[];
+      const hitEl=stack.find(el=>el.classList&&(el.classList.contains('pin')||el.classList.contains('splice')))||null;
+      if(dropTarget&&dropTarget.el!==hitEl){ dropTarget.el.classList.remove('pin-hl','splice-hl'); dropTarget=null; }
+      if(hitEl&&!dropTarget){
+        if(hitEl.classList.contains('splice')){ dropTarget={el:hitEl,ep:{s:hitEl.dataset.id}}; hitEl.classList.add('splice-hl'); }
+        else { dropTarget={el:hitEl,ep:{c:hitEl.closest('.conn').dataset.id,p:+hitEl.dataset.pin}}; hitEl.classList.add('pin-hl'); }
+      }
+    };
+    const up=()=>{
+      window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      tempPath.remove(); tempPath=null;
+      const tgt=dropTarget;
+      if(tgt) tgt.el.classList.remove('pin-hl','splice-hl');
+      dropTarget=null;
+      const src=dragSt; dragSt=null;
+      if(tgt && epKey(tgt.ep)!==epKey(src)) createWire(src,tgt.ep);
+    };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+}
+function createWire(from,to){
+  pushUndo();
+  const w={id:uid('w_'),from:from,to:to,
+           signal:'',color:'',auto:true,length:0,gauge:'20',current:0,vclass:'',cable:'',shield:false,
+           stripA:null,stripB:null,service:0,mids:[],notes:''};
+  DOC.wires.push(w); wmap[w.id]=w;
+  renderWire(w); repaintPins(); refreshLegend(); scheduleSave();
+  wsSend({type:'wire_add',w});
+  selectWire(w.id,null,midOfWire(w));
+}
+function midOfWire(w){
+  const pa=epPos(w.from), pb=epPos(w.to);
+  const zr=zoomwrap.getBoundingClientRect();
+  return {clientX:zr.left+((pa.x+pb.x)/2)*scale, clientY:zr.top+((pa.y+pb.y)/2)*scale};
+}
+function removeWire(id){
+  const e=wireEls[id]; if(e){ e.g.remove(); delete wireEls[id]; }
+  DOC.wires=DOC.wires.filter(w=>w.id!==id); delete wmap[id];
+  // drop the wire from any cable group
+  (DOC.cables||[]).forEach(cb=>{ cb.wires=cb.wires.filter(x=>x!==id); });
+  wsSend({type:'wire_delete',id});
+  repaintPins(); refreshLegend(); refreshSchedule(); scheduleSave();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SPLICES (net junctions)
+// ════════════════════════════════════════════════════════════════════
+function snap(v){ const g=DOC.grid||0; return g>0?Math.round(v/g)*g:v; }
+function renderSplice(s){
+  const el=document.createElement('div'); el.className='splice'+(selSplice===s.id?' sel':''); el.dataset.id=s.id;
+  el.style.left=(s.x-10)+'px'; el.style.top=(s.y-10)+'px';
+  el.title='Splice'+(s.name?(' — '+s.name):'')+' · drag to move · drag the ring to wire';
+  const h=document.createElement('div'); h.className='splice-handle'; h.title='Drag to a pin/splice to wire'; el.appendChild(h);
+  if(s.name){ const lb=document.createElement('div'); lb.className='slabel'; lb.textContent=s.name; el.appendChild(lb); }
+  h.addEventListener('mousedown',e=>{ if(e.button!==0) return; beginWire({s:s.id},e); });
+  el.addEventListener('mouseenter',()=>{ if(!selWire&&!dragSt) highlightConn(s.id); });
+  el.addEventListener('mouseleave',()=>{ if(!selWire&&!dragSt) clearHighlight(); });
+  el.addEventListener('dblclick',ev=>{ ev.stopPropagation(); openSpliceEdit(s.id,el); });
+  attachSpliceDrag(s,el);
+  canvas.appendChild(el); spliceEls[s.id]=el;
+}
+function attachSpliceDrag(s,el){
+  el.addEventListener('mousedown',e=>{
+    if(e.button!==0||e.target.closest('.splice-handle')) return;
+    e.preventDefault(); e.stopPropagation();
+    if(e.shiftKey){ toggleMulti(s.id); return; }
+    const group=selMulti.has(s.id)&&selMulti.size>1; pushUndo();
+    const sx=e.clientX,sy=e.clientY,ox=s.x,oy=s.y; let moved=false,lastBc=0;
+    const orig=group?[...selMulti].map(id=>({id,x:(cmap[id]||smap[id]).x,y:(cmap[id]||smap[id]).y})):null;
+    const mv=ev=>{ const dx=(ev.clientX-sx)/scale,dy=(ev.clientY-sy)/scale;
+      if(Math.abs(dx)>2||Math.abs(dy)>2) moved=true;
+      if(group){ orig.forEach(o=>{ const it=cmap[o.id]||smap[o.id]; if(it){ it.x=Math.round(o.x+dx); it.y=Math.round(o.y+dy); } }); syncPositions(); }
+      else { s.x=snap(Math.round(ox+dx)); s.y=snap(Math.round(oy+dy)); el.style.left=(s.x-10)+'px'; el.style.top=(s.y-10)+'px'; redrawWiresFor(s.id); }
+      const now=performance.now(); if(now-lastBc>45){ lastBc=now; if(group) broadcastMoves([...selMulti]); else wsSend({type:'splice_move',id:s.id,x:s.x,y:s.y}); } };
+    const up=()=>{ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      if(moved){ if(group) broadcastMoves([...selMulti]); else wsSend({type:'splice_move',id:s.id,x:s.x,y:s.y}); scheduleSave(); }
+      else { if(!group){ clearMulti(); selectSplice(s.id); } } };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+}
+function addSplice(){
+  pushUndo();
+  const x=snap(Math.round((scroll.scrollLeft+scroll.clientWidth/2)/scale));
+  const y=snap(Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale));
+  const s={id:uid('sp_'),name:'',x,y,kind:'splice'};
+  DOC.splices.push(s); smap[s.id]=s; renderSplice(s); wsSend({type:'splice_add',s});
+  scheduleSave(); checkEmpty(); selectSplice(s.id);
+}
+function deleteSpliceCore(id){
+  DOC.wires.filter(w=>epTouches(w.from,id)||epTouches(w.to,id)).forEach(w=>removeWire(w.id));
+  if(spliceEls[id]){ spliceEls[id].remove(); delete spliceEls[id]; }
+  DOC.splices=DOC.splices.filter(s=>s.id!==id); delete smap[id];
+  wsSend({type:'splice_delete',id});
+  if(selSplice===id) selSplice=null;
+}
+function deleteSplice(id){
+  pushUndo(); deleteSpliceCore(id);
+  refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty();
+}
+function selectSplice(id){ deselectAll(); selSplice=id; const el=spliceEls[id]; if(el) el.classList.add('sel'); }
+// compact splice editor popover
+const sppop=document.createElement('div'); sppop.className='pop'; sppop.id='sppop'; sppop.style.width='230px';
+sppop.innerHTML=`<div class="pttl">Splice</div>
+  <div class="pfld"><label>Label (optional)</label><input type="text" id="sppop-name" autocomplete="off" placeholder="e.g. GND-STAR"></div>
+  <div class="pop-actions"><button class="save" id="sppop-save">Done</button><button class="del" id="sppop-del">Delete</button></div>`;
+document.body.appendChild(sppop);
+let sppopId=null;
+function openSpliceEdit(id,anchor){
+  deselectAll(); sppopId=id; const s=smap[id]; if(!s) return;
+  document.getElementById('sppop-name').value=s.name||'';
+  sppop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  sppop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-242))+'px';
+  sppop.style.top=Math.min(r.bottom+8,window.innerHeight-160)+'px';
+  setTimeout(()=>document.getElementById('sppop-name').focus(),40);
+}
+function closeSppop(){ sppop.style.display='none'; sppopId=null; }
+document.getElementById('sppop-name').addEventListener('input',()=>{ const s=smap[sppopId]; if(!s) return;
+  s.name=document.getElementById('sppop-name').value.trim();
+  const el=spliceEls[s.id]; if(el){ let lb=el.querySelector('.slabel'); if(s.name){ if(!lb){ lb=document.createElement('div'); lb.className='slabel'; el.appendChild(lb);} lb.textContent=s.name; } else if(lb) lb.remove(); }
+  wsSend({type:'splice_update',s}); scheduleSave();
+});
+document.getElementById('sppop-save').addEventListener('click',closeSppop);
+document.getElementById('sppop-del').addEventListener('click',()=>{ const id=sppopId; closeSppop(); deleteSplice(id); });
+document.addEventListener('mousedown',e=>{ if(sppop.style.display==='block' && !sppop.contains(e.target) && !e.target.closest('.splice')) closeSppop(); });
+
+// ════════════════════════════════════════════════════════════════════
+//  WIRE EDIT POPOVER
+// ════════════════════════════════════════════════════════════════════
+const wpop=document.createElement('div'); wpop.className='pop'; wpop.id='wpop';
+wpop.innerHTML=`
+  <div class="pttl" id="wpop-ttl"></div>
+  <div class="pfld"><label>Signal / wire name</label><input type="text" id="wpop-sig" placeholder="e.g. CAN-H, GND, APPS1" autocomplete="off"></div>
+  <div class="pfld"><label>Colour</label>
+    <div class="colorline">
+      <input type="color" id="wpop-col">
+      <input type="text" id="wpop-hex" placeholder="#rrggbb" autocomplete="off">
+      <button class="auto" id="wpop-auto" title="Use automatic colour from code">Auto</button>
+    </div>
+  </div>
+  <div class="row2">
+    <div class="pfld" style="flex:1"><label>Length (<span id="wpop-unit">mm</span>)</label><input type="number" id="wpop-len" min="0" step="1"></div>
+    <div class="pfld" style="flex:1"><label>Service loop (<span id="wpop-unit2">mm</span>)</label><input type="number" id="wpop-svc" min="0" step="1" placeholder="0"></div>
+  </div>
+  <div class="row2">
+    <div class="pfld" style="flex:1"><label>Gauge (AWG)</label><select id="wpop-gauge"></select></div>
+    <div class="pfld" style="flex:1"><label>Current (A)</label><input type="number" id="wpop-cur" min="0" step="0.1" placeholder="0"></div>
+  </div>
+  <div class="row2">
+    <div class="pfld" style="flex:1"><label>Voltage class</label>
+      <div class="seg" id="wpop-vclass"><button data-g="">—</button><button data-g="LV">LV</button><button data-g="HV">HV</button></div>
+    </div>
+    <div class="pfld" style="flex:1"><label>Strip A / B (mm)</label>
+      <div style="display:flex;gap:6px"><input type="number" id="wpop-stripA" min="0" step="0.5" placeholder="6" style="flex:1"><input type="number" id="wpop-stripB" min="0" step="0.5" placeholder="6" style="flex:1"></div>
+    </div>
+  </div>
+  <div class="row2">
+    <div class="pfld" style="flex:1.4"><label>Cable / twist group</label><input type="text" id="wpop-cable" autocomplete="off" placeholder="e.g. CAN-bus"></div>
+    <div class="pfld" style="flex:1"><label>Shielded</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:7px 0"><input type="checkbox" id="wpop-shield"> drain/braid</label>
+    </div>
+  </div>
+  <div class="pfld"><label>Apply signal / current / class to</label>
+    <div class="seg" id="wpop-scope"><button data-s="wire" class="sel">This wire</button><button data-s="net">Whole net</button></div>
+  </div>
+  <div id="wpop-eng" class="wpop-eng"></div>
+  <div class="pop-actions">
+    <button class="save" id="wpop-save">Done</button>
+    <button id="wpop-straight" style="background:#eef2fb;color:var(--ink);display:none">Straighten</button>
+    <button class="del" id="wpop-del">Delete</button>
+  </div>`;
+document.body.appendChild(wpop);
+GAUGES.forEach(g=>{ const o=document.createElement('option'); o.value=g; o.textContent=g+' AWG'; document.getElementById('wpop-gauge').appendChild(o); });
+
+let wpopId=null, wpopScope='wire';
+function selectWire(id,evt,fakePt){
+  deselectAll();
+  const w=wmap[id]; if(!w) return;
+  wpopDirty=false;
+  selWire=id; updateWire(w);
+  const U=DOC.unit, conv=v=>v?Math.round((v/UNIT_FACTOR[U])*10)/10:'';
+  document.getElementById('wpop-ttl').innerHTML=`<b>${esc(epLabel(w.from))}</b> → <b>${esc(epLabel(w.to))}</b>`;
+  document.getElementById('wpop-sig').value=w.signal||'';
+  document.getElementById('wpop-len').value=conv(w.length);
+  document.getElementById('wpop-svc').value=conv(w.service);
+  document.getElementById('wpop-unit').textContent=U; document.getElementById('wpop-unit2').textContent=U;
+  document.getElementById('wpop-gauge').value=w.gauge||'20';
+  document.getElementById('wpop-cur').value=w.current||'';
+  document.getElementById('wpop-stripA').value=(w.stripA!=null?w.stripA:'');
+  document.getElementById('wpop-stripB').value=(w.stripB!=null?w.stripB:'');
+  document.getElementById('wpop-cable').value=w.cable||'';
+  document.getElementById('wpop-shield').checked=!!w.shield;
+  segSelD('wpop-vclass',w.vclass||'');
+  setWpopScope('wire');
+  syncWpopColor(w); renderWpopEng(w);
+  document.getElementById('wpop-straight').style.display=(w.mids&&w.mids.length)?'block':'none';
+  hlPins(w,true);
+  const pt=evt||fakePt;
+  wpop.style.display='block';
+  const px=Math.max(8,Math.min((pt?pt.clientX:200)-160,window.innerWidth-330));
+  const py=Math.min((pt?pt.clientY:200)+14,window.innerHeight-440);
+  wpop.style.left=px+'px'; wpop.style.top=Math.max(60,py)+'px';
+  wpopId=id;
+  setTimeout(()=>document.getElementById('wpop-sig').focus(),40);
+}
+function setWpopScope(s){ wpopScope=s; document.querySelectorAll('#wpop-scope button').forEach(b=>b.classList.toggle('sel',b.dataset.s===s)); }
+function segSelD(groupId,val){ document.querySelectorAll('#'+groupId+' button').forEach(b=>b.classList.toggle('sel',b.dataset.g===val)); }
+// live electrical readout in the wire popover
+function renderWpopEng(w){
+  const el=document.getElementById('wpop-eng'); if(!el) return;
+  const net=netOfWire(w.id); const cur=net?net.current:(+w.current||0);
+  const sp=awgSpec(w.gauge); const vd=wireVdrop(w,cur); const pct=DOC.sysV?vd/DOC.sysV*100:0;
+  const over=cur>sp.amp; const vdHigh=DOC.sysV&&pct>3;
+  el.innerHTML=`<div class="eng-row"><span>Area</span><b>${sp.mm2} mm²</b></div>`+
+    `<div class="eng-row"><span>Ampacity</span><b class="${over?'bad':''}">${sp.amp} A${over?' (under-sized!)':''}</b></div>`+
+    `<div class="eng-row"><span>V-drop @ ${cur||0} A</span><b class="${vdHigh?'bad':''}">${vd.toFixed(3)} V${DOC.sysV?` (${pct.toFixed(1)}%)`:''}</b></div>`+
+    `<div class="eng-row"><span>Mass</span><b>${Math.round(wireMassG(w))} g</b></div>`;
+}
+function syncWpopColor(w){
+  const eff=wireColor(w);
+  document.getElementById('wpop-col').value=toHex(eff);
+  document.getElementById('wpop-hex').value=w.auto?'':(w.color||'');
+  document.getElementById('wpop-auto').classList.toggle('on',!!w.auto);
+}
+function hlPins(w,on){
+  [w.from,w.to].forEach(ep=>{
+    if(epIsSplice(ep)){ const el=spliceEls[ep.s]; if(el) el.classList.toggle('splice-hl',on); }
+    else { const ce=connEls[ep.c]; if(ce&&ce.pins[ep.p]) ce.pins[ep.p].classList.toggle('pin-hl',on); }
+  });
+}
+function closeWpop(){
+  if(wpopId){ const w=wmap[wpopId]; if(w) hlPins(w,false); }
+  wpop.style.display='none'; wpopId=null;
+  if(selWire){ selWire=null; redrawAllWires(); }
+}
+let wpopDirty=false;
+function markWpopEdit(){ if(!wpopDirty){ pushUndo(); wpopDirty=true; } }
+// apply a set of net-level fields either to the wire or to every wire in its net
+function applyNetFields(w,fields){
+  markWpopEdit();
+  const targets=(wpopScope==='net')?propagateNet(w,fields):[w];
+  targets.forEach(x=>{ Object.assign(x,fields); updateWire(x); wsSend({type:'wire_update',x}); });
+}
+function applyWpop(){
+  const w=wmap[wpopId]; if(!w) return;
+  const U=DOC.unit;
+  const lv=parseFloat(document.getElementById('wpop-len').value);
+  const sv=parseFloat(document.getElementById('wpop-svc').value);
+  markWpopEdit();
+  w.length=isNaN(lv)?0:Math.round(lv*UNIT_FACTOR[U]);
+  w.service=isNaN(sv)?0:Math.round(sv*UNIT_FACTOR[U]);
+  w.gauge=document.getElementById('wpop-gauge').value;
+  const sa=parseFloat(document.getElementById('wpop-stripA').value); w.stripA=isNaN(sa)?null:sa;
+  const sb=parseFloat(document.getElementById('wpop-stripB').value); w.stripB=isNaN(sb)?null:sb;
+  w.cable=document.getElementById('wpop-cable').value.trim();        // cable group spans nets (twisted pair)
+  w.shield=document.getElementById('wpop-shield').checked;
+  // signal + current are net-level (respect scope)
+  const sig=document.getElementById('wpop-sig').value.trim();
+  const cur=parseFloat(document.getElementById('wpop-cur').value)||0;
+  applyNetFields(w,{signal:sig,current:cur});
+  updateWire(w); syncWpopColor(w); renderWpopEng(w); repaintPins(); refreshLegend(); refreshSchedule();
+  wsSend({type:'wire_update',w}); scheduleSave();
+}
+['wpop-sig','wpop-len','wpop-svc','wpop-cur','wpop-stripA','wpop-stripB','wpop-cable'].forEach(id=>document.getElementById(id).addEventListener('input',applyWpop));
+document.getElementById('wpop-gauge').addEventListener('change',applyWpop);
+document.getElementById('wpop-shield').addEventListener('change',applyWpop);
+document.querySelectorAll('#wpop-vclass button').forEach(b=>b.addEventListener('click',()=>{
+  const w=wmap[wpopId]; if(!w) return; segSelD('wpop-vclass',b.dataset.g);
+  applyNetFields(w,{vclass:b.dataset.g}); renderWpopEng(w); refreshSchedule(); scheduleSave();
+}));
+document.querySelectorAll('#wpop-scope button').forEach(b=>b.addEventListener('click',()=>setWpopScope(b.dataset.s)));
+document.getElementById('wpop-col').addEventListener('input',e=>{
+  const w=wmap[wpopId]; if(!w) return; markWpopEdit(); w.auto=false; w.color=e.target.value;
+  document.getElementById('wpop-hex').value=w.color;
+  document.getElementById('wpop-auto').classList.remove('on');
+  updateWire(w); repaintPins(); refreshSchedule(); wsSend({type:'wire_update',w}); scheduleSave();
+});
+document.getElementById('wpop-hex').addEventListener('input',e=>{
+  const w=wmap[wpopId]; if(!w) return; const v=e.target.value.trim();
+  if(/^#?[0-9a-fA-F]{6}$/.test(v)){ markWpopEdit(); w.auto=false; w.color=v[0]==='#'?v:'#'+v;
+    document.getElementById('wpop-col').value=w.color; document.getElementById('wpop-auto').classList.remove('on');
+    updateWire(w); repaintPins(); refreshSchedule(); wsSend({type:'wire_update',w}); scheduleSave(); }
+});
+document.getElementById('wpop-auto').addEventListener('click',()=>{
+  const w=wmap[wpopId]; if(!w) return; markWpopEdit(); w.auto=true; w.color='';
+  syncWpopColor(w); updateWire(w); repaintPins(); refreshSchedule(); wsSend({type:'wire_update',w}); scheduleSave();
+});
+document.getElementById('wpop-del').addEventListener('click',()=>{ const id=wpopId; closeWpop(); removeWire(id); });
+document.getElementById('wpop-straight').addEventListener('click',()=>{ if(wpopId){ straightenWire(wpopId); document.getElementById('wpop-straight').style.display='none'; } });
+document.getElementById('wpop-save').addEventListener('click',closeWpop);
+
+// ════════════════════════════════════════════════════════════════════
+//  CONNECTOR EDIT POPOVER
+// ════════════════════════════════════════════════════════════════════
+const cpop=document.createElement('div'); cpop.className='pop'; cpop.id='cpop'; cpop.style.width='300px';
+cpop.innerHTML=`
+  <div class="pttl">Edit connector</div>
+  <div class="pfld"><label>Name / location</label><input type="text" id="cpop-name" autocomplete="off"></div>
+  <div class="pfld"><label>Type</label><select id="cpop-type"></select></div>
+  <div class="row2">
+    <div class="pfld" style="flex:1"><label>Pins</label><input type="number" id="cpop-pins" min="1" max="64"></div>
+    <div class="pfld" style="flex:1"><label>Columns</label><input type="number" id="cpop-cols" min="1" max="16"></div>
+  </div>
+  <div class="pfld"><label>Gender</label>
+    <div class="seg" id="cpop-gender">
+      <button data-g="">—</button><button data-g="M">Male</button><button data-g="F">Female</button>
+    </div>
+  </div>
+  <div class="pfld"><label>Mounted on (PCB)</label><select id="cpop-board"></select></div>
+  <div class="pfld"><label>Housing part no. (optional, overrides library)</label><input type="text" id="cpop-partno" autocomplete="off" placeholder="e.g. XHP-3"></div>
+  <div class="row2">
+    <button id="cpop-pinlabels" style="flex:1;padding:8px;border:1.5px solid var(--card-border);border-radius:9px;background:#eef2fb;color:var(--ink);font-size:12px;font-weight:700;cursor:pointer">✎ Pin labels</button>
+    <button id="cpop-rotate" style="flex:1;padding:8px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;cursor:pointer">↻ Rotate 90°</button>
+    <button id="cpop-savetpl" style="flex:1;padding:8px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;cursor:pointer">📚 Library</button>
+  </div>
+  <div class="pop-actions"><button class="save" id="cpop-save">Done</button><button class="del" id="cpop-del">Delete</button></div>`;
+document.body.appendChild(cpop);
+TYPES.forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name; document.getElementById('cpop-type').appendChild(o); });
+let cpopId=null, cpopGender='';
+document.getElementById('cpop-type').addEventListener('change',e=>{
+  applyTypeDefaults(e.target, document.getElementById('cpop-pins'), document.getElementById('cpop-cols'), true);
+});
+document.getElementById('cpop-pins').addEventListener('input',()=>{
+  if(isSingle(document.getElementById('cpop-type').value)) document.getElementById('cpop-cols').value=document.getElementById('cpop-pins').value;
+});
+document.querySelectorAll('#cpop-gender button').forEach(b=>b.addEventListener('click',()=>{ cpopGender=b.dataset.g; segSel('cpop-gender',cpopGender); }));
+function openConnEdit(id,anchor){
+  deselectAll(); pushUndo();
+  const c=cmap[id]; if(!c) return; cpopId=id;
+  document.getElementById('cpop-name').value=c.name||'';
+  document.getElementById('cpop-type').value=TYPE_BY_ID[c.type]?c.type:'custom';
+  document.getElementById('cpop-pins').value=c.pins;
+  document.getElementById('cpop-cols').value=isSingle(c.type)?c.pins:c.cols;
+  document.getElementById('cpop-cols').disabled=isSingle(c.type);
+  cpopGender=c.gender||''; segSel('cpop-gender',cpopGender);
+  document.getElementById('cpop-partno').value=c.partno||'';
+  populateBoardSelect(document.getElementById('cpop-board'),c.board||'');
+  cpop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  cpop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-312))+'px';
+  cpop.style.top=Math.min(r.bottom+8,window.innerHeight-340)+'px';
+  setTimeout(()=>document.getElementById('cpop-name').focus(),40);
+}
+function closeCpop(){ cpop.style.display='none'; cpopId=null; }
+function applyCpop(){
+  const c=cmap[cpopId]; if(!c) return;
+  c.name=document.getElementById('cpop-name').value.trim()||'Connector';
+  c.type=document.getElementById('cpop-type').value;
+  c.pins=Math.max(1,Math.min(64,parseInt(document.getElementById('cpop-pins').value)||1));
+  c.cols=isSingle(c.type)?c.pins:Math.max(1,Math.min(16,parseInt(document.getElementById('cpop-cols').value)||1));
+  c.gender=cpopGender;
+  c.partno=document.getElementById('cpop-partno').value.trim();
+  const newBoard=document.getElementById('cpop-board').value||null;
+  if(newBoard!==(c.board||null)){
+    const absX=ax(c), absY=ay(c);            // keep its on-screen spot across the change
+    c.board=newBoard;
+    const nb=newBoard&&bmap[newBoard];
+    c.x=Math.round(absX-(nb?nb.x:0)); c.y=Math.round(absY-(nb?nb.y:0));
+  }
+  // drop wires referencing now-missing pins
+  DOC.wires.filter(w=>(!epIsSplice(w.from)&&w.from.c===c.id&&w.from.p>=c.pins)||(!epIsSplice(w.to)&&w.to.c===c.id&&w.to.p>=c.pins))
+    .forEach(w=>removeWire(w.id));
+  rebuildConnector(c); wsSend({type:'conn_update',c}); refreshLegend(); refreshSchedule(); scheduleSave();
+}
+['cpop-name','cpop-pins','cpop-cols','cpop-partno'].forEach(id=>document.getElementById(id).addEventListener('input',applyCpop));
+document.getElementById('cpop-pinlabels').addEventListener('click',()=>{ if(cpopId) openPinLabels(cpopId,cpop); });
+document.getElementById('cpop-rotate').addEventListener('click',()=>{ if(cpopId) rotateConnector(cpopId); });
+document.getElementById('cpop-savetpl').addEventListener('click',()=>{ if(cpopId){ saveConnTemplate(cpopId); setSaveStat('saved to library'); } });
+document.getElementById('cpop-type').addEventListener('change',applyCpop);
+document.getElementById('cpop-board').addEventListener('change',applyCpop);
+document.getElementById('cpop-save').addEventListener('click',closeCpop);
+document.getElementById('cpop-del').addEventListener('click',()=>{ const id=cpopId; closeCpop(); deleteConnector(id); });
+function rotateConnector(id){ const c=cmap[id]; if(!c) return; pushUndo(); c.rot=(((c.rot||0)+90)%360);
+  rebuildConnector(c); wsSend({type:'conn_update',c}); scheduleSave(); }
+function deleteConnectorCore(id){
+  DOC.wires.filter(w=>epTouches(w.from,id)||epTouches(w.to,id)).forEach(w=>removeWire(w.id));
+  if(connEls[id]){ connEls[id].root.remove(); delete connEls[id]; }
+  DOC.connectors=DOC.connectors.filter(c=>c.id!==id); delete cmap[id];
+  wsSend({type:'conn_delete',id});
+}
+function deleteConnector(id){
+  if(!confirm('Delete this connector and its wires?')) return;
+  pushUndo(); deleteConnectorCore(id);
+  syncPositions(); refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty();
+}
+
+function selectConn(id,root){
+  deselectAll(); selConn=id; root.classList.add('sel');
+}
+function deselectAll(){
+  closeWpop(); closeCpop(); if(typeof closeBpop==='function') closeBpop(); if(typeof closeSppop==='function') closeSppop();
+  if(selConn){ const e=connEls[selConn]; if(e) e.root.classList.remove('sel'); selConn=null; }
+  if(selSplice){ const e=spliceEls[selSplice]; if(e) e.classList.remove('sel'); selSplice=null; }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ADD CONNECTOR MODAL
+// ════════════════════════════════════════════════════════════════════
+const modal=document.getElementById('modal');
+const mType=document.getElementById('m-type'), mPins=document.getElementById('m-pins'), mCols=document.getElementById('m-cols'), mBoard=document.getElementById('m-board');
+let mGender='';
+TYPES.forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name; mType.appendChild(o); });
+// single-row types (JST etc.) keep columns = pin count and lock the columns field
+function applyTypeDefaults(typeSel,pinsInp,colsInp,setPins){
+  const t=TYPE_BY_ID[typeSel.value]; if(!t) return;
+  if(setPins && t.id!=='custom') pinsInp.value=t.pins;
+  if(t.single){ colsInp.value=pinsInp.value; colsInp.disabled=true; }
+  else { colsInp.disabled=false; if(setPins && t.id!=='custom') colsInp.value=t.cols; }
+}
+mType.addEventListener('change',()=>applyTypeDefaults(mType,mPins,mCols,true));
+mPins.addEventListener('input',()=>{ if(isSingle(mType.value)) mCols.value=mPins.value; });
+document.querySelectorAll('#m-gender button').forEach(b=>b.addEventListener('click',()=>{ mGender=b.dataset.g; segSel('m-gender',mGender); }));
+function populateBoardSelect(sel,current){
+  sel.innerHTML='<option value="">— Standalone —</option>'+
+    (DOC.boards||[]).map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  sel.value=current||'';
+}
+function openModal(preBoard){
+  document.getElementById('m-name').value='';
+  mType.value='dt2'; mPins.value=2; mCols.value=2; mGender=''; segSel('m-gender','');
+  applyTypeDefaults(mType,mPins,mCols,false);
+  populateBoardSelect(mBoard, typeof preBoard==='string'?preBoard:'');
+  modal.classList.add('show'); setTimeout(()=>document.getElementById('m-name').focus(),50);
+}
+function closeModal(){ modal.classList.remove('show'); }
+// next free relative slot on a board so new connectors don't stack
+function nextBoardSlot(boardId){
+  const n=DOC.connectors.filter(c=>c.board===boardId).length;
+  return {x:20+(n%4)*190, y:20+Math.floor(n/4)*150};
+}
+function addConnector(){
+  pushUndo();
+  const t=TYPE_BY_ID[mType.value];
+  const board=mBoard.value||null;
+  let px,py;
+  if(board){ const s=nextBoardSlot(board); px=s.x; py=s.y; }   // relative to the board
+  else { px=Math.round((scroll.scrollLeft+scroll.clientWidth/2)/scale-90); py=Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale-60); }
+  const pins=Math.max(1,Math.min(64,parseInt(mPins.value)||1));
+  const c={id:uid('c_'),name:document.getElementById('m-name').value.trim()||t.name,
+    type:mType.value,pins,
+    cols:isSingle(mType.value)?pins:Math.max(1,Math.min(16,parseInt(mCols.value)||1)),gender:mGender,board,
+    x:px,y:py};
+  DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c);
+  wsSend({type:'conn_add',c});
+  closeModal(); syncPositions(); refreshLegend(); scheduleSave(); checkEmpty();
+}
+document.getElementById('btn-add').addEventListener('click',openModal);
+document.getElementById('empty-add').addEventListener('click',openModal);
+document.getElementById('m-cancel').addEventListener('click',closeModal);
+document.getElementById('m-save').addEventListener('click',addConnector);
+modal.addEventListener('mousedown',e=>{ if(e.target===modal) closeModal(); });
+document.getElementById('m-name').addEventListener('keydown',e=>{ if(e.key==='Enter') addConnector(); });
+
+// ════════════════════════════════════════════════════════════════════
+//  BOARDS / PCBs
+// ════════════════════════════════════════════════════════════════════
+function renderBoard(b){
+  const el=document.createElement('div'); el.className='board'; el.dataset.id=b.id;
+  el.style.setProperty('--bc', b.color||'#4a7de0');
+  el.style.left=b.x+'px'; el.style.top=b.y+'px'; el.style.width=(b._w||MINBW)+'px'; el.style.height=(b._h||80)+'px';
+  const lbl=document.createElement('div'); lbl.className='board-label';
+  lbl.innerHTML=`<span class="bdot"></span><span class="bname">${esc(b.name||'PCB')}</span>`+
+    `<span class="bbtns"><button class="badd" title="Add connector to this PCB">＋</button><button class="bedit" title="Edit PCB">✎</button></span>`;
+  el.appendChild(lbl);
+  const em=document.createElement('div'); em.className='board-empty'; em.textContent='No connectors — click ＋';
+  el.appendChild(em);
+  lbl.querySelector('.badd').addEventListener('click',ev=>{ ev.stopPropagation(); openModal(b.id); });
+  lbl.querySelector('.bedit').addEventListener('click',ev=>{ ev.stopPropagation(); openBoardEdit(b.id,el); });
+  el.addEventListener('mousedown',ev=>{
+    if(ev.button!==0||ev.target.closest('button')) return;
+    ev.preventDefault(); ev.stopPropagation(); startBoardMove(b,ev);
+  });
+  el.addEventListener('dblclick',ev=>{ if(ev.target.closest('button'))return; ev.stopPropagation(); openBoardEdit(b.id,el); });
+  canvas.appendChild(el); boardEls[b.id]=el;
+}
+function startBoardMove(b,e,onClick){
+  const sx=e.clientX, sy=e.clientY, ox=b.x, oy=b.y; let moved=false, lastBc=0;
+  const mv=ev=>{
+    const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
+    if(Math.abs(dx)>2||Math.abs(dy)>2) moved=true;
+    b.x=Math.round(ox+dx); b.y=Math.round(oy+dy);
+    syncPositions();
+    const now=performance.now(); if(now-lastBc>45){ lastBc=now; wsSend({type:'board_move',id:b.id,x:b.x,y:b.y}); }
+  };
+  const up=()=>{
+    window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+    if(moved){ wsSend({type:'board_move',id:b.id,x:b.x,y:b.y}); scheduleSave(); }
+    else if(onClick) onClick();
+  };
+  window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+}
+function renderColorSeg(container,current,onPick){
+  container.innerHTML='';
+  ACCENTS.forEach(col=>{
+    const b=document.createElement('button'); b.type='button'; b.className='cswatch'+(col===current?' sel':'');
+    b.style.background=col; b.dataset.col=col;
+    b.addEventListener('click',()=>{ onPick(col); container.querySelectorAll('button').forEach(x=>x.classList.toggle('sel',x.dataset.col===col)); });
+    container.appendChild(b);
+  });
+}
+
+// Board edit popover
+const bpop=document.createElement('div'); bpop.className='pop'; bpop.id='bpop'; bpop.style.width='282px';
+bpop.innerHTML=`
+  <div class="pttl">Edit PCB</div>
+  <div class="pfld"><label>Name</label><input type="text" id="bpop-name" autocomplete="off"></div>
+  <div class="pfld"><label>Colour</label><div class="colorseg" id="bpop-colors"></div></div>
+  <button id="bpop-savetpl" style="width:100%;margin-bottom:8px;padding:8px;border:1.5px solid var(--card-border);border-radius:9px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;cursor:pointer">📚 Save PCB (sub-harness) to library</button>
+  <div class="pop-actions"><button class="save" id="bpop-add">＋ Connector</button><button class="save" id="bpop-done">Done</button><button class="del" id="bpop-del">Delete</button></div>`;
+document.body.appendChild(bpop);
+let bpopId=null, bpopColor=ACCENTS[0];
+function openBoardEdit(id,anchor){
+  deselectAll(); const b=bmap[id]; if(!b) return; bpopId=id;
+  document.getElementById('bpop-name').value=b.name||'';
+  bpopColor=b.color||ACCENTS[0];
+  renderColorSeg(document.getElementById('bpop-colors'),bpopColor,c=>{ bpopColor=c; applyBpop(); });
+  bpop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  bpop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-294))+'px';
+  bpop.style.top=Math.min(r.bottom+8,window.innerHeight-220)+'px';
+  setTimeout(()=>document.getElementById('bpop-name').focus(),40);
+}
+function closeBpop(){ bpop.style.display='none'; bpopId=null; }
+function applyBpop(){
+  const b=bmap[bpopId]; if(!b) return;
+  b.name=document.getElementById('bpop-name').value.trim()||'PCB';
+  b.color=bpopColor;
+  const el=boardEls[b.id];
+  if(el){ el.style.setProperty('--bc',b.color); el.querySelector('.bname').textContent=b.name; }
+  wsSend({type:'board_update',b}); refreshLegend(); refreshSchedule(); scheduleSave();
+}
+document.getElementById('bpop-name').addEventListener('input',applyBpop);
+document.getElementById('bpop-savetpl').addEventListener('click',()=>{ if(bpopId) saveBoardTemplate(bpopId); });
+document.getElementById('bpop-add').addEventListener('click',()=>{ const id=bpopId; closeBpop(); openModal(id); });
+document.getElementById('bpop-done').addEventListener('click',closeBpop);
+document.getElementById('bpop-del').addEventListener('click',()=>{ const id=bpopId; closeBpop(); deleteBoard(id); });
+function deleteBoard(id){
+  if(!confirm('Delete this PCB? Its connectors are kept (detached onto the canvas).')) return;
+  DOC.connectors.filter(c=>c.board===id).forEach(c=>{ c.x=ax(c); c.y=ay(c); c.board=null; wsSend({type:'conn_update',c}); });
+  if(boardEls[id]){ boardEls[id].remove(); delete boardEls[id]; }
+  DOC.boards=DOC.boards.filter(x=>x.id!==id); delete bmap[id];
+  wsSend({type:'board_delete',id});
+  syncPositions(); refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty();
+}
+
+// Add PCB modal
+const bmodal=document.getElementById('bmodal');
+let bmColor=ACCENTS[0];
+function openBoardModal(){
+  document.getElementById('bm-name').value=''; bmColor=ACCENTS[0];
+  renderColorSeg(document.getElementById('bm-colors'),bmColor,c=>bmColor=c);
+  bmodal.classList.add('show'); setTimeout(()=>document.getElementById('bm-name').focus(),50);
+}
+function closeBoardModal(){ bmodal.classList.remove('show'); }
+function addBoard(){
+  const cx=(scroll.scrollLeft+scroll.clientWidth/2)/scale - 120;
+  const cy=(scroll.scrollTop+scroll.clientHeight/2)/scale - 80;
+  const b={id:uid('b_'),name:document.getElementById('bm-name').value.trim()||'PCB',color:bmColor,x:Math.round(cx),y:Math.round(cy)};
+  DOC.boards.push(b); bmap[b.id]=b; renderBoard(b); syncPositions();
+  wsSend({type:'board_add',b});
+  closeBoardModal(); refreshLegend(); scheduleSave(); checkEmpty();
+}
+document.getElementById('btn-board').addEventListener('click',openBoardModal);
+document.getElementById('empty-board').addEventListener('click',openBoardModal);
+document.getElementById('bm-cancel').addEventListener('click',closeBoardModal);
+document.getElementById('bm-save').addEventListener('click',addBoard);
+bmodal.addEventListener('mousedown',e=>{ if(e.target===bmodal) closeBoardModal(); });
+document.getElementById('bm-name').addEventListener('keydown',e=>{ if(e.key==='Enter') addBoard(); });
+
+// ════════════════════════════════════════════════════════════════════
+//  COLOUR CODE PANEL
+// ════════════════════════════════════════════════════════════════════
+function renderRules(){
+  const wrap=document.getElementById('cc-rules'); wrap.innerHTML='';
+  DOC.rules.forEach((r,i)=>{
+    const row=document.createElement('div'); row.className='cc-row';
+    row.innerHTML=`<input type="color" value="${toHex(r.color)}">
+      <input class="pat" type="text" value="${esc(r.pat)}" placeholder="signal contains…">
+      <button class="del" title="Remove">✕</button>`;
+    const [col,pat,del]=row.children;
+    col.addEventListener('input',()=>{ r.color=col.value; onRulesChanged(); });
+    pat.addEventListener('input',()=>{ r.pat=pat.value; onRulesChanged(); });
+    del.addEventListener('click',()=>{ DOC.rules.splice(i,1); renderRules(); onRulesChanged(); });
+    wrap.appendChild(row);
+  });
+  const sw=document.getElementById('cc-swatches'); sw.innerHTML='';
+  PALETTE.forEach(c=>{ const d=document.createElement('div'); d.className='sw'; d.style.background=c; d.title=c; sw.appendChild(d); });
+}
+function onRulesChanged(){ redrawAllWires(); repaintPins(); refreshLegend(); refreshSchedule(); scheduleSave();
+  wsSend({type:'meta',rules:DOC.rules,autoColors:DOC.autoColors,unit:DOC.unit});
+  if(wpopId){ const w=wmap[wpopId]; if(w) syncWpopColor(w); } }
+document.getElementById('cc-add').addEventListener('click',()=>{ DOC.rules.push({pat:'',color:'#4a7de0'}); renderRules(); });
+document.getElementById('cc-auto-tog').addEventListener('change',e=>{ DOC.autoColors=e.target.checked; onRulesChanged(); });
+
+// ════════════════════════════════════════════════════════════════════
+//  LEGEND + SCHEDULE
+// ════════════════════════════════════════════════════════════════════
+function refreshLegend(){
+  document.getElementById('stat-b').textContent=(DOC.boards||[]).length;
+  document.getElementById('stat-c').textContent=DOC.connectors.length;
+  document.getElementById('stat-w').textContent=DOC.wires.length;
+  const tot=DOC.wires.reduce((a,w)=>a+wireCutMm(w),0);
+  document.getElementById('stat-l').textContent=fmtLen(tot);
+  const m=document.getElementById('stat-m'); if(m){ const g=DOC.wires.reduce((a,w)=>a+wireMassG(w),0); m.textContent=g<1000?Math.round(g)+' g':(g/1000).toFixed(2)+' kg'; }
+  if(typeof updateDRCBadge==='function') updateDRCBadge();
+}
+// total cut length of a wire incl. service loop, in mm
+function wireCutMm(w){ return (w.length||0)+(w.service||0); }
+function wireMassG(w){ return wireCutMm(w)/1000*awgSpec(w.gauge).gpm; }
+// voltage drop along a wire (V) at its (or its net's) current
+function wireVdrop(w,cur){ const I=cur!=null?cur:(+w.current||0); return I*awgSpec(w.gauge).ohm*((w.length||0)/1000); }
+function refreshSchedule(){
+  const body=document.getElementById('sched-body');
+  if(!DOC.wires.length){ body.innerHTML='<div class="sched-empty">No wires yet.<br>Drag pin → pin to add one.</div>'; return; }
+  const totLen=DOC.wires.reduce((a,w)=>a+wireCutMm(w),0);
+  const totMass=DOC.wires.reduce((a,w)=>a+wireMassG(w),0);
+  const byG={}, byC={};
+  DOC.wires.forEach(w=>{ byG[w.gauge]=(byG[w.gauge]||0)+wireCutMm(w);
+    const c=wireColor(w); byC[c]=(byC[c]||0)+wireCutMm(w); });
+  const nets=computeNets();
+  const netByWire={}; nets.forEach(n=>n.wires.forEach(w=>netByWire[w.id]=n));
+  let rows='';
+  DOC.wires.forEach((w,i)=>{
+    const net=netByWire[w.id]; const cur=net?net.current:(+w.current||0);
+    const vd=wireVdrop(w,cur);
+    const over=(+w.current||cur)>awgSpec(w.gauge).amp;
+    rows+=`<tr data-id="${w.id}">
+      <td>${i+1}</td>
+      <td><span class="sw" style="background:${wireColor(w)}"></span></td>
+      <td>${esc(w.signal||'—')}${w.vclass?` <span class="vtag ${w.vclass}">${w.vclass}</span>`:''}</td>
+      <td>${esc(epShort(w.from))}<br><span style="color:var(--muted)">→ ${esc(epShort(w.to))}</span></td>
+      <td>${w.length?fmtLen(wireCutMm(w)):'—'}</td>
+      <td class="${over?'bad':''}">${w.gauge}</td></tr>`;
+  });
+  let gRows=Object.keys(byG).sort((a,b)=>+a-+b).map(g=>`<div class="row"><span class="nm">${g} AWG</span><span class="vl">${fmtLen(byG[g])}</span></div>`).join('');
+  let cRows=Object.keys(byC).map(c=>`<div class="row"><span class="sw" style="background:${c};width:13px;height:13px;border-radius:4px"></span><span class="nm">${c}</span><span class="vl">${fmtLen(byC[c])}</span></div>`).join('');
+  body.innerHTML=`
+    <div class="sched-tot">
+      <div class="tcard"><div class="n">${DOC.wires.length}</div><div class="l">Wires</div></div>
+      <div class="tcard"><div class="n">${fmtLen(totLen)}</div><div class="l">Cut length</div></div>
+      <div class="tcard"><div class="n">${totMass<1000?Math.round(totMass)+' g':(totMass/1000).toFixed(2)+' kg'}</div><div class="l">Wire mass</div></div>
+    </div>
+    <table class="sched"><thead><tr><th>#</th><th></th><th>Signal</th><th>From → To</th><th>Cut</th><th>AWG</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="sub-tot"><h4>Cut length by gauge</h4>${gRows}</div>
+    <div class="sub-tot"><h4>Cut length by colour</h4>${cRows}</div>
+    <div class="sub-tot" style="font-size:10.5px;color:var(--muted)">Cut length includes service loop. Mass uses copper + typical insulation per gauge.</div>`;
+  body.querySelectorAll('tr[data-id]').forEach(tr=>tr.addEventListener('click',()=>{
+    const w=wmap[tr.dataset.id]; if(w){ focusWire(w); selectWire(w.id,null,midOfWire(w)); }
+  }));
+}
+function focusWire(w){
+  const pa=epPos(w.from);
+  scroll.scrollLeft=pa.x*scale-scroll.clientWidth/2;
+  scroll.scrollTop=pa.y*scale-scroll.clientHeight/2;
+}
+
+// ── Panels open/close ────────────────────────────────────────────────
+const PANEL_BTNS='#btn-cc,#btn-sched,#btn-bom,#btn-drc';
+function togglePanel(id,btn){
+  const p=document.getElementById(id), opening=!p.classList.contains('show');
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('show'));
+  document.querySelectorAll(PANEL_BTNS).forEach(b=>b.classList.remove('on'));
+  if(opening){ p.classList.add('show'); if(btn) btn.classList.add('on');
+    if(id==='schedpanel') refreshSchedule(); if(id==='bompanel') refreshBOM(); if(id==='drcpanel') refreshDRC();
+    if(id==='revpanel') refreshRevPanel(); if(id==='libpanel') refreshLibPanel(); }
+}
+document.getElementById('btn-cc').addEventListener('click',e=>togglePanel('ccpanel',e.currentTarget));
+document.getElementById('btn-sched').addEventListener('click',e=>togglePanel('schedpanel',e.currentTarget));
+document.getElementById('btn-bom').addEventListener('click',e=>togglePanel('bompanel',e.currentTarget));
+document.getElementById('btn-drc').addEventListener('click',e=>togglePanel('drcpanel',e.currentTarget));
+document.querySelectorAll('.panel .x').forEach(b=>b.addEventListener('click',()=>{
+  document.getElementById(b.dataset.close).classList.remove('show');
+  document.querySelectorAll(PANEL_BTNS).forEach(x=>x.classList.remove('on'));
+}));
+
+// ════════════════════════════════════════════════════════════════════
+//  EXPORT / IMPORT / FILE MENU
+// ════════════════════════════════════════════════════════════════════
+const expmenu=document.getElementById('expmenu');
+document.getElementById('btn-exp').addEventListener('click',e=>{ e.stopPropagation(); expmenu.classList.toggle('show'); });
+document.addEventListener('click',()=>expmenu.classList.remove('show'));
+expmenu.addEventListener('click',e=>e.stopPropagation());
+function download(name,text,mime){
+  const b=new Blob([text],{type:mime||'text/plain'}); const u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u);
+}
+document.getElementById('exp-json').addEventListener('click',()=>{ expmenu.classList.remove('show');
+  download('harness.json',JSON.stringify(DOC,null,2),'application/json'); });
+document.getElementById('exp-import').addEventListener('click',()=>{ expmenu.classList.remove('show'); document.getElementById('fileinput').click(); });
+document.getElementById('fileinput').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+  r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!d.connectors) throw 0; DOC=normalizeDoc(d); rebuildAll(); wsSend({type:'state',doc:DOC}); scheduleSave(); }catch(err){ alert('Could not read that file.'); } };
+  r.readAsText(f); e.target.value='';
+});
+document.getElementById('exp-csv').addEventListener('click',()=>{ expmenu.classList.remove('show'); exportCSV(); });
+document.getElementById('exp-print').addEventListener('click',()=>{ expmenu.classList.remove('show'); window.print(); });
+document.getElementById('exp-clear').addEventListener('click',()=>{ expmenu.classList.remove('show');
+  if(confirm('Clear the whole harness? This cannot be undone.')){ pushUndo(); DOC=normalizeDoc({rules:DOC.rules,unit:DOC.unit,sysV:DOC.sysV}); rebuildAll(); wsSend({type:'state',doc:DOC}); scheduleSave(); } });
+const DEF_STRIP=6;  // default strip length (mm)
+function exportCSV(){
+  const u=DOC.unit; const f=v=>v?Math.round((v/UNIT_FACTOR[u])*10)/10:'';
+  const nets=computeNets(); const netByWire={}; nets.forEach(n=>n.wires.forEach(w=>netByWire[w.id]=n));
+  const head=['#','Signal','Class','Cable','Shield','Colour','From','From terminal','To','To terminal',
+    'Cut len ('+u+')','Strip A (mm)','Strip B (mm)','Service ('+u+')','AWG','Current (A)','V-drop (V)','Mass (g)','Label'];
+  const lines=[head.join(',')];
+  DOC.wires.forEach((w,i)=>{
+    const net=netByWire[w.id]; const cur=net?net.current:(+w.current||0);
+    const label=(w.signal||'')+' '+epShort(w.from)+'>'+epShort(w.to);
+    lines.push([i+1,q(w.signal),w.vclass||'',q(w.cable||''),w.shield?'Y':'',wireColor(w),
+      q(epShort(w.from)),q(terminalPN(w.from)),q(epShort(w.to)),q(terminalPN(w.to)),
+      f(wireCutMm(w)), (w.stripA!=null?w.stripA:DEF_STRIP), (w.stripB!=null?w.stripB:DEF_STRIP), f(w.service),
+      w.gauge, cur||'', wireVdrop(w,cur).toFixed(3), Math.round(wireMassG(w)), q(label)].join(','));
+  });
+  download('harness-cutlist.csv',lines.join('\n'),'text/csv');
+}
+function q(s){ s=(s==null?'':String(s)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+
+// ════════════════════════════════════════════════════════════════════
+//  KiCad IMPORT  (.kicad_sch / .sch / .net  →  a PCB of connectors)
+// ════════════════════════════════════════════════════════════════════
+// minimal S-expression parser: nested arrays; quoted strings become {q:"..."}
+function parseSexpr(str){
+  let i=0;
+  const ws=c=>c===' '||c==='\t'||c==='\n'||c==='\r';
+  function skip(){ while(i<str.length&&ws(str[i])) i++; }
+  function parse(){
+    skip(); const c=str[i];
+    if(c==='('){ i++; const a=[]; while(true){ skip(); if(i>=str.length||str[i]===')'){ i++; break; } a.push(parse()); } return a; }
+    if(c==='"'){ i++; let s=''; while(i<str.length){ if(str[i]==='\\'){ s+=str[i+1]; i+=2; } else if(str[i]==='"'){ i++; break; } else s+=str[i++]; } return {q:s}; }
+    let s=''; while(i<str.length&&!ws(str[i])&&str[i]!=='('&&str[i]!==')') s+=str[i++]; return s;
+  }
+  skip(); return parse();
+}
+function sval(x){ return (x&&typeof x==='object'&&'q'in x)?x.q:x; }
+function sFind(node,key){ if(!Array.isArray(node))return null; for(const c of node){ if(Array.isArray(c)&&c[0]===key) return c; } return null; }
+function sFindAll(node,key){ return Array.isArray(node)?node.filter(c=>Array.isArray(c)&&c[0]===key):[]; }
+
+function isConnectorSym(libId,ref,value,fp){
+  const s=((libId||'')+' '+(value||'')+' '+(fp||'')).toLowerCase();
+  if(/testpoint|mountinghole|fiducial|logo|graphic|jumper|net-tie/.test(s)) return false;
+  if(/connector|conn_|\bjst\b|molex|deutsch|terminal|pinheader|pinsocket|header|housing|[-_](ph|xh|sh|gh|zh|eh|vh)\b/.test(s)) return true;
+  if(/^(j|p|cn|con|x|sv|hdr)\d/i.test(ref||'')) return true;
+  return false;
+}
+function inferPinsCols(s){
+  let m=s.match(/conn[_ ]?(\d+)x(\d+)/i);                 if(m) return {pins:(+m[1])*(+m[2]), cols:+m[2]};
+  m=s.match(/B(\d+)B[- ]?(?:PH|XH|SH|GH|ZH|EH|VH)/i);     if(m) return {pins:+m[1], cols:+m[1]};
+  m=s.match(/(?:^|[_\s])(\d+)x(\d+)(?:[_\s]|$)/);          if(m) return {pins:(+m[1])*(+m[2]), cols:+m[2]};
+  m=s.match(/(\d+)\s*(?:pos|pin|way|circuit)/i);           if(m) return {pins:+m[1], cols:+m[1]};
+  m=s.match(/[_-](\d+)P\b/i);                              if(m) return {pins:+m[1], cols:+m[1]};
+  return null;
+}
+function detectType(s){
+  let m=s.match(/jst[_ -]?([a-z]{2})/i)||s.match(/B\d+B-?(PH|XH|SH|GH|ZH|EH|VH)/i)||s.match(/[_-](PH|XH|SH|GH|ZH|EH|VH)[_-]/i);
+  if(m){ const id='jst_'+m[1].toLowerCase(); return {type:TYPE_BY_ID[id]?id:'jst_ph'}; }
+  if(/molex/i.test(s)) return {type:'molex'};
+  return {type:'header'};
+}
+function makeDetected(libId,ref,value,fp){
+  if(!isConnectorSym(libId,ref,value,fp)) return null;
+  const s=(libId||'')+' '+(value||'')+' '+(fp||'');
+  const pc=inferPinsCols(s)||{pins:2,cols:2};
+  const dt=detectType(s);
+  const gender=/female|recept|socket/i.test(s)?'F':(/(?:^|[_\s])male|_male|\bplug\b/i.test(s)?'M':'');
+  // Many designs put the real function in Value (e.g. "Brake_Pressure_Front") — prefer it for the name
+  const part=(libId||'').split(':').pop();
+  const descr=value && value!==part && !/^conn(_|\b)/i.test(value) && !/^[A-Za-z]\d+$/.test(value);
+  const name=descr ? ((ref?ref+' ':'')+value.replace(/_/g,' ')) : (ref||value||'Conn');
+  return {ref:ref||'J', name, pins:pc.pins, cols:pc.cols||pc.pins, type:dt.type, gender, include:true};
+}
+function dedupeByRef(list){ const seen={}, out=[]; list.forEach(d=>{ const k=d.ref||('_'+out.length); if(seen[k])return; seen[k]=1; out.push(d); }); return out; }
+
+function kicadSchConnectors(text){
+  const root=parseSexpr(text), out=[];
+  (Array.isArray(root)?root:[]).forEach(node=>{
+    if(Array.isArray(node)&&node[0]==='symbol'&&sFind(node,'lib_id')){
+      const libId=sval(sFind(node,'lib_id')[1]); const props={};
+      sFindAll(node,'property').forEach(p=>{ props[sval(p[1])]=sval(p[2]); });
+      const d=makeDetected(libId,props.Reference,props.Value,props.Footprint); if(d) out.push(d);
+    }
+  });
+  return dedupeByRef(out);
+}
+function kicad5SchConnectors(text){
+  const out=[];
+  text.split('$Comp').slice(1).forEach(p=>{
+    const block=p.split('$EndComp')[0];
+    const lm=block.match(/(?:^|\n)\s*L\s+(\S+)\s+(\S+)/); const libId=lm?lm[1]:'', ref=lm?lm[2]:'';
+    const f1=block.match(/(?:^|\n)F\s+1\s+"([^"]*)"/); const value=f1?f1[1]:'';
+    const f2=block.match(/(?:^|\n)F\s+2\s+"([^"]*)"/); const fp=f2?f2[1]:'';
+    const d=makeDetected(libId,ref,value,fp); if(d) out.push(d);
+  });
+  return dedupeByRef(out);
+}
+function kicadNetConnectors(text){
+  const root=parseSexpr(text), out=[], nets=[];
+  const comps=sFind(root,'components');
+  if(comps) sFindAll(comps,'comp').forEach(c=>{
+    const ref=sval((sFind(c,'ref')||[])[1]);
+    const value=sval((sFind(c,'value')||[])[1]);
+    const fpN=sFind(c,'footprint'); const fp=fpN?sval(fpN[1]):'';
+    const d=makeDetected('',ref,value,fp); if(d) out.push(d);
+  });
+  const pinNet={};   // ref -> { pinIndex(0-based): netName }
+  const netsN=sFind(root,'nets');
+  if(netsN) sFindAll(netsN,'net').forEach(n=>{
+    let name=sval((sFind(n,'name')||[])[1])||''; name=name.replace(/^\//,''); if(/^Net-\(/i.test(name)) name='';
+    const nodes=sFindAll(n,'node').map(nd=>({ref:sval((sFind(nd,'ref')||[])[1]), pin:sval((sFind(nd,'pin')||[])[1])}));
+    nets.push({name,nodes});
+    if(name) nodes.forEach(nd=>{ const pi=parseInt(nd.pin)-1; if(nd.ref&&pi>=0){ (pinNet[nd.ref]=pinNet[nd.ref]||{})[pi]=name; } });
+  });
+  const conns=dedupeByRef(out);
+  conns.forEach(c=>{ if(pinNet[c.ref]) c.pinLabels=pinNet[c.ref]; });   // overlay per-pin signal names
+  return {connectors:conns, nets};
+}
+
+let kiNets=null, kiDetected=[];
+function renderKiList(list){
+  const wrap=document.getElementById('ki-list');
+  if(!list.length){ wrap.innerHTML='<div class="ki-empty">No connector-like symbols found in this file.</div>'; return; }
+  wrap.innerHTML='';
+  list.forEach(dc=>{
+    const row=document.createElement('div'); row.className='ki-row'; row.dataset.ref=dc.ref||''; row.dataset.cols=dc.cols||dc.pins;
+    const typeOpts=TYPES.map(t=>`<option value="${t.id}"${t.id===dc.type?' selected':''}>${esc(t.name)}</option>`).join('');
+    row.innerHTML=`<input type="checkbox" ${dc.include!==false?'checked':''}>
+      <input class="kn" value="${esc(dc.name||dc.ref||'')}" title="connector name">
+      <select class="kt" title="connector type">${typeOpts}</select>
+      <input class="kp" type="number" min="1" max="64" value="${dc.pins||2}" title="pins">
+      <select class="kg" title="gender"><option value=""${!dc.gender?' selected':''}>—</option><option value="M"${dc.gender==='M'?' selected':''}>M</option><option value="F"${dc.gender==='F'?' selected':''}>F</option></select>`;
+    wrap.appendChild(row);
+  });
+}
+function openKicadImport(text,fname){
+  const base=(fname||'PCB').replace(/\.[^.]+$/,'');
+  let det=[], nets=null, fmt='';
+  try{
+    if(/^\s*\(kicad_sch/.test(text)){ det=kicadSchConnectors(text); fmt='KiCad schematic'; }
+    else if(/^\s*\(export/.test(text)){ const r=kicadNetConnectors(text); det=r.connectors; nets=r.nets; fmt='KiCad netlist'; }
+    else if(/\$Comp/.test(text)){ det=kicad5SchConnectors(text); fmt='KiCad 5 schematic'; }
+    else if(/^\s*\{/.test(text)){ alert('That looks like a .kicad_pro project file — it doesn’t contain components. Open the .kicad_sch schematic, or export a netlist (.net).'); return; }
+    else { alert('Unrecognised file. Choose a .kicad_sch, .sch or .net file.'); return; }
+  }catch(e){ alert('Could not parse that file.'); return; }
+  kiNets=nets; kiDetected=det;
+  const withPins=det.filter(d=>d.pinLabels).length;
+  document.getElementById('ki-sub').textContent=`${fmt}: found ${det.length} connector${det.length===1?'':'s'}`+(withPins?` (with per-pin signal names)`:'')+`. Review and import as a new PCB.`;
+  document.getElementById('ki-name').value=base;
+  document.getElementById('ki-wires-wrap').style.display=(nets&&nets.length)?'flex':'none';
+  document.getElementById('ki-wires').checked=false;
+  renderKiList(det);
+  document.getElementById('kimodal').classList.add('show');
+}
+function closeKiModal(){ document.getElementById('kimodal').classList.remove('show'); }
+function importKicad(){
+  const rows=[...document.querySelectorAll('#ki-list .ki-row')]
+    .filter(r=>r.querySelector('input[type=checkbox]').checked)
+    .map(r=>({ ref:r.dataset.ref, name:r.querySelector('.kn').value.trim()||'J',
+      type:r.querySelector('.kt').value, gender:r.querySelector('.kg').value,
+      pins:Math.max(1,Math.min(64,parseInt(r.querySelector('.kp').value)||2)),
+      cols:Math.max(1,parseInt(r.dataset.cols)||2) }));
+  if(!rows.length){ closeKiModal(); return; }
+  const bx=(scroll.scrollLeft+scroll.clientWidth/2)/scale-150;
+  const by=(scroll.scrollTop+scroll.clientHeight/2)/scale-100;
+  const name=document.getElementById('ki-name').value.trim()||'PCB';
+  const b={id:uid('b_'),name,color:ACCENTS[hash(name)%ACCENTS.length],x:Math.round(bx),y:Math.round(by)};
+  DOC.boards.push(b); bmap[b.id]=b; renderBoard(b); wsSend({type:'board_add',b});
+  const refMap={};
+  rows.forEach((ch,i)=>{
+    const det=kiDetected.find(d=>d.ref===ch.ref);
+    const c={id:uid('c_'),name:ch.name,type:ch.type,pins:ch.pins,
+      cols:isSingle(ch.type)?ch.pins:Math.min(8,ch.cols),gender:ch.gender||'',board:b.id,ref:ch.ref||'',
+      pinLabels:(det&&det.pinLabels)?det.pinLabels:null,
+      x:20+(i%4)*190, y:20+Math.floor(i/4)*150};   // relative grid; drag to mirror the real PCB
+    DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c); wsSend({type:'conn_add',c});
+    if(ch.ref) refMap[ch.ref]=c;
+  });
+  if(kiNets && document.getElementById('ki-wires').checked){
+    kiNets.forEach(net=>{
+      const nodes=(net.nodes||[]).filter(n=>refMap[n.ref]);
+      if(nodes.length!==2) return;
+      const ca=refMap[nodes[0].ref], cb=refMap[nodes[1].ref];
+      const pa=parseInt(nodes[0].pin)-1, pb=parseInt(nodes[1].pin)-1;
+      if(!(pa>=0&&pa<ca.pins&&pb>=0&&pb<cb.pins)) return;
+      const w={id:uid('w_'),from:{c:ca.id,p:pa},to:{c:cb.id,p:pb},signal:net.name||'',color:'',auto:true,length:0,gauge:'20',notes:''};
+      DOC.wires.push(w); wmap[w.id]=w; renderWire(w); wsSend({type:'wire_add',w});
+    });
+  }
+  syncPositions(); refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty(); closeKiModal();
+}
+document.getElementById('exp-kicad').addEventListener('click',()=>{ expmenu.classList.remove('show'); document.getElementById('kicadfile').click(); });
+document.getElementById('kicadfile').addEventListener('change',e=>{ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>openKicadImport(String(r.result),f.name); r.readAsText(f); e.target.value=''; });
+document.getElementById('ki-cancel').addEventListener('click',closeKiModal);
+document.getElementById('ki-save').addEventListener('click',importKicad);
+document.getElementById('kimodal').addEventListener('mousedown',e=>{ if(e.target.id==='kimodal') closeKiModal(); });
+
+// ── Unit selector ────────────────────────────────────────────────────
+document.getElementById('unitsel').addEventListener('change',e=>{
+  DOC.unit=e.target.value; document.getElementById('wpop-unit').textContent=DOC.unit;
+  if(wpopId){ const w=wmap[wpopId]; if(w) document.getElementById('wpop-len').value=w.length?Math.round((w.length/UNIT_FACTOR[DOC.unit])*10)/10:''; }
+  refreshLegend(); refreshSchedule(); wsSend({type:'meta',rules:DOC.rules,autoColors:DOC.autoColors,unit:DOC.unit}); scheduleSave();
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  ZOOM / PAN
+// ════════════════════════════════════════════════════════════════════
+let scale=1;
+function applyTransform(){ canvas.style.transform=`scale(${scale})`; zoomwrap.style.width=(CANVAS_W*scale)+'px'; zoomwrap.style.height=(CANVAS_H*scale)+'px'; }
+function setScale(s,focal){
+  s=Math.min(2.2,Math.max(0.2,s)); const prev=scale; scale=s; applyTransform();
+  document.getElementById('zlevel').textContent=Math.round(scale*100)+'%';
+  if(focal){ scroll.scrollLeft=(scroll.scrollLeft+focal.x)*(scale/prev)-focal.x;
+             scroll.scrollTop=(scroll.scrollTop+focal.y)*(scale/prev)-focal.y; }
+}
+document.getElementById('zin').onclick=()=>setScale(scale+0.15,{x:scroll.clientWidth/2,y:scroll.clientHeight/2});
+document.getElementById('zout').onclick=()=>setScale(scale-0.15,{x:scroll.clientWidth/2,y:scroll.clientHeight/2});
+document.getElementById('zfit').onclick=fitView;
+function fitView(){
+  if(!DOC.connectors.length && !(DOC.boards||[]).length){ setScale(1); scroll.scrollLeft=CANVAS_W/2-scroll.clientWidth/2; scroll.scrollTop=CANVAS_H/2-scroll.clientHeight/2; return; }
+  layoutBoards();
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  DOC.connectors.forEach(c=>{ const b=box(c); x0=Math.min(x0,b.x); y0=Math.min(y0,b.y); x1=Math.max(x1,b.x+b.w); y1=Math.max(y1,b.y+b.h); });
+  (DOC.boards||[]).forEach(b=>{ const X=b._x!=null?b._x:b.x, Y=b._y!=null?b._y:b.y; x0=Math.min(x0,X); y0=Math.min(y0,Y-16); x1=Math.max(x1,X+(b._w||MINBW)); y1=Math.max(y1,Y+(b._h||80)); });
+  const pad=80; x0-=pad;y0-=pad;x1+=pad;y1+=pad;
+  const s=Math.min(2,Math.max(0.2,Math.min((scroll.clientWidth)/(x1-x0),(scroll.clientHeight-20)/(y1-y0))));
+  setScale(s); scroll.scrollLeft=x0*s; scroll.scrollTop=y0*s;
+}
+scroll.addEventListener('wheel',e=>{ if(e.ctrlKey){ e.preventDefault(); setScale(scale*(e.deltaY<0?1.1:0.9),{x:e.clientX,y:e.clientY-52}); } },{passive:false});
+
+let panning=false,px=0,py=0,sl=0,st=0;
+scroll.addEventListener('mousedown',e=>{
+  if(e.target.closest('.conn')||e.target.closest('.board')||e.target.closest('#legend')||e.target.closest('.panel')||e.target.closest('.pop')) return;
+  if(e.target.closest('svg') && e.target.tagName==='path' && e.target.style.pointerEvents==='stroke') return;
+  panning=true; px=e.clientX; py=e.clientY; sl=scroll.scrollLeft; st=scroll.scrollTop; scroll.classList.add('panning');
+});
+window.addEventListener('mousemove',e=>{ if(!panning) return; scroll.scrollLeft=sl-(e.clientX-px); scroll.scrollTop=st-(e.clientY-py); });
+window.addEventListener('mouseup',()=>{ panning=false; scroll.classList.remove('panning'); });
+scroll.addEventListener('click',e=>{ if(_suppressCanvasClick){ _suppressCanvasClick=false; return; }
+  if(e.target===scroll||e.target===canvas||e.target===svg||e.target===zoomwrap){ deselectAll(); if(typeof clearMulti==='function') clearMulti(); } });
+function canvasPt(e){ const zr=zoomwrap.getBoundingClientRect(); return {x:(e.clientX-zr.left)/scale,y:(e.clientY-zr.top)/scale}; }
+
+// keyboard
+window.addEventListener('keydown',e=>{
+  const typing=/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+  if((e.ctrlKey||e.metaKey) && !typing){
+    const k=e.key.toLowerCase();
+    if(k==='z' && !e.shiftKey){ e.preventDefault(); undo(); return; }
+    if((k==='y')||(k==='z'&&e.shiftKey)){ e.preventDefault(); redo(); return; }
+    if(k==='c' && selConn){ e.preventDefault(); copyConn(selConn); return; }
+    if(k==='v' && clipConn){ e.preventDefault(); pasteConn(); return; }
+  }
+  if(e.key==='Escape'){ deselectAll(); if(typeof clearMulti==='function') clearMulti(); document.querySelectorAll('.panel').forEach(p=>p.classList.remove('show')); document.querySelectorAll(PANEL_BTNS).forEach(x=>x.classList.remove('on')); closeModal(); closeBoardModal(); closeKiModal(); }
+  if((e.key==='Delete'||e.key==='Backspace') && !typing){
+    if(selMulti.size){ deleteSelMulti(); }
+    else if(selWire){ const id=selWire; closeWpop(); removeWire(id); }
+    else if(selSplice){ deleteSplice(selSplice); }
+    else if(selConn){ deleteConnector(selConn); }
+  }
+  if(e.key.toLowerCase()==='s' && !typing && !e.ctrlKey && !e.metaKey){ addSplice(); }
+  if(e.key.toLowerCase()==='r' && !typing && !e.ctrlKey && !e.metaKey && selConn){ rotateConnector(selConn); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  PERSISTENCE
+// ════════════════════════════════════════════════════════════════════
+const LS_KEY='harness_doc_v1';
+let saveTimer=null, serverOK=true;
+function setSaveStat(t){ document.getElementById('savestat').textContent=t; }
+function localSave(){ try{ localStorage.setItem(LS_KEY,JSON.stringify(DOC)); }catch(e){} }
+function scheduleSave(){
+  refreshLegend(); localSave();
+  if(applyingRemote) return;          // remote-applied change: persist locally only, no echo
+  setSaveStat('saving…');
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(serverSave,700);
+}
+async function serverSave(){
+  try{
+    const r=await fetch('/harness/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc:DOC})});
+    if(!r.ok) throw 0; serverOK=true; setSaveStat('saved ✓');
+  }catch(e){ serverOK=false; setSaveStat('saved locally'); }
+}
+
+// ── Undo / redo ──────────────────────────────────────────────────────
+let orthoRouting=false;
+const undoStack=[], redoStack=[]; const UNDO_MAX=80;
+function docSnap(){ return JSON.stringify(DOC,(k,v)=>k&&k[0]==='_'?undefined:v); }   // strip runtime (_x,_w…)
+function pushUndo(){ if(applyingRemote) return; const s=docSnap(); if(undoStack[undoStack.length-1]===s) return; undoStack.push(s); if(undoStack.length>UNDO_MAX) undoStack.shift(); redoStack.length=0; updateUndoBtns(); }
+function restoreSnap(s){ DOC=normalizeDoc(JSON.parse(s)); rebuildAll(); wsSend({type:'state',doc:DOC}); localSave(); clearTimeout(saveTimer); saveTimer=setTimeout(serverSave,300); }
+function undo(){ if(!undoStack.length) return; redoStack.push(docSnap()); restoreSnap(undoStack.pop()); setSaveStat('undo'); updateUndoBtns(); }
+function redo(){ if(!redoStack.length) return; undoStack.push(docSnap()); restoreSnap(redoStack.pop()); setSaveStat('redo'); updateUndoBtns(); }
+function updateUndoBtns(){ const u=document.getElementById('btn-undo'),r=document.getElementById('btn-redo'); if(u) u.disabled=!undoStack.length; if(r) r.disabled=!redoStack.length; }
+function normalizeDoc(d){
+  d=d||{};
+  const ep=e=>{ if(!e) return e; return epIsSplice(e)?{s:e.s}:{c:e.c,p:e.p}; };
+  return {
+    boards:(d.boards||[]).map(b=>({id:b.id||uid('b_'),name:b.name||'PCB',color:b.color||ACCENTS[0],x:b.x||120,y:b.y||120})),
+    connectors:(d.connectors||[]).map(c=>({id:c.id||uid('c_'),name:c.name||'Connector',type:c.type||'custom',
+      pins:Math.max(1,c.pins||2),cols:Math.max(1,c.cols||2),gender:c.gender||'',board:c.board||null,partno:c.partno||'',ref:c.ref||'',
+      rot:(((+c.rot||0)%360)+360)%360,
+      pinLabels:(c.pinLabels&&typeof c.pinLabels==='object')?c.pinLabels:null,x:c.x||100,y:c.y||100})),
+    splices:(d.splices||[]).map(s=>({id:s.id||uid('sp_'),name:s.name||'',x:s.x||200,y:s.y||200,kind:s.kind||'splice'})),
+    wires:(d.wires||[]).map(w=>({id:w.id||uid('w_'),from:ep(w.from),to:ep(w.to),signal:w.signal||'',
+      color:w.color||'',auto:w.auto!==false,length:w.length||0,gauge:w.gauge||'20',
+      current:+w.current||0,vclass:w.vclass||'',cable:w.cable||'',shield:!!w.shield,
+      stripA:(w.stripA!=null?+w.stripA:null),stripB:(w.stripB!=null?+w.stripB:null),service:+w.service||0,
+      mids:Array.isArray(w.mids)?w.mids.filter(p=>p&&typeof p.x==='number').map(p=>({x:p.x,y:p.y}))
+           :((w.mid&&typeof w.mid.x==='number')?[{x:w.mid.x,y:w.mid.y}]:[]),notes:w.notes||''})),
+    cables:(d.cables||[]).map(cb=>({id:cb.id||uid('cb_'),name:cb.name||'',kind:cb.kind||'twisted',shield:!!cb.shield,wires:Array.isArray(cb.wires)?cb.wires.slice():[]})),
+    rules:(d.rules&&d.rules.length)?d.rules.map(r=>({pat:r.pat||'',color:r.color||'#4a7de0'})):DEFAULT_RULES.map(r=>({...r})),
+    revisions:Array.isArray(d.revisions)?d.revisions.slice(-30):[],
+    autoColors:d.autoColors!==false,
+    unit:d.unit||'mm',
+    sysV:+d.sysV||24,
+    grid:d.grid!=null?+d.grid:0,
+  };
+}
+function rebuildAll(){
+  // wipe DOM
+  Object.values(connEls).forEach(e=>e.root.remove());
+  Object.values(wireEls).forEach(e=>e.g.remove());
+  Object.values(boardEls).forEach(e=>e.remove());
+  Object.values(spliceEls).forEach(e=>e.remove());
+  for(const k in connEls) delete connEls[k];
+  for(const k in wireEls) delete wireEls[k];
+  for(const k in boardEls) delete boardEls[k];
+  for(const k in spliceEls) delete spliceEls[k];
+  for(const k in cmap) delete cmap[k];
+  for(const k in wmap) delete wmap[k];
+  for(const k in bmap) delete bmap[k];
+  for(const k in smap) delete smap[k];
+  if(!DOC.boards) DOC.boards=[]; if(!DOC.splices) DOC.splices=[];
+  DOC.boards.forEach(b=>{ bmap[b.id]=b; });
+  DOC.connectors.forEach(c=>{ cmap[c.id]=c; });
+  DOC.splices.forEach(s=>{ smap[s.id]=s; });
+  DOC.wires.forEach(w=>{ wmap[w.id]=w; });
+  // drop connectors referencing a missing board, and wires whose endpoints vanished
+  DOC.connectors.forEach(c=>{ if(c.board&&!bmap[c.board]) c.board=null; });
+  DOC.wires=DOC.wires.filter(w=>epExists(w.from)&&epExists(w.to));
+  selSplice=null;
+  DOC.boards.forEach(renderBoard);
+  DOC.connectors.forEach(renderConnector);
+  DOC.splices.forEach(renderSplice);
+  DOC.wires.forEach(renderWire);
+  syncPositions();
+  document.getElementById('unitsel').value=DOC.unit;
+  document.getElementById('cc-auto-tog').checked=DOC.autoColors;
+  renderRules(); refreshLegend(); refreshSchedule(); checkEmpty(); updateUndoBtns();
+}
+function checkEmpty(){ document.getElementById('empty').style.display=(DOC.connectors.length||(DOC.boards||[]).length||(DOC.splices||[]).length)?'none':'flex'; }
+
+// ── Small utils ──────────────────────────────────────────────────────
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toHex(c){ if(!c) return '#000000'; if(c[0]==='#'&&c.length===7) return c; const m=document.createElement('canvas').getContext('2d'); m.fillStyle=c; return m.fillStyle; }
+function segSel(groupId,val){ document.querySelectorAll('#'+groupId+' button').forEach(b=>b.classList.toggle('sel',b.dataset.g===val)); }
+
+// ════════════════════════════════════════════════════════════════════
+//  LIVE COLLABORATION  (presence + cursors, shared identity with /pt)
+// ════════════════════════════════════════════════════════════════════
+function ptInitials(s){ return UCDFS.initials(s); }
+function hueFromName(s){ return UCDFS.hue(s); }
+// same localStorage keys as attendance.html / pt.html → the person & colour carry across pages
+let viewerName=UCDFS.requireName();
+const myId=Math.random().toString(36).slice(2,9);
+const myColor=`hsl(${hueFromName(viewerName)},68%,48%)`;
+let ws=null, wsReady=false;
+const remoteCursors={};
+
+function renderPresence(users){
+  const ids=new Set(users.map(u=>u.id));
+  Object.keys(remoteCursors).forEach(id=>{ if(!ids.has(id)){ remoteCursors[id].el.remove(); delete remoteCursors[id]; } });
+  const avs=users.map(u=>`<span class="pav" title="${esc(u.name)}${u.id===myId?' (you)':''}" style="background:${u.color}">${ptInitials(u.name||'?')}</span>`).join('');
+  document.getElementById('presence').innerHTML=`<span class="pcount">${users.length} online</span>`+avs;
+}
+function showCursor(m){
+  if(m.id===myId) return;
+  let c=remoteCursors[m.id];
+  if(!c){
+    const el=document.createElement('div'); el.className='rcursor';
+    el.innerHTML=`<svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 2 L2 15 L6 11 L9 17 L11.5 16 L8.5 10 L14 10 Z" fill="${m.color}" stroke="#fff" stroke-width="1.2"/></svg><span class="rclabel" style="background:${m.color}">${esc(m.name)}</span>`;
+    canvas.appendChild(el);
+    c=remoteCursors[m.id]={el, cur:{x:m.x,y:m.y}, tgt:{x:m.x,y:m.y}};
+    el.style.transform=`translate(${m.x}px,${m.y}px) scale(${1/scale})`;
+  }
+  c.tgt.x=m.x; c.tgt.y=m.y;
+}
+function cursorLoop(){
+  const k=0.4, inv=1/scale;
+  for(const id in remoteCursors){
+    const c=remoteCursors[id];
+    const dx=c.tgt.x-c.cur.x, dy=c.tgt.y-c.cur.y;
+    c.cur.x = Math.abs(dx)<0.1 ? c.tgt.x : c.cur.x+dx*k;
+    c.cur.y = Math.abs(dy)<0.1 ? c.tgt.y : c.cur.y+dy*k;
+    c.el.style.transform=`translate(${c.cur.x}px,${c.cur.y}px) scale(${inv})`;
+  }
+  requestAnimationFrame(cursorLoop);
+}
+requestAnimationFrame(cursorLoop);
+
+function wsSend(o){ if(applyingRemote) return; if(ws&&wsReady){ try{ ws.send(JSON.stringify(o)); }catch(e){} } }
+function wsRaw(o){ if(ws&&wsReady){ try{ ws.send(JSON.stringify(o)); }catch(e){} } }
+function handleWs(m){
+  if(m.type==='presence'){ renderPresence(m.users); return; }
+  if(m.type==='cursor'){ showCursor(m); return; }
+  applyingRemote=true;
+  try{
+    switch(m.type){
+      case 'state':       DOC=normalizeDoc(m.doc); rebuildAll(); break;
+      case 'board_add':   applyBoardAdd(m.b); break;
+      case 'board_move':  applyBoardMove(m.id,m.x,m.y); break;
+      case 'board_update':applyBoardUpdate(m.b); break;
+      case 'board_delete':applyBoardDelete(m.id); break;
+      case 'conn_add':    applyConnAdd(m.c); break;
+      case 'conn_move':   applyConnMove(m.id,m.x,m.y); break;
+      case 'conn_update': applyConnUpdate(m.c); break;
+      case 'conn_delete': applyConnDelete(m.id); break;
+      case 'wire_add':    applyWireAdd(m.w); break;
+      case 'wire_update': applyWireUpdate(m.w); break;
+      case 'wire_delete': removeWire(m.id); break;
+      case 'splice_add':  applySpliceAdd(m.s); break;
+      case 'splice_move': applySpliceMove(m.id,m.x,m.y); break;
+      case 'splice_update':applySpliceUpdate(m.s); break;
+      case 'splice_delete':deleteSplice(m.id); break;
+      case 'meta':        applyMeta(m); break;
+    }
+  } finally { applyingRemote=false; }
+}
+function applySpliceAdd(s){ if(smap[s.id]) return; DOC.splices.push(s); smap[s.id]=s; renderSplice(s); checkEmpty(); localSave(); }
+function applySpliceMove(id,x,y){ const s=smap[id]; if(!s) return; s.x=x; s.y=y; const el=spliceEls[id]; if(el){ el.style.left=(x-10)+'px'; el.style.top=(y-10)+'px'; } redrawWiresFor(id); localSave(); }
+function applySpliceUpdate(ns){ const s=smap[ns.id]; if(!s){ applySpliceAdd(ns); return; } Object.assign(s,ns);
+  const el=spliceEls[s.id]; if(el){ let lb=el.querySelector('.slabel'); if(s.name){ if(!lb){ lb=document.createElement('div'); lb.className='slabel'; el.appendChild(lb); } lb.textContent=s.name; } else if(lb) lb.remove(); } localSave(); }
+function wsConnect(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(proto+'//'+location.host+'/harness/ws');
+  ws.onopen=()=>{ wsReady=true; wsRaw({type:'join',id:myId,name:viewerName,color:myColor}); };
+  ws.onclose=()=>{ wsReady=false; setTimeout(wsConnect,2500); };
+  ws.onerror=()=>{ try{ ws.close(); }catch(e){} };
+  ws.onmessage=ev=>{ try{ handleWs(JSON.parse(ev.data)); }catch(e){} };
+}
+let lastCur=0;
+scroll.addEventListener('mousemove',e=>{
+  const now=performance.now(); if(now-lastCur<30) return; lastCur=now;
+  const zr=zoomwrap.getBoundingClientRect();
+  wsRaw({type:'cursor',id:myId,name:viewerName,color:myColor,
+         x:(e.clientX-zr.left)/scale, y:(e.clientY-zr.top)/scale});
+});
+
+// ── Remote-apply helpers (touch model + DOM only; never re-broadcast/serve-save) ──
+function applyBoardAdd(b){
+  if(bmap[b.id]) return;
+  DOC.boards.push(b); bmap[b.id]=b; renderBoard(b); syncPositions(); refreshLegend(); checkEmpty(); localSave();
+}
+function applyBoardMove(id,x,y){ const b=bmap[id]; if(!b) return; b.x=x; b.y=y; syncPositions(); localSave(); }
+function applyBoardUpdate(nb){
+  const b=bmap[nb.id]; if(!b){ applyBoardAdd(nb); return; }
+  Object.assign(b,nb);
+  const el=boardEls[b.id]; if(el){ el.style.setProperty('--bc',b.color||'#4a7de0'); el.querySelector('.bname').textContent=b.name; }
+  refreshLegend(); refreshSchedule(); localSave();
+}
+function applyBoardDelete(id){
+  DOC.connectors.filter(c=>c.board===id).forEach(c=>{ c.x=ax(c); c.y=ay(c); c.board=null; });
+  if(boardEls[id]){ boardEls[id].remove(); delete boardEls[id]; }
+  DOC.boards=DOC.boards.filter(x=>x.id!==id); delete bmap[id];
+  syncPositions(); refreshLegend(); refreshSchedule(); localSave(); checkEmpty();
+}
+function applyConnAdd(c){
+  if(cmap[c.id]) return;
+  DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c);
+  syncPositions(); refreshLegend(); refreshSchedule(); checkEmpty(); localSave();
+}
+function applyConnMove(id,x,y){
+  const c=cmap[id]; if(!c) return; c.x=x; c.y=y;
+  syncPositions(); localSave();
+}
+function applyConnUpdate(nc){
+  const c=cmap[nc.id]; if(!c){ applyConnAdd(nc); return; }
+  Object.assign(c,nc);
+  DOC.wires.filter(w=>(!epIsSplice(w.from)&&w.from.c===c.id&&w.from.p>=c.pins)||(!epIsSplice(w.to)&&w.to.c===c.id&&w.to.p>=c.pins)).forEach(w=>removeWire(w.id));
+  rebuildConnector(c); refreshLegend(); refreshSchedule(); localSave();
+}
+function applyConnDelete(id){
+  DOC.wires.filter(w=>epTouches(w.from,id)||epTouches(w.to,id)).forEach(w=>removeWire(w.id));
+  if(connEls[id]){ connEls[id].root.remove(); delete connEls[id]; }
+  DOC.connectors=DOC.connectors.filter(c=>c.id!==id); delete cmap[id];
+  syncPositions(); refreshLegend(); refreshSchedule(); localSave(); checkEmpty();
+}
+function applyWireAdd(w){
+  if(wmap[w.id]||!epExists(w.from)||!epExists(w.to)) return;
+  DOC.wires.push(w); wmap[w.id]=w; renderWire(w); repaintPins(); refreshLegend(); refreshSchedule(); localSave();
+}
+function applyWireUpdate(nw){
+  const w=wmap[nw.id]; if(!w){ applyWireAdd(nw); return; }
+  Object.assign(w,nw); updateWire(w); repaintPins(); refreshLegend(); refreshSchedule(); localSave();
+  if(wpopId===w.id) syncWpopColor(w);
+}
+function applyMeta(m){
+  if(m.rules) DOC.rules=m.rules;
+  DOC.autoColors=m.autoColors!==false; DOC.unit=m.unit||DOC.unit;
+  if(m.sysV!=null) DOC.sysV=m.sysV;
+  document.getElementById('unitsel').value=DOC.unit;
+  document.getElementById('cc-auto-tog').checked=DOC.autoColors;
+  renderRules(); redrawAllWires(); repaintPins(); refreshLegend(); refreshSchedule(); localSave();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  DRC (electrical rule check)
+// ════════════════════════════════════════════════════════════════════
+function pinWireMap(){ const m={}; DOC.wires.forEach(w=>{ [w.from,w.to].forEach(ep=>{ const k=epKey(ep); (m[k]=m[k]||[]).push(w); }); }); return m; }
+function runDRC(){
+  const issues=[], nets=computeNets(), pw=pinWireMap();
+  let unconnected=0;
+  DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++) if(!pw[c.id+':'+i]) unconnected++; });
+  if(unconnected) issues.push({sev:'info',cat:'Connectivity',msg:`${unconnected} pin${unconnected>1?'s':''} unconnected`});
+  DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++){ const ws=pw[c.id+':'+i]||[]; if(ws.length>1) issues.push({sev:'warn',cat:'Connectivity',msg:`${connFullName(c)} pin ${i+1} has ${ws.length} wires — add a splice`,ref:{type:'wire',id:ws[0].id}}); } });
+  const seen={}; DOC.wires.forEach(w=>{ const k=[epKey(w.from),epKey(w.to)].sort().join('|'); if(seen[k]) issues.push({sev:'warn',cat:'Connectivity',msg:`Duplicate wire ${epShort(w.from)} ↔ ${epShort(w.to)}`,ref:{type:'wire',id:w.id}}); else seen[k]=1; });
+  DOC.wires.forEach(w=>{ if(!(w.length>0)) issues.push({sev:'info',cat:'Lengths',msg:`${epShort(w.from)}→${epShort(w.to)} has no length`,ref:{type:'wire',id:w.id}}); });
+  nets.forEach(n=>{ if(n.signals.size>1) issues.push({sev:'err',cat:'Nets',msg:`Conflicting signals on one net: ${[...n.signals].join(', ')}`,ref:{type:'wire',id:n.wires[0].id}}); });
+  nets.forEach(n=>{ if(n.current) n.wires.forEach(w=>{ const sp=awgSpec(w.gauge); if(n.current>sp.amp) issues.push({sev:'err',cat:'Current rating',msg:`${w.gauge} AWG under-sized for ${n.current} A (max ~${sp.amp} A)${n.signal?' · '+n.signal:''}`,ref:{type:'wire',id:w.id}}); });
+    if(n.current&&DOC.sysV){ let vd=0; n.wires.forEach(w=>vd+=wireVdrop(w,n.current)); const pct=vd/DOC.sysV*100;
+      if(pct>3) issues.push({sev:pct>10?'err':'warn',cat:'Voltage drop',msg:`${n.signal||'net'}: ${vd.toFixed(2)} V drop (${pct.toFixed(1)}% of ${DOC.sysV} V)`,ref:{type:'wire',id:n.wires[0].id}}); } });
+  DOC.connectors.forEach(c=>{ const cls=new Set(); DOC.wires.forEach(w=>[w.from,w.to].forEach(ep=>{ if(!epIsSplice(ep)&&ep.c===c.id&&w.vclass) cls.add(w.vclass); })); if(cls.has('HV')&&cls.has('LV')) issues.push({sev:'err',cat:'HV/LV segregation',msg:`${connFullName(c)} mixes HV and LV wires`,ref:{type:'conn',id:c.id}}); });
+  DOC.splices.forEach(s=>{ const n=(pw['S'+s.id]||[]).length; if(!n) issues.push({sev:'warn',cat:'Connectivity',msg:`Splice ${s.name||''} has no wires`,ref:{type:'splice',id:s.id}}); else if(n<3) issues.push({sev:'info',cat:'Connectivity',msg:`Splice ${s.name||''} joins only ${n} wire${n>1?'s':''}`,ref:{type:'splice',id:s.id}}); });
+  return issues;
+}
+function drcCounts(is){ return {err:is.filter(i=>i.sev==='err').length,warn:is.filter(i=>i.sev==='warn').length,info:is.filter(i=>i.sev==='info').length}; }
+function updateDRCBadge(){ const c=drcCounts(runDRC()); const b=document.getElementById('drc-badge'),btn=document.getElementById('btn-drc'); if(!b) return;
+  const n=c.err+c.warn; b.textContent=n||c.info; b.style.display=(n||c.info)?'inline-block':'none'; btn.classList.toggle('ok',n===0); }
+function refreshDRC(){
+  updateDRCBadge();
+  const body=document.getElementById('drc-body'), issues=runDRC(), c=drcCounts(issues);
+  if(!issues.length){ body.innerHTML='<div class="drc-clean">✓ No issues found</div>'; return; }
+  const ord={err:0,warn:1,info:2}; issues.sort((a,b)=>ord[a.sev]-ord[b.sev]);
+  const groups={}; issues.forEach(i=>{ (groups[i.cat]=groups[i.cat]||[]).push(i); });
+  let html=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:11px;font-weight:600;color:var(--muted)">System voltage <input id="drc-sysv" type="number" min="0" step="1" value="${DOC.sysV}" style="width:64px;padding:5px 7px;border:1.5px solid var(--card-border);border-radius:7px;font-family:inherit"> V <span style="flex:1;text-align:right">used for voltage-drop %</span></div>`;
+  html+=`<div class="sched-tot"><div class="tcard"><div class="n" style="color:var(--danger)">${c.err}</div><div class="l">Errors</div></div><div class="tcard"><div class="n" style="color:var(--warn)">${c.warn}</div><div class="l">Warnings</div></div><div class="tcard"><div class="n" style="color:#7585a3">${c.info}</div><div class="l">Info</div></div></div>`;
+  const flat=[];
+  Object.keys(groups).forEach(cat=>{ html+=`<div class="drc-group-h">${esc(cat)}</div>`; groups[cat].forEach(i=>{ const ic=i.sev==='err'?'!':i.sev==='warn'?'▲':'i'; html+=`<div class="drc-item drc-${i.sev}" data-i="${flat.length}"><div class="drc-ico">${ic}</div><div class="drc-msg">${esc(i.msg)}</div></div>`; flat.push(i); }); });
+  body.innerHTML=html;
+  const sv=document.getElementById('drc-sysv'); if(sv) sv.addEventListener('input',()=>{ DOC.sysV=+sv.value||0; refreshDRC(); refreshSchedule(); wsSend({type:'meta',rules:DOC.rules,autoColors:DOC.autoColors,unit:DOC.unit,sysV:DOC.sysV}); scheduleSave(); });
+  body.querySelectorAll('.drc-item').forEach(el=>el.addEventListener('click',()=>{ const i=flat[+el.dataset.i]; if(i&&i.ref) focusRef(i.ref); }));
+}
+function focusRef(ref){
+  if(ref.type==='wire'){ const w=wmap[ref.id]; if(w){ focusWire(w); selectWire(w.id,null,midOfWire(w)); } }
+  else if(ref.type==='conn'){ const c=cmap[ref.id]; if(c){ const b=box(c); scroll.scrollLeft=b.cx*scale-scroll.clientWidth/2; scroll.scrollTop=b.cy*scale-scroll.clientHeight/2; selectConn(c.id,connEls[c.id].root); } }
+  else if(ref.type==='splice'){ const s=smap[ref.id]; if(s){ scroll.scrollLeft=s.x*scale-scroll.clientWidth/2; scroll.scrollTop=s.y*scale-scroll.clientHeight/2; selectSplice(ref.id); } }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  BILL OF MATERIALS
+// ════════════════════════════════════════════════════════════════════
+function computeBOM(){
+  const items={}, pw=pinWireMap();
+  const add=(cat,pn,desc,qty,uom)=>{ const k=cat+'|'+pn+'|'+desc+'|'+(uom||'ea'); (items[k]=items[k]||{cat,pn,desc,qty:0,uom:uom||'ea'}).qty+=qty; };
+  DOC.connectors.forEach(c=>{ let wired=0; for(let i=0;i<c.pins;i++) if(pw[c.id+':'+i]) wired++;
+    connParts(c).forEach(p=>{ const qty=p.per==='contact'?wired:1; if(qty>0) add('Connectors & contacts',p.pn||'(set PN)',p.desc,qty); }); });
+  const u=DOC.unit, agg={};
+  DOC.wires.forEach(w=>{ const k=w.gauge+'|'+wireColor(w); (agg[k]=agg[k]||{g:w.gauge,c:wireColor(w),len:0}).len+=wireCutMm(w); });
+  Object.values(agg).forEach(a=>add('Wire',`${a.g} AWG`,`Wire ${a.g} AWG — ${a.c}`,+(a.len/UNIT_FACTOR[u]).toFixed(1),u));
+  // cable / twist groups → one line each with computed bundle OD
+  const cables={}; DOC.wires.forEach(w=>{ if(w.cable){ const g=cables[w.cable]=cables[w.cable]||{cores:0,area:0,len:0,shield:false}; g.cores++; g.area+=awgSpec(w.gauge).mm2; g.len=Math.max(g.len,wireCutMm(w)); if(w.shield) g.shield=true; } });
+  Object.keys(cables).forEach(name=>{ const g=cables[name]; const od=(2*Math.sqrt((g.area/Math.PI))/0.55+0.8).toFixed(1);
+    add('Cables',name,`${g.cores}-core${g.shield?' shielded':''} cable — OD ~${od} mm`,+(g.len/UNIT_FACTOR[u]).toFixed(1),u);
+    if(g.shield) add('Cables',name+'-DRAIN','Shield drain wire + heatshrink',1); });
+  if(DOC.wires.length){ add('Consumables','LABEL','Wire label / marker (per end)',DOC.wires.length*2); add('Consumables','HS','Heatshrink boot (per end)',DOC.wires.length*2); }
+  if(DOC.splices.length) add('Consumables','SPLICE','Crimp/solder splice',DOC.splices.length);
+  return Object.values(items);
+}
+function refreshBOM(){
+  const body=document.getElementById('bom-body'), items=computeBOM();
+  if(!items.length){ body.innerHTML='<div class="sched-empty">Nothing to list yet.</div>'; return; }
+  const cats={}; items.forEach(it=>{ (cats[it.cat]=cats[it.cat]||[]).push(it); });
+  let html=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${items.length} line items. Part numbers are typical references — verify before ordering.</div>`;
+  Object.keys(cats).forEach(cat=>{ html+=`<div class="bom-cat">${esc(cat)}</div><table class="bom"><thead><tr><th>Part</th><th>Description</th><th style="text-align:right">Qty</th></tr></thead><tbody>`;
+    cats[cat].sort((a,b)=>a.pn.localeCompare(b.pn)).forEach(it=>{ html+=`<tr><td>${esc(it.pn)}</td><td>${esc(it.desc)}</td><td class="qty">${it.qty} ${it.uom}</td></tr>`; }); html+='</tbody></table>'; });
+  body.innerHTML=html;
+}
+function exportBOMcsv(){ const items=computeBOM(); const lines=['Category,Part number,Description,Qty,UoM'];
+  items.forEach(it=>lines.push([q(it.cat),q(it.pn),q(it.desc),it.qty,it.uom].join(','))); download('harness-bom.csv',lines.join('\n'),'text/csv'); }
+
+// ════════════════════════════════════════════════════════════════════
+//  SEARCH / LAYER FILTER / ROUTING + GRID TOGGLES / COPY-PASTE
+// ════════════════════════════════════════════════════════════════════
+function highlightSearch(q){ q=(q||'').trim().toLowerCase();
+  if(!q){ if(layerFilter==='all') clearHighlight(); else applyLayer(); return; }
+  const keepW=new Set(),keepC=new Set();
+  DOC.wires.forEach(w=>{ const hay=((w.signal||'')+' '+(w.vclass||'')+' '+epShort(w.from)+' '+epShort(w.to)).toLowerCase();
+    if(hay.includes(q)){ keepW.add(w.id); [w.from,w.to].forEach(ep=>{ if(!epIsSplice(ep)) keepC.add(ep.c); }); } });
+  Object.keys(connEls).forEach(cid=>connEls[cid].root.classList.toggle('dim',!keepC.has(cid)));
+  dimWires=keepW; redrawAllWires();
+}
+document.getElementById('netsearch').addEventListener('input',e=>highlightSearch(e.target.value));
+document.getElementById('netsearch').addEventListener('blur',e=>{ if(!e.target.value.trim()&&layerFilter==='all') clearHighlight(); });
+let layerFilter='all';
+function applyLayer(){ if(layerFilter==='all'){ clearHighlight(); return; }
+  const keepW=new Set(),keepC=new Set();
+  DOC.wires.forEach(w=>{ const cls=w.vclass||'SIG'; if((layerFilter==='SIG'&&cls==='SIG')||cls===layerFilter){ keepW.add(w.id); [w.from,w.to].forEach(ep=>{ if(!epIsSplice(ep)) keepC.add(ep.c); }); } });
+  Object.keys(connEls).forEach(cid=>connEls[cid].root.classList.toggle('dim',!keepC.has(cid)));
+  dimWires=keepW; redrawAllWires();
+}
+function setLayer(l){ layerFilter=l; document.querySelectorAll('#layerchips .lchip').forEach(b=>b.classList.toggle('on',b.dataset.l===l)); applyLayer(); }
+// inject layer chips into the legend
+(function(){ const lg=document.getElementById('legend'); if(!lg) return; const d=document.createElement('div'); d.id='layerchips'; d.style.cssText='display:flex;gap:4px;margin-top:8px;border-top:1px solid var(--card-border);padding-top:8px;';
+  d.innerHTML='<span style="font-size:9px;font-weight:800;color:var(--muted);align-self:center;margin-right:2px">LAYERS</span>'+['all','HV','LV','SIG'].map(l=>`<button class="lchip${l==='all'?' on':''}" data-l="${l}" style="flex:1;font-size:9.5px;font-weight:700;border:1.5px solid var(--card-border);border-radius:6px;background:#fff;cursor:pointer;padding:3px 2px">${l==='all'?'All':l}</button>`).join('');
+  lg.appendChild(d); d.querySelectorAll('.lchip').forEach(b=>b.addEventListener('click',()=>setLayer(b.dataset.l))); })();
+const lchipCSS=document.createElement('style'); lchipCSS.textContent='.lchip.on{background:var(--accent)!important;color:#fff;border-color:transparent!important;}'; document.head.appendChild(lchipCSS);
+
+function setOrtho(v){ orthoRouting=v; redrawAllWires(); setSaveStat(v?'orthogonal routing on':'curved routing'); }
+function setGrid(v){ DOC.grid=v; scheduleSave(); setSaveStat(v?('grid '+v+' px'):'grid off'); }
+let clipConn=null;
+function copyConn(id){ const c=cmap[id]; if(!c) return; clipConn=JSON.parse(JSON.stringify(c)); setSaveStat('copied'); }
+function pasteConn(){ if(!clipConn) return; pushUndo(); const c=JSON.parse(JSON.stringify(clipConn)); c.id=uid('c_');
+  if(c.board&&!bmap[c.board]) c.board=null; c.x=(c.x||0)+30; c.y=(c.y||0)+30; c.name=(c.name||'Conn')+' copy';
+  DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c); wsSend({type:'conn_add',c}); syncPositions(); refreshLegend(); scheduleSave(); checkEmpty();
+  const el=connEls[c.id]; if(el) selectConn(c.id,el.root); }
+
+// header / menu bindings for the above
+document.getElementById('btn-undo').addEventListener('click',undo);
+document.getElementById('btn-redo').addEventListener('click',redo);
+document.getElementById('btn-splice').addEventListener('click',addSplice);
+document.getElementById('exp-bom-csv').addEventListener('click',()=>{ expmenu.classList.remove('show'); exportBOMcsv(); });
+document.getElementById('tool-ortho').addEventListener('click',()=>{ expmenu.classList.remove('show'); setOrtho(!orthoRouting); });
+document.getElementById('tool-snap').addEventListener('click',()=>{ expmenu.classList.remove('show'); setGrid(DOC.grid?0:20); });
+
+// ════════════════════════════════════════════════════════════════════
+//  MANUAL PER-PIN LABEL EDITOR
+// ════════════════════════════════════════════════════════════════════
+const plpop=document.createElement('div'); plpop.className='pop'; plpop.id='plpop'; plpop.style.width='250px';
+plpop.innerHTML=`<div class="pttl" id="plpop-ttl">Pin labels</div><div class="pinlbl-grid" id="plpop-grid"></div>
+  <div class="pop-actions"><button class="save" id="plpop-done">Done</button><button id="plpop-clear" style="background:#fde4e1;color:var(--danger)">Clear all</button></div>`;
+document.body.appendChild(plpop);
+let plpopId=null;
+function openPinLabels(connId,anchor){ const c=cmap[connId]; if(!c) return; plpopId=connId; pushUndo();
+  document.getElementById('plpop-ttl').textContent='Pin labels — '+(c.name||'Connector');
+  const g=document.getElementById('plpop-grid'), lbl=c.pinLabels||{};
+  g.innerHTML=''; for(let i=0;i<c.pins;i++){ const row=document.createElement('div'); row.className='pinlbl-row';
+    row.innerHTML=`<span class="pn">${i+1}</span><input data-i="${i}" value="${esc(lbl[i]||'')}" placeholder="signal">`; g.appendChild(row); }
+  g.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',()=>{ const c2=cmap[plpopId]; if(!c2) return;
+    c2.pinLabels=c2.pinLabels||{}; const i=+inp.dataset.i, v=inp.value.trim(); if(v) c2.pinLabels[i]=v; else delete c2.pinLabels[i];
+    if(!Object.keys(c2.pinLabels).length) c2.pinLabels=null;
+    rebuildConnector(c2); wsSend({type:'conn_update',c2}); refreshSchedule(); scheduleSave(); }));
+  plpop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  plpop.style.left=Math.max(8,Math.min(r.right+10,window.innerWidth-260))+'px';
+  plpop.style.top=Math.max(60,Math.min(r.top,window.innerHeight-380))+'px';
+  setTimeout(()=>{ const f=g.querySelector('input'); if(f) f.focus(); },40);
+}
+function closePlpop(){ plpop.style.display='none'; plpopId=null; }
+document.getElementById('plpop-done').addEventListener('click',closePlpop);
+document.getElementById('plpop-clear').addEventListener('click',()=>{ const c=cmap[plpopId]; if(!c) return; c.pinLabels=null; rebuildConnector(c); wsSend({type:'conn_update',c}); refreshSchedule(); scheduleSave(); closePlpop(); });
+
+// ════════════════════════════════════════════════════════════════════
+//  LIBRARY (reusable connector + sub-harness templates)
+// ════════════════════════════════════════════════════════════════════
+const _libStyle=document.createElement('style'); _libStyle.textContent=
+  '.lib-add,.lib-del{width:26px;height:24px;border:none;border-radius:7px;cursor:pointer;font-weight:800;margin-left:4px;}'+
+  '.lib-add{background:#eef2fb;color:var(--accent);} .lib-del{background:#fff;color:var(--muted);} .lib-del:hover{color:var(--danger);}';
+document.head.appendChild(_libStyle);
+const LIB_KEY='harness_lib_v1';
+function loadLib(){ try{ const l=JSON.parse(localStorage.getItem(LIB_KEY)); return l&&l.connectors?l:{connectors:[],harnesses:[]}; }catch(e){ return {connectors:[],harnesses:[]}; } }
+function saveLib(l){ try{ localStorage.setItem(LIB_KEY,JSON.stringify(l)); }catch(e){} }
+function saveConnTemplate(id){ const c=cmap[id]; if(!c) return; const lib=loadLib();
+  lib.connectors.push({name:c.name||'Connector',type:c.type,pins:c.pins,cols:c.cols,gender:c.gender,partno:c.partno||'',pinLabels:c.pinLabels||null}); saveLib(lib); refreshLibPanel(); }
+function saveBoardTemplate(id){ const b=bmap[id]; if(!b) return; const mem=DOC.connectors.filter(c=>c.board===id), ids=new Set(mem.map(c=>c.id));
+  const intw=DOC.wires.filter(w=>!epIsSplice(w.from)&&!epIsSplice(w.to)&&ids.has(w.from.c)&&ids.has(w.to.c)); const lib=loadLib();
+  lib.harnesses.push({name:b.name,color:b.color,connectors:mem.map(c=>({name:c.name,type:c.type,pins:c.pins,cols:c.cols,gender:c.gender,partno:c.partno||'',pinLabels:c.pinLabels||null,x:c.x,y:c.y})),
+    wires:intw.map(w=>({fi:mem.findIndex(c=>c.id===w.from.c),fp:w.from.p,ti:mem.findIndex(c=>c.id===w.to.c),tp:w.to.p,signal:w.signal,gauge:w.gauge,color:w.color,auto:w.auto,vclass:w.vclass}))});
+  saveLib(lib); refreshLibPanel(); setSaveStat('PCB saved to library'); }
+function addConnFromTemplate(t){ pushUndo(); const px=Math.round((scroll.scrollLeft+scroll.clientWidth/2)/scale-90),py=Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale-60);
+  const c={id:uid('c_'),name:t.name,type:t.type,pins:t.pins,cols:t.cols,gender:t.gender||'',partno:t.partno||'',ref:'',pinLabels:t.pinLabels?JSON.parse(JSON.stringify(t.pinLabels)):null,board:null,x:px,y:py};
+  DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c); wsSend({type:'conn_add',c}); syncPositions(); refreshLegend(); scheduleSave(); checkEmpty(); }
+function addBoardFromTemplate(t){ pushUndo(); const bx=Math.round((scroll.scrollLeft+scroll.clientWidth/2)/scale-150),by=Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale-100);
+  const b={id:uid('b_'),name:t.name,color:t.color||ACCENTS[0],x:bx,y:by}; DOC.boards.push(b); bmap[b.id]=b; renderBoard(b); wsSend({type:'board_add',b});
+  const nid=t.connectors.map(tc=>{ const c={id:uid('c_'),name:tc.name,type:tc.type,pins:tc.pins,cols:tc.cols,gender:tc.gender||'',partno:tc.partno||'',ref:'',pinLabels:tc.pinLabels?JSON.parse(JSON.stringify(tc.pinLabels)):null,board:b.id,x:tc.x||20,y:tc.y||20};
+    DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c); wsSend({type:'conn_add',c}); return c.id; });
+  (t.wires||[]).forEach(tw=>{ if(nid[tw.fi]==null||nid[tw.ti]==null) return; const w={id:uid('w_'),from:{c:nid[tw.fi],p:tw.fp},to:{c:nid[tw.ti],p:tw.tp},signal:tw.signal||'',color:tw.color||'',auto:tw.auto!==false,length:0,gauge:tw.gauge||'20',current:0,vclass:tw.vclass||'',cable:'',shield:false,stripA:null,stripB:null,service:0,mids:[],notes:''};
+    DOC.wires.push(w); wmap[w.id]=w; renderWire(w); wsSend({type:'wire_add',w}); });
+  syncPositions(); repaintPins(); refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty(); }
+function refreshLibPanel(){ const lib=loadLib(), body=document.getElementById('lib-body');
+  let html='<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Reusable parts saved in this browser. Use “Save to library” in a connector, or a PCB’s edit popover.</div>';
+  html+='<div class="bom-cat">Connectors</div>'+(lib.connectors.length?'':'<div class="sched-empty" style="padding:8px">None yet.</div>');
+  lib.connectors.forEach((t,i)=>html+=`<div class="drc-item"><div class="drc-msg" style="flex:1">${esc(t.name)} <span class="ref">${esc(typeLabel(t.type))} · ${t.pins}P</span></div><button class="lib-add" data-add="c${i}">＋</button><button class="lib-del" data-del="c${i}">✕</button></div>`);
+  html+='<div class="bom-cat">Sub-harnesses (PCBs)</div>'+(lib.harnesses.length?'':'<div class="sched-empty" style="padding:8px">None yet.</div>');
+  lib.harnesses.forEach((t,i)=>html+=`<div class="drc-item"><div class="drc-msg" style="flex:1">${esc(t.name)} <span class="ref">${t.connectors.length} conn · ${(t.wires||[]).length} wires</span></div><button class="lib-add" data-add="h${i}">＋</button><button class="lib-del" data-del="h${i}">✕</button></div>`);
+  html+='<div style="margin-top:12px;display:flex;gap:8px"><button id="lib-export" class="cc-add" style="margin:0">⬇ Export</button><button id="lib-importbtn" class="cc-add" style="margin:0">⬆ Import</button></div>';
+  body.innerHTML=html;
+  body.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',()=>{ const v=b.dataset.add; v[0]==='c'?addConnFromTemplate(lib.connectors[+v.slice(1)]):addBoardFromTemplate(lib.harnesses[+v.slice(1)]); }));
+  body.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{ const v=b.dataset.del; (v[0]==='c'?lib.connectors:lib.harnesses).splice(+v.slice(1),1); saveLib(lib); refreshLibPanel(); }));
+  document.getElementById('lib-export').addEventListener('click',()=>download('harness-library.json',JSON.stringify(lib,null,2),'application/json'));
+  document.getElementById('lib-importbtn').addEventListener('click',()=>document.getElementById('libimport').click());
+}
+document.getElementById('libimport').addEventListener('change',e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+  r.onload=()=>{ try{ const inc=JSON.parse(r.result), lib=loadLib(); (inc.connectors||[]).forEach(c=>lib.connectors.push(c)); (inc.harnesses||[]).forEach(h=>lib.harnesses.push(h)); saveLib(lib); refreshLibPanel(); }catch(err){ alert('Could not read library file.'); } };
+  r.readAsText(f); e.target.value=''; });
+
+// ════════════════════════════════════════════════════════════════════
+//  REVISIONS
+// ════════════════════════════════════════════════════════════════════
+function revSnap(){ return JSON.stringify(DOC,(k,v)=>(k==='revisions'||(k&&k[0]==='_'))?undefined:v); }
+function saveRevision(){ const note=prompt('Revision note (e.g. “Rev B — added BSPD harness”):','')||''; DOC.revisions=DOC.revisions||[];
+  DOC.revisions.push({id:uid('rv_'),ts:Date.now(),author:(typeof viewerName!=='undefined'?viewerName:''),note,snap:revSnap()});
+  if(DOC.revisions.length>30) DOC.revisions=DOC.revisions.slice(-30); scheduleSave(); refreshRevPanel(); setSaveStat('revision saved'); }
+function restoreRevision(id){ const r=(DOC.revisions||[]).find(x=>x.id===id); if(!r||!confirm('Restore this revision? (Current state becomes an undo step.)')) return;
+  pushUndo(); const snap=JSON.parse(r.snap); snap.revisions=DOC.revisions; DOC=normalizeDoc(snap); rebuildAll(); wsSend({type:'state',doc:DOC}); scheduleSave(); refreshRevPanel(); }
+function diffDocs(a,b){ const ka={},kb={};
+  a.connectors.forEach(c=>ka['c'+c.id]=JSON.stringify([c.name,c.pins,c.type,c.gender])); b.connectors.forEach(c=>kb['c'+c.id]=JSON.stringify([c.name,c.pins,c.type,c.gender]));
+  a.wires.forEach(w=>ka['w'+w.id]=JSON.stringify([w.from,w.to,w.signal,w.gauge,w.length])); b.wires.forEach(w=>kb['w'+w.id]=JSON.stringify([w.from,w.to,w.signal,w.gauge,w.length]));
+  let add=0,del=0,chg=0; Object.keys(kb).forEach(k=>{ if(!(k in ka)) add++; else if(ka[k]!==kb[k]) chg++; }); Object.keys(ka).forEach(k=>{ if(!(k in kb)) del++; }); return {add,del,chg}; }
+function diffRevision(id){ const r=(DOC.revisions||[]).find(x=>x.id===id); if(!r) return; const d=diffDocs(normalizeDoc(JSON.parse(r.snap)),DOC);
+  alert(`Changes since "${r.note||'revision'}":\n  +${d.add} added\n  −${d.del} removed\n  ~${d.chg} changed\n(connectors + wires)`); }
+function refreshRevPanel(){ const body=document.getElementById('rev-body'), revs=(DOC.revisions||[]).slice().reverse();
+  let html='<button id="rev-save" class="cc-add" style="margin-bottom:12px">＋ Save current as revision</button>';
+  html+=revs.length?'':'<div class="sched-empty">No revisions yet.</div>';
+  revs.forEach(r=>{ html+=`<div class="drc-item"><div class="drc-msg" style="flex:1"><b>${esc(r.note||'(no note)')}</b><br><span class="ref">${esc(new Date(r.ts).toLocaleString())} · ${esc(r.author||'')}</span></div><button class="lib-add" data-diff="${r.id}" title="Diff vs current">Δ</button><button class="lib-add" data-restore="${r.id}" title="Restore">⟲</button></div>`; });
+  body.innerHTML=html;
+  const sv=document.getElementById('rev-save'); if(sv) sv.addEventListener('click',saveRevision);
+  body.querySelectorAll('[data-restore]').forEach(b=>b.addEventListener('click',()=>restoreRevision(b.dataset.restore)));
+  body.querySelectorAll('[data-diff]').forEach(b=>b.addEventListener('click',()=>diffRevision(b.dataset.diff)));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  PRINTABLE REPORTS  (title block + tables, print to PDF)
+// ════════════════════════════════════════════════════════════════════
+function repName(){ return (DOC.boards[0]&&DOC.boards[0].name)||'Harness'; }
+function titleBlock(sub){ const d=new Date().toISOString().slice(0,10), nm=(typeof viewerName!=='undefined'?viewerName:'');
+  return `<div class="rep-title"><div><h1>${esc(repName())} — ${esc(sub)}</h1></div><div class="meta">UCD Formula Student · ${d}${nm?(' · '+esc(nm)):''}<br>${DOC.connectors.length} connectors · ${DOC.wires.length} wires · ${(DOC.revisions||[]).length} revisions</div></div>`; }
+function printReport(sub,inner){ document.getElementById('report').innerHTML=`<div class="rep-page">${titleBlock(sub)}${inner}</div>`; document.body.classList.add('printing'); window.print(); }
+window.addEventListener('afterprint',()=>document.body.classList.remove('printing'));
+function repCutlist(){ const u=DOC.unit, nets=computeNets(), nbw={}; nets.forEach(n=>n.wires.forEach(w=>nbw[w.id]=n));
+  let rows=DOC.wires.map((w,i)=>{ const n=nbw[w.id], cur=n?n.current:(+w.current||0);
+    return `<tr><td>${i+1}</td><td><span class="rep-sw" style="background:${wireColor(w)}"></span></td><td>${esc(w.signal||'')}</td><td>${w.vclass||''}</td>
+      <td>${esc(epShort(w.from))}</td><td>${esc(terminalPN(w.from))}</td><td>${esc(epShort(w.to))}</td><td>${esc(terminalPN(w.to))}</td>
+      <td>${(wireCutMm(w)/UNIT_FACTOR[u]).toFixed(1)}</td><td>${w.gauge}</td><td>${cur||''}</td><td>${wireVdrop(w,cur).toFixed(2)}</td></tr>`; }).join('');
+  printReport('Cut list',`<table class="rep"><thead><tr><th>#</th><th></th><th>Signal</th><th>Cls</th><th>From</th><th>Term A</th><th>To</th><th>Term B</th><th>Cut ${u}</th><th>AWG</th><th>A</th><th>Vd</th></tr></thead><tbody>${rows}</tbody></table>`); }
+function repBOM(){ const cats={}; computeBOM().forEach(it=>{ (cats[it.cat]=cats[it.cat]||[]).push(it); });
+  let html=''; Object.keys(cats).forEach(cat=>{ html+=`<h3 style="font-size:13px;margin:10px 0 4px">${esc(cat)}</h3><table class="rep"><thead><tr><th>Part</th><th>Description</th><th>Qty</th></tr></thead><tbody>`+
+    cats[cat].map(it=>`<tr><td>${esc(it.pn)}</td><td>${esc(it.desc)}</td><td>${it.qty} ${it.uom}</td></tr>`).join('')+'</tbody></table>'; });
+  printReport('Bill of materials',html); }
+function repPinout(){ const pw=pinWireMap();
+  let html=DOC.connectors.map(c=>{ let rows='';
+    for(let i=0;i<c.pins;i++){ const ws=pw[c.id+':'+i]||[]; const lbl=(c.pinLabels&&c.pinLabels[i])||(ws[0]&&ws[0].signal)||'';
+      const to=ws.map(w=>{ const other=(!epIsSplice(w.from)&&w.from.c===c.id&&w.from.p===i)?w.to:w.from; return epShort(other); }).join(', ');
+      rows+=`<tr><td>${i+1}</td><td>${esc(lbl)}</td><td>${ws[0]?`<span class="rep-sw" style="background:${wireColor(ws[0])}"></span> ${ws[0].gauge} AWG`:''}</td><td>${esc(to)}</td></tr>`; }
+    return `<h3 style="font-size:13px;margin:12px 0 4px">${esc(connFullName(c))} <span style="font-weight:400;color:#777">(${esc(typeLabel(c.type))}${c.gender?', '+c.gender:''})</span></h3>
+      <table class="rep"><thead><tr><th>Pin</th><th>Signal</th><th>Wire</th><th>To</th></tr></thead><tbody>${rows}</tbody></table>`; }).join('');
+  printReport('Connector pinouts',html); }
+function repLabels(){ let chips='';
+  DOC.wires.forEach((w,i)=>{ const a=`<div class="lbl-chip"><b>${esc(w.signal||('W'+(i+1)))}</b><br>${esc(epShort(w.from))} → ${esc(epShort(w.to))}<br>${w.gauge}AWG ${wireColor(w)}</div>`;
+    chips+=a+a; });   // two labels per wire (one per end)
+  printReport('Wire labels',`<div class="lbl-sheet">${chips}</div>`); }
+function repFormboard(){ printReport('Formboard (lay-flat, scaled)',formboardSVG()); }
+// bundle wires by connector/splice pair → a lay-flat schematic with lengths
+function formboardSVG(){
+  const nodes=[]; DOC.connectors.forEach(c=>{ const b=box(c); nodes.push({id:'c'+c.id,key:'c:'+c.id,label:connFullName(c),x:b.cx,y:b.cy}); });
+  DOC.splices.forEach(s=>nodes.push({id:'s'+s.id,key:'S'+s.id,label:s.name||'splice',x:s.x,y:s.y}));
+  if(!nodes.length) return '<div style="color:#777">Nothing to lay out.</div>';
+  const nk={}; nodes.forEach(n=>nk[n.key]=n);
+  const epK=ep=>epIsSplice(ep)?('S'+ep.s):('c:'+ep.c);
+  const bundles={}; DOC.wires.forEach(w=>{ const a=epK(w.from),b=epK(w.to); if(!nk[a]||!nk[b]) return; const k=[a,b].sort().join('|');
+    (bundles[k]=bundles[k]||{a:nk[a],b:nk[b],n:0,len:0}).n++; bundles[k].len=Math.max(bundles[k].len,w.length||0); });
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9; nodes.forEach(n=>{ minx=Math.min(minx,n.x);miny=Math.min(miny,n.y);maxx=Math.max(maxx,n.x);maxy=Math.max(maxy,n.y); });
+  const W=720,H=Math.max(300,Math.min(900,(maxy-miny||1)/(maxx-minx||1)*W)); const sx=v=>40+(v-minx)/((maxx-minx)||1)*(W-80), sy=v=>40+(v-miny)/((maxy-miny)||1)*(H-80);
+  let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="border:1px solid #ccc;background:#fff">`;
+  Object.values(bundles).forEach(bd=>{ const x1=sx(bd.a.x),y1=sy(bd.a.y),x2=sx(bd.b.x),y2=sy(bd.b.y),mx=(x1+x2)/2,my=(y1+y2)/2;
+    svg+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#1d2b45" stroke-width="${Math.min(7,1.5+bd.n)}" stroke-linecap="round"/>`;
+    svg+=`<rect x="${mx-26}" y="${my-9}" width="52" height="16" rx="4" fill="#fff" stroke="#aebbd6"/><text x="${mx}" y="${my+3}" text-anchor="middle" font-size="9" font-family="sans-serif">${bd.n}w · ${fmtLen(bd.len)}</text>`; });
+  nodes.forEach(n=>{ const x=sx(n.x),y=sy(n.y); svg+=`<circle cx="${x}" cy="${y}" r="5" fill="${n.id[0]==='s'?'#cdd7ea':'#4a7de0'}" stroke="#fff" stroke-width="2"/><text x="${x}" y="${y-9}" text-anchor="middle" font-size="9" font-weight="700" font-family="sans-serif">${esc(n.label)}</text>`; });
+  svg+='</svg><div style="font-size:10px;color:#777;margin-top:6px">Bundles labelled with wire count and longest segment length. Positions reflect the diagram layout.</div>';
+  return svg;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  INTERCHANGE EXPORT  (From-To CSV + WireViz YAML)
+// ════════════════════════════════════════════════════════════════════
+function fromToCSV(){ const u=DOC.unit, lines=['From,FromPin,To,ToPin,Signal,Class,Gauge,Colour,Length('+u+')'];
+  DOC.wires.forEach(w=>lines.push([q(epShort(w.from)),epIsSplice(w.from)?'':(w.from.p+1),q(epShort(w.to)),epIsSplice(w.to)?'':(w.to.p+1),q(w.signal),w.vclass||'',w.gauge,wireColor(w),(w.length/UNIT_FACTOR[u]).toFixed(1)].join(',')));
+  download('harness-fromto.csv',lines.join('\n'),'text/csv'); }
+const WV_COLORS={'#1d2b45':'BK','#000000':'BK','#e23b3b':'RD','#f5821f':'OG','#f0a818':'YE','#f2c200':'YE','#2fab6e':'GN','#4a7de0':'BU','#7585a3':'GY','#8a64d6':'VT','#9aa7c2':'GY'};
+function wvColor(h){ return WV_COLORS[(h||'').toLowerCase()]||'WH'; }
+function wvName(ep){ return (epIsSplice(ep)?('SPL_'+(smap[ep.s].name||ep.s)):connFullName(cmap[ep.c])).replace(/[^A-Za-z0-9_]+/g,'_'); }
+function wirevizYAML(){
+  const L=['# WireViz export — generated by Harness Mapper','connectors:'];
+  DOC.connectors.forEach(c=>{ L.push(`  ${wvName({c:c.id,p:0})}:`); L.push(`    pincount: ${c.pins}`); L.push(`    notes: ${JSON.stringify(typeLabel(c.type)+(c.gender?(' '+c.gender):''))}`);
+    if(c.pinLabels){ const arr=[]; for(let i=0;i<c.pins;i++) arr.push(JSON.stringify((c.pinLabels[i]||'').toString())); L.push(`    pinlabels: [${arr.join(', ')}]`); } });
+  DOC.splices.forEach(s=>{ L.push(`  ${('SPL_'+(s.name||s.id)).replace(/[^A-Za-z0-9_]+/g,'_')}:`); L.push('    style: simple'); L.push('    pincount: 1'); });
+  L.push('cables:'); DOC.wires.forEach((w,i)=>{ L.push(`  W${i+1}:`); L.push('    wirecount: 1'); L.push(`    gauge: ${w.gauge} AWG`); L.push(`    length: ${(w.length/1000).toFixed(3)}`); L.push(`    colors: [${wvColor(wireColor(w))}]`); });
+  L.push('connections:'); DOC.wires.forEach((w,i)=>{ L.push('  -'); L.push(`    - ${wvName(w.from)}: [${epIsSplice(w.from)?1:(w.from.p+1)}]`); L.push(`    - W${i+1}: [1]`); L.push(`    - ${wvName(w.to)}: [${epIsSplice(w.to)?1:(w.to.p+1)}]`); });
+  download('harness.yml',L.join('\n'),'text/yaml');
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SCHEMATIC ROUND-TRIP  (update an existing PCB from a new netlist/sch)
+// ════════════════════════════════════════════════════════════════════
+function openKicadUpdate(text,fname){
+  let det=[];
+  try{
+    if(/^\s*\(kicad_sch/.test(text)) det=kicadSchConnectors(text);
+    else if(/^\s*\(export/.test(text)){ const r=kicadNetConnectors(text); det=r.connectors; }
+    else if(/\$Comp/.test(text)) det=kicad5SchConnectors(text);
+    else { alert('Pick a .kicad_sch or .net file.'); return; }
+  }catch(e){ alert('Could not parse that file.'); return; }
+  if(!DOC.boards.length){ alert('No PCB to update yet — import as a new PCB first.'); return; }
+  const base=(fname||'').replace(/\.[^.]+$/,'').toLowerCase();
+  let board=DOC.boards.find(b=>b.name.toLowerCase()===base)||DOC.boards.find(b=>base.includes(b.name.toLowerCase())||b.name.toLowerCase().includes(base));
+  if(!board){ const names=DOC.boards.map((b,i)=>`${i+1}. ${b.name}`).join('\n'); const pick=prompt('Which PCB to update?\n'+names,'1'); const idx=parseInt(pick)-1; board=DOC.boards[idx]; }
+  if(!board){ return; }
+  pushUndo();
+  const existing=DOC.connectors.filter(c=>c.board===board.id);
+  const byRef={}; existing.forEach(c=>{ if(c.ref) byRef[c.ref]=c; });
+  let added=0,changed=0; const seen=new Set();
+  det.forEach((d,i)=>{ const ex=byRef[d.ref]; seen.add(d.ref);
+    if(ex){ const before=JSON.stringify([ex.pins,ex.type,ex.gender,ex.pinLabels]); ex.pins=d.pins; ex.type=d.type; if(d.gender) ex.gender=d.gender; if(d.pinLabels) ex.pinLabels=d.pinLabels;
+      if(JSON.stringify([ex.pins,ex.type,ex.gender,ex.pinLabels])!==before) changed++;
+      // drop wires on now-missing pins
+      DOC.wires.filter(w=>(!epIsSplice(w.from)&&w.from.c===ex.id&&w.from.p>=ex.pins)||(!epIsSplice(w.to)&&w.to.c===ex.id&&w.to.p>=ex.pins)).forEach(w=>removeWire(w.id));
+    } else { const c={id:uid('c_'),name:d.name,type:d.type,pins:d.pins,cols:isSingle(d.type)?d.pins:Math.min(8,d.cols),gender:d.gender||'',board:board.id,ref:d.ref||'',pinLabels:d.pinLabels||null,x:20+(existing.length+added)%4*190,y:20+Math.floor((existing.length+added)/4)*150};
+      DOC.connectors.push(c); cmap[c.id]=c; renderConnector(c); wsSend({type:'conn_add',c}); added++; }
+  });
+  const removed=existing.filter(c=>c.ref&&!seen.has(c.ref)).map(c=>c.ref);
+  // re-render updated connectors
+  existing.forEach(c=>{ if(byRef[c.ref]) rebuildConnector(c); });
+  syncPositions(); refreshLegend(); refreshSchedule(); scheduleSave();
+  wsSend({type:'state',doc:DOC});   // bulk change → resync peers
+  alert(`Updated “${board.name}” from ${fname}:\n  +${added} new connector(s)\n  ~${changed} changed\n  ${removed.length} no longer in schematic${removed.length?': '+removed.join(', '):''}`);
+}
+document.getElementById('exp-kicad-update').addEventListener('click',()=>{ expmenu.classList.remove('show'); document.getElementById('kicadupdate').click(); });
+document.getElementById('kicadupdate').addEventListener('change',e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>openKicadUpdate(String(r.result),f.name); r.readAsText(f); e.target.value=''; });
+
+// ── menu bindings for reports / interchange / panels ──
+document.getElementById('exp-fromto').addEventListener('click',()=>{ expmenu.classList.remove('show'); fromToCSV(); });
+document.getElementById('exp-wireviz').addEventListener('click',()=>{ expmenu.classList.remove('show'); wirevizYAML(); });
+document.getElementById('rep-cutlist').addEventListener('click',()=>{ expmenu.classList.remove('show'); repCutlist(); });
+document.getElementById('rep-bom').addEventListener('click',()=>{ expmenu.classList.remove('show'); repBOM(); });
+document.getElementById('rep-pinout').addEventListener('click',()=>{ expmenu.classList.remove('show'); repPinout(); });
+document.getElementById('rep-labels').addEventListener('click',()=>{ expmenu.classList.remove('show'); repLabels(); });
+document.getElementById('rep-formboard').addEventListener('click',()=>{ expmenu.classList.remove('show'); repFormboard(); });
+document.getElementById('tool-rev').addEventListener('click',()=>{ expmenu.classList.remove('show'); togglePanel('revpanel'); });
+document.getElementById('tool-lib').addEventListener('click',()=>{ expmenu.classList.remove('show'); togglePanel('libpanel'); });
+
+// ════════════════════════════════════════════════════════════════════
+//  MULTI-SELECT (marquee) + ALIGN / DISTRIBUTE
+// ════════════════════════════════════════════════════════════════════
+const selMulti=new Set();
+function markMulti(id,on){ const ce=connEls[id]; if(ce) ce.root.classList.toggle('msel',on); const se=spliceEls[id]; if(se) se.classList.toggle('msel',on); }
+function clearMulti(){ selMulti.forEach(id=>markMulti(id,false)); selMulti.clear(); updateAlignBar(); }
+function toggleMulti(id){ if(selMulti.has(id)){ selMulti.delete(id); markMulti(id,false); } else { selMulti.add(id); markMulti(id,true); } updateAlignBar(); }
+function broadcastMoves(ids){ ids.forEach(id=>{ if(cmap[id]) wsSend({type:'conn_move',id,x:cmap[id].x,y:cmap[id].y}); else if(smap[id]) wsSend({type:'splice_move',id,x:smap[id].x,y:smap[id].y}); }); }
+function absBox(id){ const c=cmap[id]; if(c){ const b=box(c); return {x:b.x,y:b.y,w:b.w,h:b.h}; } const s=smap[id]; return {x:s.x-10,y:s.y-10,w:20,h:20}; }
+function setAbsPos(id,x,y){ const c=cmap[id]; if(c){ c.x+=Math.round(x-ax(c)); c.y+=Math.round(y-ay(c)); return; } const s=smap[id]; if(s){ s.x=Math.round(x+10); s.y=Math.round(y+10); } }
+function alignSel(mode){ const ids=[...selMulti]; if(ids.length<2) return; pushUndo();
+  const bx=ids.map(id=>({id,b:absBox(id)})), avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+  if(mode==='left'){ const m=Math.min(...bx.map(o=>o.b.x)); bx.forEach(o=>setAbsPos(o.id,m,o.b.y)); }
+  else if(mode==='right'){ const m=Math.max(...bx.map(o=>o.b.x+o.b.w)); bx.forEach(o=>setAbsPos(o.id,m-o.b.w,o.b.y)); }
+  else if(mode==='top'){ const m=Math.min(...bx.map(o=>o.b.y)); bx.forEach(o=>setAbsPos(o.id,o.b.x,m)); }
+  else if(mode==='bottom'){ const m=Math.max(...bx.map(o=>o.b.y+o.b.h)); bx.forEach(o=>setAbsPos(o.id,o.b.x,m-o.b.h)); }
+  else if(mode==='cx'){ const m=avg(bx.map(o=>o.b.x+o.b.w/2)); bx.forEach(o=>setAbsPos(o.id,m-o.b.w/2,o.b.y)); }
+  else if(mode==='cy'){ const m=avg(bx.map(o=>o.b.y+o.b.h/2)); bx.forEach(o=>setAbsPos(o.id,o.b.x,m-o.b.h/2)); }
+  else if(mode==='dh'){ bx.sort((a,b)=>a.b.x-b.b.x); const x0=bx[0].b.x,x1=bx[bx.length-1].b.x,st=(x1-x0)/(bx.length-1); bx.forEach((o,i)=>setAbsPos(o.id,x0+st*i,o.b.y)); }
+  else if(mode==='dv'){ bx.sort((a,b)=>a.b.y-b.b.y); const y0=bx[0].b.y,y1=bx[bx.length-1].b.y,st=(y1-y0)/(bx.length-1); bx.forEach((o,i)=>setAbsPos(o.id,o.b.x,y0+st*i)); }
+  syncPositions(); broadcastMoves(ids); scheduleSave();
+}
+function deleteSelMulti(){ if(!selMulti.size) return; if(!confirm('Delete '+selMulti.size+' selected item(s)?')) return; pushUndo();
+  [...selMulti].forEach(id=>{ if(cmap[id]) deleteConnectorCore(id); else if(smap[id]) deleteSpliceCore(id); });
+  clearMulti(); syncPositions(); refreshLegend(); refreshSchedule(); scheduleSave(); checkEmpty(); }
+const alignBar=document.createElement('div'); alignBar.id='alignbar'; alignBar.style.display='none';
+alignBar.innerHTML='<span id="align-count"></span>'+[['left','⊢'],['cx','↔'],['right','⊣'],['top','⊤'],['cy','↕'],['bottom','⊥'],['dh','⇿'],['dv','⇳']].map(([m,g])=>`<button data-m="${m}" title="Align/distribute ${m}">${g}</button>`).join('')+'<button data-m="del" title="Delete selected" style="color:var(--danger)">✕</button>';
+document.body.appendChild(alignBar);
+alignBar.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ b.dataset.m==='del'?deleteSelMulti():alignSel(b.dataset.m); }));
+function updateAlignBar(){ const n=selMulti.size; alignBar.style.display=n>=2?'flex':'none'; if(n>=2){ const ac=document.getElementById('align-count'); if(ac) ac.textContent=n+' selected'; } }
+// marquee selection (Shift + drag on empty canvas)
+let marqueeEl=null, _suppressCanvasClick=false;
+scroll.addEventListener('mousedown',e=>{
+  if(!e.shiftKey) return;
+  if(e.target.closest('.conn')||e.target.closest('.splice')||e.target.closest('#legend')||e.target.closest('.panel')||e.target.closest('.pop')||e.target.closest('#alignbar')) return;
+  if(e.target.closest('svg') && e.target.tagName==='path' && e.target.style.pointerEvents==='stroke') return;
+  e.preventDefault(); e.stopPropagation();
+  const start=canvasPt(e); clearMulti();
+  marqueeEl=document.createElement('div'); marqueeEl.className='marquee'; canvas.appendChild(marqueeEl);
+  const mv=ev=>{ const p=canvasPt(ev); const x=Math.min(start.x,p.x),y=Math.min(start.y,p.y),w=Math.abs(p.x-start.x),h=Math.abs(p.y-start.y);
+    Object.assign(marqueeEl.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});
+    const rect={x,y,w,h};
+    selMulti.forEach(id=>markMulti(id,false)); selMulti.clear();
+    DOC.connectors.forEach(c=>{ if(boxIntersect(rect,box(c))) selMulti.add(c.id); });
+    DOC.splices.forEach(s=>{ if(boxIntersect(rect,{x:s.x-10,y:s.y-10,w:20,h:20})) selMulti.add(s.id); });
+    selMulti.forEach(id=>markMulti(id,true)); updateAlignBar();
+  };
+  const up=()=>{ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up); if(marqueeEl){ marqueeEl.remove(); marqueeEl=null; }
+    _suppressCanvasClick=true; setTimeout(()=>{ _suppressCanvasClick=false; },60); };   // keep the new selection (don't let the trailing click clear it)
+  window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+},true);
+function boxIntersect(a,b){ return a.x< b.x+b.w && a.x+a.w> b.x && a.y< b.y+b.h && a.y+a.h> b.y; }
+const _msStyle=document.createElement('style'); _msStyle.textContent=
+  '.conn.msel{box-shadow:0 0 0 2.5px var(--accent2),0 8px 22px rgba(29,43,69,.18)!important;}'+
+  '.splice.msel{box-shadow:0 0 0 3px var(--accent2)!important;}'+
+  '#alignbar{position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:320;display:flex;gap:3px;align-items:center;background:#fff;border:1.5px solid var(--card-border);border-radius:11px;box-shadow:0 8px 24px rgba(29,43,69,.2);padding:5px 8px;}'+
+  '#alignbar #align-count{font-size:11px;font-weight:700;color:var(--muted);margin-right:6px;white-space:nowrap;}'+
+  '#alignbar button{width:28px;height:26px;border:1.5px solid var(--card-border);border-radius:7px;background:#fff;cursor:pointer;font-size:13px;font-weight:700;}'+
+  '#alignbar button:hover{background:#eef2fb;}'+
+  '.marquee{position:absolute;border:1.5px dashed var(--accent);background:rgba(74,125,224,.12);z-index:55;pointer-events:none;}';
+document.head.appendChild(_msStyle);
+
+// ════════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════════
+(async()=>{
+  let loaded=null;
+  try{ const r=await fetch('/harness/api/load'); if(r.ok){ const d=await r.json(); if(d&&d.doc) loaded=d.doc; } }catch(e){}
+  if(!loaded){ try{ const ls=localStorage.getItem(LS_KEY); if(ls) loaded=JSON.parse(ls); }catch(e){} }
+  DOC=normalizeDoc(loaded);
+  rebuildAll();
+  fitView();
+  document.getElementById('loading').style.display='none';
+  setSaveStat(loaded?'loaded':'new');
+  wsConnect();
+})();
+</script>
+</body>
+</html>

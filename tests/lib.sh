@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Shared helpers for the UCDFS test suites.
+#
+# Every test account is created with the TEST_PREFIX below so cleanup can delete
+# them without any chance of touching a real one. Do not change it without
+# changing cleanup_test_accounts() to match.
+
+TEST_PREFIX="ucdfs-test-"
+TEST_PASSWORD="TestPassword123!"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK="$ROOT/tests/.work"
+mkdir -p "$WORK"
+
+TEST_PORT="${TEST_PORT:-3979}"
+BASE="http://localhost:$TEST_PORT"
+CONTAINER="ucdfs-test"
+IMAGE="${TEST_IMAGE:-ucdfs-attendance-bot}"
+
+pass=0; fail=0
+
+ck() { # ck <label> <got> <want>
+  if [ "$2" = "$3" ]; then
+    pass=$((pass+1)); printf "  ok    %-46s %s\n" "$1" "$2"
+  else
+    fail=$((fail+1)); printf "  FAIL  %-46s got %s want %s\n" "$1" "$2" "$3"
+  fi
+}
+
+load_env() {
+  if [ ! -f "$ROOT/.env" ]; then
+    echo "No .env at $ROOT/.env — copy .env.example and fill it in." >&2
+    exit 1
+  fi
+  set -a; . "$ROOT/.env"; set +a
+  if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+    echo "SUPABASE_SERVICE_KEY is empty in .env — the suites need it." >&2
+    exit 1
+  fi
+}
+
+test_email() { echo "${TEST_PREFIX}$(date +%s)-$RANDOM@ucdconnect.ie"; }
+
+start_test_container() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1
+  # The live container on :3978 is never touched. This one mounts the working
+  # tree read-only, so it always tests what is on disk right now.
+  docker run -d --name "$CONTAINER" -p "$TEST_PORT:3978" \
+    -v "$ROOT/main.py:/app/main.py:ro" \
+    -v "$ROOT/static:/app/static:ro" \
+    -e SUPABASE_URL="$SUPABASE_URL" \
+    -e SUPABASE_KEY="$SUPABASE_KEY" \
+    -e SUPABASE_SERVICE_KEY="$SUPABASE_SERVICE_KEY" \
+    -e COMP_ADMIN_PASSWORD="$COMP_ADMIN_PASSWORD" \
+    -e ALLOWED_EMAIL_DOMAINS="$ALLOWED_EMAIL_DOMAINS" \
+    -e COOKIE_SECURE=0 \
+    "$IMAGE" >/dev/null || {
+      echo "Could not start the test container. Is the image '$IMAGE' built?" >&2
+      echo "Build it with: cd $ROOT && docker compose build" >&2
+      exit 1; }
+
+  for _ in $(seq 1 30); do
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/health" 2>/dev/null)" = "200" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Test container never became healthy. Logs:" >&2
+  docker logs "$CONTAINER" 2>&1 | tail -20 >&2
+  exit 1
+}
+
+stop_test_container() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
+
+# Delete every account created by the suites, via the GoTrue admin API.
+# Guarded twice: the API filter and an explicit prefix re-check per user.
+cleanup_test_accounts() {
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+
+def call(method, path):
+    req = urllib.request.Request(url + path, headers=hdr, method=method)
+    with urllib.request.urlopen(req, timeout=20) as r:
+        body = r.read()
+        return json.loads(body) if body else None
+
+try:
+    users = call("GET", "/auth/v1/admin/users?per_page=1000").get("users", [])
+except Exception as e:
+    print(f"  cleanup: could not list users ({e})")
+    sys.exit(0)
+
+removed = 0
+for u in users:
+    email = (u.get("email") or "")
+    # Belt and braces: never delete anything that isn't unmistakably a test user.
+    if not email.startswith(prefix):
+        continue
+    try:
+        call("DELETE", "/auth/v1/admin/users/" + u["id"])
+        removed += 1
+    except Exception as e:
+        print(f"  cleanup: failed to delete {email} ({e})")
+
+kept = len(users) - removed
+print(f"  cleanup: removed {removed} test account(s), {kept} real account(s) untouched")
+PY
+}
+
+summary() { # summary <suite-name>
+  echo
+  if [ "$fail" -eq 0 ]; then
+    echo "  $1: $pass passed"
+  else
+    echo "  $1: $pass passed, $fail FAILED"
+  fi
+  return "$fail"
+}

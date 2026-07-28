@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Dashboard-only styles. Everything else comes from shared.css. */
+:root { --page-max: 980px; }
+
+/* ── Greeting ── */
+.greeting { margin-bottom: 26px; }
+.greet-hi   { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; }
+.greet-date { font-size: 0.85rem; color: var(--muted); margin-top: 3px; }
+@media (min-width: 720px) { .greet-hi { font-size: 1.9rem; } }
+
+/* ── Headline strip: the one thing worth knowing right now ── */
+.headline {
+  display: flex; align-items: center; gap: 13px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; padding: 14px 17px; margin-bottom: 28px;
+  box-shadow: var(--shadow-sm);
+}
+.headline-icon { font-size: 1.5rem; flex-shrink: 0; line-height: 1; }
+.headline-body { flex: 1; min-width: 0; }
+.headline-main { font-size: 0.92rem; font-weight: 700; }
+.headline-sub  { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+/* ── Applet grid ── */
+.applet-grid {
+  display: grid; gap: 13px; margin-bottom: 30px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 620px) { .applet-grid { grid-template-columns: 1fr 1fr; } }
+
+.applet {
+  display: flex; align-items: flex-start; gap: 14px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 18px; padding: 18px;
+  text-decoration: none; color: var(--text);
+  box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+  transition: transform 0.14s cubic-bezier(0.34,1.56,0.64,1),
+              box-shadow 0.14s, border-color 0.14s;
+}
+.applet::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--accent, var(--indigo));
+  opacity: 0; transition: opacity 0.14s;
+}
+.applet:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg); border-color: var(--accent, var(--indigo));
+}
+.applet:hover::before { opacity: 1; }
+.applet:active { transform: scale(0.985); transition-duration: 0.05s; }
+
+.applet-icon {
+  width: 46px; height: 46px; border-radius: 13px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; background: var(--accent-bg, var(--indigo-bg));
+}
+.applet-body  { flex: 1; min-width: 0; }
+.applet-name  { font-weight: 700; font-size: 0.98rem; display: flex;
+                align-items: center; gap: 7px; flex-wrap: wrap; }
+.applet-blurb { font-size: 0.78rem; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.applet-stat  {
+  font-size: 0.78rem; font-weight: 700; margin-top: 9px;
+  color: var(--accent, var(--indigo));
+  display: flex; align-items: center; gap: 6px;
+}
+.applet-stat.loading { color: var(--muted); font-weight: 500; }
+.stat-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent, var(--indigo)); flex-shrink: 0;
+}
+
+/* status variants */
+.applet.quiet { opacity: 0.62; }
+.applet.quiet:hover { opacity: 1; }
+.applet.soon {
+  cursor: default; border-style: dashed; box-shadow: none; background: transparent;
+}
+.applet.soon:hover { transform: none; box-shadow: none; border-color: var(--border); }
+.applet.soon:hover::before { opacity: 0; }
+.applet.soon .applet-icon { opacity: 0.5; }
+
+.tag {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.07em; padding: 2px 7px; border-radius: 6px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+}
+.tag-soon  { background: var(--indigo-bg); color: var(--indigo); border-color: var(--indigo-border); }
+.tag-quiet { background: var(--amber-bg);  color: var(--amber);  border-color: var(--amber-border); }
+.ext-arrow { font-size: 0.7rem; color: var(--muted); }
+
+/* ── Footer note ── */
+.foot {
+  text-align: center; font-size: 0.72rem; color: var(--muted);
+  padding-top: 6px; line-height: 1.6;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Main ── -->
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <img class="logo-mark" src="/static/img/logo-96.png"
+           alt="UCD Formula Student" width="40" height="40">
+      <div class="header-text">
+        <div class="header-title">UCDFS</div>
+        <div class="header-sub">Team tools</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="greeting">
+      <div class="greet-hi"   id="greet-hi">Hello</div>
+      <div class="greet-date" id="greet-date"></div>
+    </div>
+
+    <div class="headline" id="headline">
+      <div class="headline-icon">⏳</div>
+      <div class="headline-body">
+        <div class="headline-main">Loading…</div>
+      </div>
+    </div>
+
+    <div class="section-label">Tools</div>
+    <div class="applet-grid" id="applet-grid"></div>
+
+    <div class="foot">
+      UCD Formula Student · <span id="foot-count"></span>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* Maps an applet's accent name to the shared.css tokens the card uses. */
+const ACCENTS = {
+  indigo: ['var(--indigo)', 'var(--indigo-bg)'],
+  purple: ['var(--purple)', 'var(--purple-bg)'],
+  green:  ['var(--green)',  'var(--green-bg)'],
+  amber:  ['var(--amber)',  'var(--amber-bg)'],
+  teal:   ['var(--teal)',   'var(--teal-bg)'],
+  red:    ['var(--red)',    'var(--red-bg)'],
+};
+
+function greet() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Morning';
+  if (h < 18) return 'Afternoon';
+  return 'Evening';
+}
+
+function renderGreeting(user) {
+  document.getElementById('greet-hi').textContent = greet() + ', ' + user.first;
+  document.getElementById('greet-date').textContent =
+    new Date().toLocaleDateString('en-IE',
+      { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function appletCard(a, tile) {
+  const [accent, accentBg] = ACCENTS[a.accent] || ACCENTS.indigo;
+  const soon    = a.status === 'soon';
+  const clickable = !soon;
+  const tag = soon  ? '<span class="tag tag-soon">Soon</span>'
+            : a.status === 'quiet' ? '<span class="tag tag-quiet">Off-season</span>'
+            : '';
+  const ext = a.external ? '<span class="ext-arrow">↗</span>' : '';
+
+  // A tile is only shown once /api/dashboard has answered for this applet.
+  let stat = '';
+  if (tile && tile.detail) {
+    stat = `<div class="applet-stat"><span class="stat-dot"></span>${UCDFS.esc(tile.detail)}</div>`;
+  } else if (clickable && HAS_TILE[a.id]) {
+    stat = '<div class="applet-stat loading">…</div>';
+  }
+
+  const inner = `
+    <div class="applet-icon">${a.icon || '📦'}</div>
+    <div class="applet-body">
+      <div class="applet-name">${UCDFS.esc(a.name)}${tag}${ext}</div>
+      <div class="applet-blurb">${UCDFS.esc(a.blurb || '')}</div>
+      ${stat}
+    </div>`;
+
+  const cls = `applet ${a.status === 'quiet' ? 'quiet' : ''} ${soon ? 'soon' : ''}`;
+  const style = `--accent:${accent};--accent-bg:${accentBg}`;
+
+  if (!clickable) {
+    return `<div class="${cls}" style="${style}">${inner}</div>`;
+  }
+  const target = a.external ? ' target="_blank" rel="noopener"' : '';
+  return `<a class="${cls}" style="${style}" href="${UCDFS.esc(a.route)}"${target}>${inner}</a>`;
+}
+
+/* Which applets the dashboard API reports on — drives the "…" placeholder so
+   cards without a tile don't sit there looking like they failed to load. */
+const HAS_TILE = { attendance: 1, pt: 1, harness: 1, comp: 1 };
+
+let APPLETS = [];
+let TILES   = {};
+
+function render() {
+  document.getElementById('applet-grid').innerHTML =
+    APPLETS.map(a => appletCard(a, TILES[a.id])).join('');
+  const live = APPLETS.filter(a => a.status !== 'soon').length;
+  document.getElementById('foot-count').textContent =
+    live + (live === 1 ? ' tool' : ' tools');
+}
+
+/* The headline picks the single most actionable thing across all tiles. */
+function renderHeadline() {
+  const att  = TILES.attendance;
+  const comp = TILES.comp;
+  const pt   = TILES.pt;
+  let icon = '👋', main = 'Nothing needs you right now', sub = '';
+
+  if (comp && comp.pending > 0) {
+    icon = '🛒';
+    main = `${comp.pending} shop request${comp.pending === 1 ? '' : 's'} still pending`;
+    sub  = 'Competition Hub · waiting to be bought';
+  } else if (att && att.in > 0) {
+    icon = '🔧';
+    main = `${att.in} ${att.in === 1 ? 'person is' : 'people are'} in the workshop today`;
+    sub  = att.logged > att.in
+      ? `${att.logged} people have logged attendance` : 'From today\'s attendance log';
+  } else if (pt && pt.in_progress > 0) {
+    icon = '🏎️';
+    main = `${pt.in_progress} PT task${pt.in_progress === 1 ? '' : 's'} in progress`;
+    sub  = `${pt.pct}% of the build plan complete`;
+  } else if (att && att.logged === 0) {
+    icon = '📋';
+    main = 'Nobody has logged attendance today';
+    sub  = 'Tap Attendance to say whether you\'re coming in';
+  }
+
+  document.getElementById('headline').innerHTML = `
+    <div class="headline-icon">${icon}</div>
+    <div class="headline-body">
+      <div class="headline-main">${UCDFS.esc(main)}</div>
+      ${sub ? `<div class="headline-sub">${UCDFS.esc(sub)}</div>` : ''}
+    </div>`;
+}
+
+async function boot(user) {
+  UCDFS.renderPill();
+  renderGreeting(user);
+
+  APPLETS = await UCDFS.applets();
+  render();
+
+  try {
+    const r = await fetch('/api/dashboard');
+    const j = await r.json();
+    TILES = j.tiles || {};
+  } catch (e) {
+    TILES = {};
+  }
+  render();
+  renderHeadline();
+}
+
+UCDFS.gate(boot);
+</script>
+</body>
+</html>

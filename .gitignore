@@ -1,0 +1,39 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# .env holds the Supabase keys. The service_role key bypasses RLS entirely, so
+# it must never be committed. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── Node (test harness only) ──────────────────────────────────────────────────
+node_modules/
+tests/node_modules/
+package-lock.json
+
+# ── Test scratch ──────────────────────────────────────────────────────────────
+tests/.work/
+*.cookies
+cookies.txt
+
+# ── Editors / OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+*.swp
+~$*
+
+# ── Local artefacts ───────────────────────────────────────────────────────────
+*.log
+*.bak
+
+# ── Not part of the webapp ────────────────────────────────────────────────────
+# circuits/ is a separate 239 MB git repo (KiCad projects, BMS, LTspice). It
+# lives here for convenience only — keep it versioned in its own repo, not
+# vendored into this one.
+circuits/

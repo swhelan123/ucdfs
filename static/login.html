@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · UCDFS</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Sign-in only. Everything else comes from shared.css. */
+body { display: flex; align-items: center; justify-content: center;
+       min-height: 100vh; padding: 24px; }
+.auth-card {
+  background: var(--card); border-radius: 24px; padding: 36px 30px 30px;
+  box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+  width: 100%; max-width: 430px;
+}
+.auth-head  { text-align: center; margin-bottom: 24px; }
+.auth-head h2 { font-size: 1.35rem; font-weight: 800; margin-bottom: 7px; }
+.auth-head p  { color: var(--muted); line-height: 1.55; font-size: 0.88rem; }
+
+.field       { margin-bottom: 11px; }
+.field label { display: block; font-size: 0.72rem; font-weight: 700;
+               text-transform: uppercase; letter-spacing: 0.06em;
+               color: var(--muted); margin-bottom: 5px; }
+.hint { font-size: 0.73rem; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+/* The email we're working with, once step 1 is done. */
+.identity {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 13px; padding: 9px 12px; margin-bottom: 13px;
+}
+.identity-av { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--indigo-bg); color: var(--indigo);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 800; }
+.identity-mail { flex: 1; min-width: 0; font-size: 0.82rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-swap { font-size: 0.72rem; color: var(--muted); cursor: pointer;
+  padding: 3px 7px; border-radius: 6px; flex-shrink: 0;
+  background: none; border: none; font-family: inherit; }
+.identity-swap:hover { background: var(--border); color: var(--text); }
+
+.error, .ok {
+  border-radius: 12px; padding: 10px 13px; font-size: 0.82rem; font-weight: 600;
+  margin-bottom: 13px; line-height: 1.45; display: none;
+}
+.error { background: var(--red-bg); border: 1px solid var(--red-mid); color: var(--red-text); }
+.ok    { background: var(--green-bg); border: 1px solid var(--green-mid); color: var(--green-text); }
+.error.show, .ok.show { display: block; }
+
+.submit-btn {
+  width: 100%; padding: 14px; margin-top: 6px;
+  background: var(--dark); color: #fff; border: none; border-radius: 14px;
+  font-size: 0.98rem; font-weight: 700; font-family: inherit; cursor: pointer;
+  box-shadow: var(--shadow-md);
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  transition: transform 0.12s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.12s;
+}
+.submit-btn:hover  { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.submit-btn:active { transform: scale(0.97); transition-duration: 0.05s; }
+.submit-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+</style>
+</head>
+<body>
+
+<div class="auth-card">
+  <div class="auth-head">
+    <img class="logo-mark logo-mark-lg" src="/static/img/logo-192.png"
+         alt="UCD Formula Student" width="76" height="76">
+    <h2 id="auth-title">Welcome to UCDFS</h2>
+    <p  id="auth-sub">Enter your UCD email to get started.</p>
+  </div>
+
+  <div class="error" id="auth-error"></div>
+  <div class="ok"    id="auth-ok"></div>
+
+  <!-- Step 2 only: which account we're signing into -->
+  <div class="identity" id="identity" style="display:none">
+    <div class="identity-av" id="identity-av"></div>
+    <div class="identity-mail" id="identity-mail"></div>
+    <button type="button" class="identity-swap" id="identity-swap">change</button>
+  </div>
+
+  <form id="auth-form" autocomplete="on">
+    <!-- Step 1 -->
+    <div class="field" id="email-field">
+      <label for="email">UCD email</label>
+      <input id="email" class="text-input" type="email" placeholder="you@ucdconnect.ie"
+             autocomplete="email" required>
+      <div class="hint" id="domain-hint"></div>
+    </div>
+
+    <!-- Step 2, signup only -->
+    <div class="field" id="name-field" style="display:none">
+      <label for="first">Your name</label>
+      <div class="name-row" style="margin-bottom:0">
+        <input id="first" class="text-input" type="text" placeholder="First name"
+               autocomplete="given-name">
+        <input id="last"  class="text-input" type="text" placeholder="Last name"
+               autocomplete="family-name">
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="field" id="password-field" style="display:none">
+      <label for="password">Password</label>
+      <input id="password" class="text-input" type="password"
+             placeholder="At least 8 characters" minlength="8">
+    </div>
+
+    <button class="submit-btn" id="submit-btn" type="submit">
+      <span id="submit-label">Continue</span>
+    </button>
+  </form>
+</div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* ────────────────────────────────────────────────────────────────────────────
+ * Email first, then the right form.
+ *
+ * The previous version guessed from a name in localStorage, which broke the
+ * moment you opened the site on a second device: the phone had the old name but
+ * no account record, so it pushed an existing user through signup. localStorage
+ * is per-device and says nothing about whether an account exists — only the
+ * server knows that, so we ask it.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const NEXT       = new URLSearchParams(location.search).get('next') || '/';
+const LAST_EMAIL = 'ucdfs_last_email';   // per-device convenience, not identity
+
+let step  = 'email';         // 'email' | 'login' | 'signup'
+let email = '';
+let knownFirst = null;       // first name, from the server or old localStorage
+
+const $ = id => document.getElementById(id);
+
+function showError(m) { $('auth-error').textContent = m; $('auth-error').classList.add('show'); $('auth-ok').classList.remove('show'); }
+function showOk(m)    { $('auth-ok').textContent = m; $('auth-ok').classList.add('show'); $('auth-error').classList.remove('show'); }
+function clearMsg()   { $('auth-error').classList.remove('show'); $('auth-ok').classList.remove('show'); }
+
+function render() {
+  const onEmail  = step === 'email';
+  const isSignup = step === 'signup';
+
+  $('email-field').style.display    = onEmail ? '' : 'none';
+  $('identity').style.display       = onEmail ? 'none' : '';
+  $('password-field').style.display = onEmail ? 'none' : '';
+  $('name-field').style.display     = isSignup ? '' : 'none';
+
+  $('email').required    = onEmail;
+  $('password').required = !onEmail;
+  $('first').required    = isSignup;
+
+  if (onEmail) {
+    $('auth-title').textContent = 'Welcome to UCDFS';
+    $('auth-sub').textContent   = 'Enter your UCD email to get started.';
+    $('submit-label').textContent = 'Continue';
+  } else if (isSignup) {
+    $('auth-title').textContent = knownFirst ? `Hey ${knownFirst} 👋` : 'Create your account';
+    $('auth-sub').textContent   = knownFirst
+      ? "UCDFS is moving to proper accounts. We've still got your name — just pick a password."
+      : 'No account on this email yet. Pick a password and you\'re in.';
+    $('password').setAttribute('autocomplete', 'new-password');
+    $('submit-label').textContent = 'Create my account';
+  } else {
+    $('auth-title').textContent = knownFirst ? `Welcome back, ${knownFirst}` : 'Welcome back';
+    $('auth-sub').textContent   = 'Enter your password to carry on.';
+    $('password').setAttribute('autocomplete', 'current-password');
+    $('submit-label').textContent = 'Sign in';
+  }
+
+  if (!onEmail) {
+    $('identity-mail').textContent = email;
+    $('identity-av').textContent   = UCDFS.initials(knownFirst || email);
+  }
+}
+
+function backToEmail() {
+  step = 'email'; knownFirst = null;
+  $('password').value = '';
+  clearMsg(); render();
+  $('email').focus();
+}
+$('identity-swap').addEventListener('click', backToEmail);
+
+async function busy(fn) {
+  const btn = $('submit-btn'), label = $('submit-label').textContent;
+  btn.disabled = true;
+  $('submit-label').innerHTML = '<span class="spinner"></span>';
+  try { await fn(); } finally {
+    btn.disabled = false;
+    if ($('submit-label').querySelector('.spinner')) $('submit-label').textContent = label;
+  }
+}
+
+/* Step 1 — does this email have an account? */
+async function checkEmail() {
+  const value = $('email').value.trim().toLowerCase();
+  if (!value) return;
+  const r = await fetch('/api/auth/check', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: value }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { showError(data.detail || 'Could not check that email.'); return; }
+
+  email = value;
+
+  if (data.exists) {
+    // Prefer the name on the account over whatever this device remembers.
+    knownFirst = data.first_name || null;
+    step = 'login';
+  } else {
+    const legacy = UCDFS.legacyName();
+    if (legacy) { $('first').value = legacy.first || ''; $('last').value = legacy.last || ''; }
+    knownFirst = legacy ? legacy.first : null;
+    step = 'signup';
+  }
+  clearMsg(); render();
+  $(step === 'signup' && !$('first').value ? 'first' : 'password').focus();
+}
+
+/* Step 2 — sign in or create. */
+async function submitCredentials() {
+  const body = step === 'signup'
+    ? { first_name: $('first').value, last_name: $('last').value,
+        email: email, password: $('password').value }
+    : { email: email, password: $('password').value };
+
+  const r = await fetch('/api/auth/' + step, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+
+  if (!r.ok) {
+    // If signup says the account already exists, the check raced or the account
+    // was made elsewhere since. Drop them into sign-in rather than dead-ending.
+    if (step === 'signup' && /already/i.test(data.detail || '')) {
+      step = 'login'; render();
+      showError('You already have an account — enter your password.');
+      $('password').focus();
+      return;
+    }
+    showError(data.detail || 'Something went wrong — try again.');
+    return;
+  }
+  // Only remember it once it actually worked, so a typo doesn't stick to the
+  // device and send them round the same wrong loop next time.
+  try { localStorage.setItem(LAST_EMAIL, email); } catch (e) {}
+
+  if (data.needs_confirmation) { showOk(data.message || 'Check your email to confirm.'); return; }
+  location.href = NEXT;
+}
+
+$('auth-form').addEventListener('submit', e => {
+  e.preventDefault();
+  clearMsg();
+  busy(step === 'email' ? checkEmail : submitCredentials)
+    .catch(() => showError('Could not reach the server — check your connection.'));
+});
+
+(async function init() {
+  render();
+
+  try {
+    const { allowed_domains } = await (await fetch('/api/auth/config')).json();
+    if (allowed_domains && allowed_domains.length) {
+      $('domain-hint').textContent = 'Must be ' + allowed_domains.map(d => '@' + d).join(' or ');
+      $('email').placeholder = 'you@' + allowed_domains[0];
+    }
+  } catch (e) { /* hint is a nicety */ }
+
+  // Signed in on this device before? Skip straight past the email step.
+  let remembered = null;
+  try { remembered = localStorage.getItem(LAST_EMAIL); } catch (e) {}
+  if (remembered) {
+    $('email').value = remembered;
+    await busy(checkEmail).catch(() => {});
+  } else {
+    $('email').focus();
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Competition Hub</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Competition-Hub-only styles. Tokens, header, setup card, buttons, tabs,
+   avatars, spinner and toast all come from shared.css. */
+:root { --page-max: 780px; }
+
+/* roster */
+.day-card{background:var(--card);border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow-sm);margin-bottom:12px;overflow:hidden}
+.day-hd{padding:11px 16px;background:#f8fafc;border-bottom:1px solid var(--border);font-weight:700;font-size:.9rem;display:flex;align-items:center;justify-content:space-between}
+.role-sec{padding:10px 16px;border-bottom:1px solid var(--border)}
+.role-sec:last-child{border-bottom:none}
+.role-lbl{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px}
+.pchips{display:flex;flex-wrap:wrap;gap:6px;min-height:24px}
+.pchip{display:flex;align-items:center;gap:5px;background:var(--purple-bg);border-radius:99px;padding:4px 10px 4px 5px;font-size:.8rem;font-weight:500;border:1px solid var(--purple-border);color:var(--purple)}
+.chip-del{background:none;border:none;cursor:pointer;font-size:.65rem;color:var(--muted);padding:0 1px;line-height:1}
+.chip-del:hover{color:var(--red)}
+.unassigned{font-size:.75rem;color:var(--muted);font-style:italic}
+.add-row{display:flex;gap:6px;margin-top:8px}
+.add-row input{flex:1;padding:7px 10px;font-size:.82rem;border:1.5px solid var(--border);border-radius:9px;outline:none;transition:border-color .15s}
+.add-row input:focus{border-color:var(--purple)}
+.admin-bar{display:flex;align-items:center;gap:8px}
+
+/* runner banner */
+.rbanner{border-radius:14px;padding:13px 16px;margin-bottom:18px;display:flex;align-items:center;gap:12px;border:1.5px solid}
+.rbanner.on{background:var(--amber-bg);border-color:var(--amber-border)}
+.rbanner.off{background:var(--card);border-color:var(--border)}
+.ri{font-size:1.4rem;flex-shrink:0}
+.rt{flex:1}.rt-name{font-weight:700;font-size:.9rem}.rt-sub{font-size:.72rem;color:var(--muted)}
+
+/* request form */
+.rform{background:var(--card);border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow-sm);padding:16px;margin-bottom:20px}
+.rform textarea{width:100%;padding:11px 13px;font-size:.9rem;border:1.5px solid var(--border);border-radius:11px;outline:none;resize:none;font-family:inherit;transition:border-color .15s}
+.rform textarea:focus{border-color:var(--purple)}
+
+/* quantity */
+.qty-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.qty-row label{font-size:.75rem;color:var(--muted);font-weight:600;margin-right:2px}
+.qty-row input{width:54px;text-align:center;padding:7px 6px;font-size:.9rem;border:1.5px solid var(--border);border-radius:9px;outline:none;transition:border-color .15s;-moz-appearance:textfield}
+.qty-row input:focus{border-color:var(--purple)}
+.qty-badge{font-size:.72rem;font-weight:800;color:var(--indigo);background:var(--indigo-bg);border-radius:6px;padding:1px 6px;margin-left:5px;vertical-align:middle}
+
+/* split autocomplete */
+.split-wrap{position:relative;margin-top:10px}
+.split-label{font-size:.75rem;color:var(--muted);margin-bottom:6px;display:block}
+.split-box{display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:8px 10px;border:1.5px solid var(--border);border-radius:11px;background:var(--card);cursor:text;transition:border-color .15s;min-height:42px}
+.split-box.focused{border-color:var(--purple)}
+.split-chip{display:flex;align-items:center;gap:4px;background:var(--indigo-bg);border-radius:99px;padding:3px 8px 3px 5px;font-size:.78rem;font-weight:600;border:1px solid var(--indigo-border);color:var(--indigo)}
+.split-chip-del{background:none;border:none;cursor:pointer;color:var(--indigo);font-size:.65rem;padding:0 1px;line-height:1;opacity:.7}
+.split-chip-del:hover{opacity:1}
+.split-search{border:none;outline:none;font-size:.85rem;font-family:inherit;background:transparent;min-width:120px;flex:1;padding:2px 0}
+.split-dd{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:50;background:var(--card);border:1.5px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);overflow:hidden;max-height:200px;overflow-y:auto}
+.split-opt{padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:10px;transition:background .1s}
+.split-opt:hover{background:var(--indigo-bg)}
+.split-opt-name{font-weight:500}
+.split-none{padding:12px 14px;font-size:.82rem;color:var(--muted);text-align:center}
+
+/* request cards */
+.rcard{background:var(--card);border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow-sm);padding:13px 15px;margin-bottom:9px}
+.rcard.bought{opacity:.6}
+.rcard-top{display:flex;align-items:flex-start;gap:10px}
+.rinfo{flex:1;min-width:0}
+.ritem{font-weight:700;font-size:.92rem}
+.rwho{font-size:.73rem;color:var(--muted);margin-top:2px}
+.rsplit{font-size:.72rem;color:var(--indigo);margin-top:2px}
+.rprice{font-size:.82rem;color:var(--green);font-weight:700;margin-top:3px}
+.ract{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.day-group-hd{display:flex;align-items:center;justify-content:space-between;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.day-group-hd:first-child{margin-top:0}
+.day-group-ct{font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0}
+.bought-summary{display:flex;align-items:center;gap:10px;padding:11px 15px;background:var(--green-bg);border:1px solid var(--green-mid);border-radius:14px;cursor:pointer;margin-bottom:9px;transition:background .12s}
+.bought-summary:hover{background:#e3f9e8}
+.bs-check{font-size:1rem}
+.bs-text{flex:1;font-weight:700;font-size:.85rem;color:var(--green-text)}
+.bs-total{font-weight:800;font-size:.9rem;color:var(--green)}
+.bs-chev{color:var(--green);transition:transform .2s;font-size:.95rem;line-height:1}
+.bought-summary.open .bs-chev{transform:rotate(180deg)}
+.price-row{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.price-row label{font-size:.75rem;color:var(--muted);white-space:nowrap}
+.price-row input{flex:1;padding:7px 10px;font-size:.9rem;border:1.5px solid var(--border);border-radius:9px;outline:none;transition:border-color .15s}
+.price-row input:focus{border-color:var(--green)}
+
+/* expenses */
+.ecard{background:var(--card);border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow-sm);margin-bottom:10px;overflow:hidden}
+.ehd{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;transition:background .1s}
+.ehd:hover{background:#fafbfc}
+.ename{flex:1;font-weight:700;font-size:.92rem}
+.etotal{font-weight:800;font-size:1rem;color:var(--green)}
+.eitems{border-top:1px solid var(--border)}
+.eitem{display:flex;justify-content:space-between;align-items:center;padding:9px 16px;border-bottom:1px solid var(--border);font-size:.82rem}
+.eitem:last-child{border-bottom:none}
+.eitem-share{color:var(--green);font-weight:600}
+.etag{font-size:.68rem;color:var(--muted);margin-left:4px}
+.rate-note{background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:12px;padding:9px 13px;font-size:.75rem;color:var(--amber);font-weight:600;margin-bottom:18px;text-align:center}
+
+/* schedule */
+.sched-note{background:var(--indigo-bg);border:1px solid var(--indigo-border);border-radius:12px;padding:9px 13px;font-size:.75rem;color:var(--indigo);font-weight:600;margin-bottom:16px;text-align:center}
+.sched-container{position:relative}
+.ev-now-line{position:sticky;top:0;left:0;right:0;height:2px;background:var(--red);margin-bottom:2px;display:flex;align-items:center;z-index:10;box-shadow:0 1px 3px rgba(220,38,38,.3)}
+.ev-now-label{position:absolute;left:100px;top:-18px;font-size:.7rem;font-weight:700;color:var(--red);background:var(--bg);padding:0 6px;border-radius:3px}
+.ev-item{display:flex;gap:12px;align-items:flex-start;padding:10px 16px;border-bottom:1px solid var(--border);transition:background-color .2s}
+.ev-item:last-child{border-bottom:none}
+.ev-item.ucdfs{background:var(--indigo-bg)}
+.ev-item.now{background:#fef2f2;border-left:3px solid var(--red)}
+.ev-item.next{background:var(--indigo-bg);border-left:3px solid var(--indigo)}
+.ev-time{flex-shrink:0;width:96px;font-size:.75rem;font-weight:700;color:var(--muted);padding-top:1px}
+.ev-item.ucdfs .ev-time{color:var(--indigo)}
+.ev-item.now .ev-time{color:var(--red);font-weight:800}
+.ev-item.next .ev-time{color:var(--indigo);font-weight:700}
+.ev-body{flex:1;min-width:0}
+.ev-name{font-size:.86rem;font-weight:600}
+.ev-item.ucdfs .ev-name{color:var(--indigo);font-weight:700}
+.ev-item.now .ev-name{color:var(--red);font-weight:700}
+.ev-item.next .ev-name{color:var(--indigo);font-weight:700}
+.ev-loc{font-size:.72rem;color:var(--muted);margin-top:1px}
+.ev-badge{display:inline-block;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--indigo);border-radius:99px;padding:2px 8px;margin-left:6px;vertical-align:middle}
+
+/* modal */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal-content{background:var(--card);border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow-lg);max-width:400px;width:100%;max-height:90vh;overflow-y:auto;padding:24px}
+.modal-header{font-size:1rem;font-weight:700;margin-bottom:16px}
+.modal-field{margin-bottom:12px}
+.modal-label{font-size:.75rem;font-weight:600;color:var(--muted);display:block;margin-bottom:4px}
+.modal-input{width:100%;padding:8px 10px;font-size:.9rem;border:1.5px solid var(--border);border-radius:9px;outline:none;background:var(--card);transition:border-color .15s}
+.modal-input:focus{border-color:var(--indigo);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
+.modal-checkbox{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;cursor:pointer;transition:background-color .15s}
+.modal-checkbox:hover{background:var(--bg)}
+.modal-checkbox input{margin:0}
+.modal-actions{display:flex;gap:8px;margin-top:16px}
+.modal-actions button{flex:1}
+
+/* empty */
+.empty-c{text-align:center;padding:40px 16px;color:var(--muted)}
+.empty-c .ei{font-size:2rem;margin-bottom:8px;opacity:.4}
+
+</style>
+</head>
+<body>
+
+<!-- Main -->
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo logo-purple">🏁</div>
+      <div class="header-text">
+        <div class="header-title">Competition Hub</div>
+        <div class="header-sub">UCDFS</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="tabs">
+      <button class="tab active" id="ctab-roster"   onclick="cTab('roster')">📋 Roster</button>
+      <button class="tab"        id="ctab-shopping" onclick="cTab('shopping')">🛒 Shopping</button>
+      <button class="tab"        id="ctab-expenses" onclick="cTab('expenses')">💰 Expenses</button>
+      <button class="tab"        id="ctab-schedule" onclick="cTab('schedule')">🗓️ Schedule</button>
+    </div>
+
+    <!-- Roster -->
+    <div id="tab-roster">
+      <div class="section-row">
+        <div class="section-label">Weekly roster</div>
+        <div class="admin-bar">
+          <span id="admin-status" style="font-size:.7rem;color:var(--muted)"></span>
+          <button id="admin-toggle-btn" class="btn btn-ghost btn-xs" onclick="toggleAdminPwRow()">🔒 Admin</button>
+        </div>
+      </div>
+      <div id="admin-pw-row" style="display:none;margin-bottom:14px">
+        <div style="display:flex;gap:8px">
+          <input id="adminpw" class="text-input" type="password" placeholder="Admin password" style="font-size:.85rem;padding:9px 12px">
+          <button class="btn btn-dark btn-sm" onclick="verifyAdmin()" style="border-radius:10px">Unlock</button>
+        </div>
+      </div>
+      <div id="roster-content">
+        <div class="empty-c"><div class="ei">⏳</div>Loading…</div>
+      </div>
+    </div>
+
+    <!-- Shopping -->
+    <div id="tab-shopping" style="display:none">
+      <div id="runner-wrap"></div>
+
+      <div class="section-label">Add a request</div>
+      <div class="sched-note" id="cutoff-banner">🕙 Requests in by <strong>10:00pm</strong> go on the next shop — after 10pm they roll onto the day after.</div>
+      <div class="rform">
+        <textarea id="req-item" rows="2" placeholder="What do you need? e.g. 24 pack Moretti"></textarea>
+        <div class="qty-row">
+          <label>Qty</label>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="stepQty('req-qty',-1)">−</button>
+          <input type="number" id="req-qty" min="1" step="1" value="1" inputmode="numeric">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="stepQty('req-qty',1)">+</button>
+        </div>
+        <div class="split-wrap">
+          <span class="split-label">Splitting with <span style="font-weight:400">(optional)</span></span>
+          <div class="split-box" id="split-box" onclick="document.getElementById('split-search').focus()">
+            <div id="split-chips-wrap"></div>
+            <input id="split-search" class="split-search" type="text" placeholder="Type a name…" autocomplete="off">
+          </div>
+          <div class="split-dd" id="split-dd" style="display:none"></div>
+        </div>
+        <div style="margin-top:12px">
+          <button class="btn btn-dark btn-full" onclick="addRequest(this)">Add to list</button>
+        </div>
+      </div>
+
+      <div class="section-row">
+        <div class="section-label" id="req-list-label">All requests</div>
+      </div>
+      <div id="req-list"><div class="empty-c"><div class="ei">⏳</div>Loading…</div></div>
+    </div>
+
+    <!-- Expenses -->
+    <div id="tab-expenses" style="display:none">
+      <div class="section-row">
+        <div class="section-label">Who owes what</div>
+        <span style="font-size:.72rem;color:var(--indigo);cursor:pointer" onclick="loadExpenses()">↻ Refresh</span>
+      </div>
+      <div id="exp-list"><div class="empty-c"><div class="ei">⏳</div>Loading…</div></div>
+    </div>
+
+    <!-- Schedule -->
+    <div id="tab-schedule" style="display:none">
+      <div class="sched-note">📌 Highlighted <span class="ev-badge">key</span> events are Design, Cost &amp; Manufacturing and Business Plan Presentation (BPP) — check these carefully.</div>
+      <div id="schedule-content"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+const COMP_DAYS  = ['tue','wed','thu','fri','sat','sun','mon'];
+const COMP_ROLES = {
+  tue:['food_shop','cooking','dishes_evening'],
+  wed:['dishes_morning','bring_lunch','food_shop','cooking','dishes_evening'],
+  thu:['dishes_morning','bring_lunch','food_shop','cooking','dishes_evening'],
+  fri:['dishes_morning','bring_lunch','food_shop','cooking','dishes_evening'],
+  sat:['dishes_morning','bring_lunch','food_shop','dishes_evening'],
+  sun:['dishes_morning','bring_lunch','cooking','dishes_evening'],
+  mon:['dishes_morning'],
+};
+const DAY_LABELS  = {tue:'Tuesday 14 Jul',wed:'Wednesday 15 Jul',thu:'Thursday 16 Jul',fri:'Friday 17 Jul',sat:'Saturday 18 Jul',sun:'Sunday 19 Jul',mon:'Monday 20 Jul'};
+const ROLE_LABELS = {
+  dishes_morning:'🍽️ Morning Dishes',
+  bring_lunch:'🥪 Bring Lunch (after dishes)',
+  food_shop:'🛒 Food Shop',
+  cooking:'🍳 Cooking',
+  dishes_evening:'🌙 Evening Dishes',
+};
+
+let cName='', adminPw='', adminUnlocked=false, currentRunner=null;
+let splitWith=[], allUsers=[], requestsData=[];
+const initials=n=>UCDFS.initials(n);
+const esc=s=>UCDFS.esc(s);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ── Name setup ──
+   Identity is shared.js's job now; this page just reacts once we have a user.
+   Anyone who set their name here before is carried over automatically — the
+   old comp_fn/comp_ln keys are one of the legacy pairs shared.js migrates. */
+function cShowMain(user){
+  cName=user.name;
+  UCDFS.renderPill();
+  loadUsers();
+  const lastTab=localStorage.getItem('comp_active_tab') || 'roster';
+  cTab(lastTab);
+}
+
+/* ── Tabs ── */
+function cTab(t){
+  localStorage.setItem('comp_active_tab',t);
+  ['roster','shopping','expenses','schedule'].forEach(x=>{
+    document.getElementById('tab-'+x).style.display=x===t?'':'none';
+    document.getElementById('ctab-'+x).classList.toggle('active',x===t);
+  });
+  if(t==='roster')   loadRoster();
+  if(t==='shopping'){loadRunner();loadRequests();loadCutoffBanner();}
+  if(t==='expenses') loadExpenses();
+  if(t==='schedule'){loadScheduleEvents().then(()=>renderSchedule());}
+}
+
+/* ── Schedule (FSUK 2026 key events) ── */
+let scheduleEvents=[];
+
+async function loadScheduleEvents(){
+  try{const r=await fetch('/comp/api/schedule/events'),d=await r.json();scheduleEvents=d.events||[];}catch(e){}
+}
+function formatEventsForDisplay(events){
+  const byDay={};
+  events.forEach(ev=>{
+    if(!byDay[ev.day]) byDay[ev.day]={day:ev.day,items:[]};
+    byDay[ev.day].items.push({time:ev.time,name:ev.name,loc:ev.location,key:ev.is_ucdfs,id:ev.id});
+  });
+  return Object.values(byDay).sort((a,b)=>['Wednesday 15 Jul','Thursday 16 Jul','Friday 17 Jul','Saturday 18 Jul','Sunday 19 Jul'].indexOf(a.day)-['Wednesday 15 Jul','Thursday 16 Jul','Friday 17 Jul','Saturday 18 Jul','Sunday 19 Jul'].indexOf(b.day));
+}
+function parseEventTime(timeStr){
+  const parts=timeStr.match(/(\d{1,2}):(\d{2})/);
+  if(!parts) return null;
+  return {h:parseInt(parts[1]),m:parseInt(parts[2])};
+}
+function timeToMinutes(h,m){return h*60+m;}
+function isEventNow(ev,nowHour,nowMin){
+  const t=parseEventTime(ev.time);
+  if(!t) return false;
+  const tm=timeToMinutes(t.h,t.m);
+  const nm=timeToMinutes(nowHour,nowMin);
+  return nm>=tm-5&&nm<tm+120;
+}
+function isEventNext(ev,nowHour,nowMin,allEvents){
+  const t=parseEventTime(ev.time);
+  if(!t) return false;
+  const tm=timeToMinutes(t.h,t.m);
+  const nm=timeToMinutes(nowHour,nowMin);
+  if(nm>=tm-5) return false;
+  const nextTimes=allEvents.map(e=>{const pt=parseEventTime(e.time);return pt?timeToMinutes(pt.h,pt.m):9999;}).filter(m=>m>nm);
+  return nextTimes.length>0&&tm===Math.min(...nextTimes);
+}
+function renderSchedule(){
+  const now=new Date();
+  const nowHour=now.getHours(), nowMin=now.getMinutes();
+  const KEY_EVENTS=formatEventsForDisplay(scheduleEvents);
+  let html=`<div class="sched-container">`;
+  if(adminUnlocked){
+    html+=`<div style="background:var(--indigo-bg);border:1px solid var(--indigo-border);border-radius:10px;padding:8px 12px;margin-bottom:12px;display:flex;gap:8px;align-items:center">
+      <span style="font-size:.75rem;font-weight:600;color:var(--indigo)">📋 Admin: Edit Schedule</span>
+      <button class="btn btn-indigo btn-xs" onclick="showAddEventForm()">+ Add Event</button>
+    </div>`;
+  }
+  html+=`<div class="ev-now-line"><span class="ev-now-label">${String(nowHour).padStart(2,'0')}:${String(nowMin).padStart(2,'0')}</span></div>`;
+  let allEvents=[];
+  KEY_EVENTS.forEach(day=>day.items.forEach(it=>allEvents.push(it)));
+  KEY_EVENTS.forEach(day=>{
+    html+=`<div class="day-card"><div class="day-hd"><span>📅 ${esc(day.day)}</span></div>`;
+    day.items.forEach(ev=>{
+      const isNow=isEventNow(ev,nowHour,nowMin);
+      const isNext=isEventNext(ev,nowHour,nowMin,allEvents);
+      const css=ev.key?'ucdfs':isNow?'now':isNext?'next':'';
+      html+=`<div class="ev-item ${css}" ${isNow?'id="ev-now"':''}>
+        <div class="ev-time">${esc(ev.time)}</div>
+        <div class="ev-body">
+          <div class="ev-name">${esc(ev.name)}${ev.key?'<span class="ev-badge">UCDFS</span>':''}</div>
+          <div class="ev-loc">${esc(ev.loc)}</div>
+        </div>
+        ${adminUnlocked?`<div style="display:flex;gap:4px;flex-shrink:0"><button class="btn btn-ghost btn-xs" onclick="editEvent(${ev.id},'${esc(day.day)}','${esc(ev.time)}','${esc(ev.name)}','${esc(ev.loc)}',${ev.key})">✏️</button><button class="btn btn-ghost btn-xs" onclick="deleteEvent(${ev.id})">🗑️</button></div>`:''}
+      </div>`;
+    });
+    html+=`</div>`;
+  });
+  html+=`</div>`;
+  document.getElementById('schedule-content').innerHTML=html;
+  setTimeout(()=>{
+    const nowEv=document.getElementById('ev-now');
+    if(nowEv) nowEv.scrollIntoView({behavior:'smooth',block:'center'});
+    else{
+      const sc=document.getElementById('schedule-content');
+      const firstNext=sc.querySelector('.ev-item.next');
+      if(firstNext) firstNext.scrollIntoView({behavior:'smooth',block:'center'});
+    }
+  },50);
+}
+async function addEvent(){
+  const day=document.getElementById('sch-day').value.trim();
+  const time=document.getElementById('sch-time').value.trim();
+  const name=document.getElementById('sch-name').value.trim();
+  const location=document.getElementById('sch-loc').value.trim();
+  const isUcdfs=document.getElementById('sch-ucdfs').checked;
+  if(!day||!time||!name||!location){cToast('All fields required');return;}
+  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  cToast('Event added');loadScheduleEvents().then(()=>renderSchedule());
+}
+let editingEventId=null;
+function parseEventDate(dayStr){
+  const months={Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
+  const parts=dayStr.match(/(\w+)\s+(\d+)\s+(\w+)/);
+  if(!parts) return '2026-07-15';
+  const day=String(parts[2]).padStart(2,'0');
+  const month=String(months[parts[3]]).padStart(2,'0');
+  return `2026-${month}-${day}`;
+}
+function parseEventTime(timeStr){
+  const match=timeStr.match(/(\d{1,2}):(\d{2})/);
+  if(!match) return '10:00';
+  return `${String(match[1]).padStart(2,'0')}:${match[2]}`;
+}
+function formatDateToDay(dateStr){
+  const d=new Date(dateStr+'T00:00:00');
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+}
+function editEvent(id,day,time,name,location,isUcdfs){
+  editingEventId=id;
+  const dateVal=parseEventDate(day);
+  const timeVal=parseEventTime(time);
+  const overlay=`<div class="modal-overlay" onclick="if(event.target===this)closeEventModal()">
+    <div class="modal-content">
+      <div class="modal-header">Edit Event</div>
+      <div class="modal-field">
+        <label class="modal-label">Date</label>
+        <input id="medit-date" class="modal-input" type="date" value="${dateVal}">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Start Time</label>
+        <input id="medit-time" class="modal-input" type="time" value="${timeVal}">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Event Name</label>
+        <input id="medit-name" class="modal-input" type="text" value="${esc(name)}">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Location</label>
+        <input id="medit-loc" class="modal-input" type="text" value="${esc(location)}">
+      </div>
+      <div class="modal-field">
+        <label class="modal-checkbox">
+          <input id="medit-ucdfs" type="checkbox" ${isUcdfs?'checked':''}>
+          <span style="font-size:.9rem;font-weight:500">Tag as UCDFS Event</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-dark btn-sm" onclick="saveEventEdit(${id})">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeEventModal()">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',overlay);
+  document.getElementById('medit-name').focus();
+}
+function closeEventModal(){
+  const modal=document.querySelector('.modal-overlay');
+  if(modal) modal.remove();
+  editingEventId=null;
+}
+async function saveEventEdit(id){
+  const dateVal=document.getElementById('medit-date').value;
+  const timeVal=document.getElementById('medit-time').value;
+  const name=document.getElementById('medit-name').value.trim();
+  const location=document.getElementById('medit-loc').value.trim();
+  const isUcdfs=document.getElementById('medit-ucdfs').checked;
+  if(!dateVal||!timeVal||!name||!location){cToast('All fields required');return;}
+  const day=formatDateToDay(dateVal);
+  const time=timeVal;
+  await fetch(`/comp/api/schedule/events/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  closeEventModal();
+  cToast('Event updated');loadScheduleEvents().then(()=>renderSchedule());
+}
+async function deleteEvent(id){
+  if(!confirm('Delete this event?'))return;
+  await fetch(`/comp/api/schedule/events/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:adminPw})});
+  cToast('Event deleted');loadScheduleEvents().then(()=>renderSchedule());
+}
+function showAddEventForm(){
+  const today=new Date().toISOString().split('T')[0];
+  const form=`<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:12px">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label style="font-size:.75rem;font-weight:600;color:var(--muted)">Date</label>
+      <input id="sch-date" class="text-input" type="date" value="${today}" style="font-size:.85rem;padding:8px">
+      <label style="font-size:.75rem;font-weight:600;color:var(--muted)">Start Time</label>
+      <input id="sch-time" class="text-input" type="time" value="10:00" style="font-size:.85rem;padding:8px">
+      <label style="font-size:.75rem;font-weight:600;color:var(--muted)">Event Name</label>
+      <input id="sch-name" class="text-input" type="text" placeholder="Event name" style="font-size:.85rem;padding:8px">
+      <label style="font-size:.75rem;font-weight:600;color:var(--muted)">Location</label>
+      <input id="sch-loc" class="text-input" type="text" placeholder="Location" style="font-size:.85rem;padding:8px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;margin-top:4px">
+        <input id="sch-ucdfs" type="checkbox"> UCDFS event
+      </label>
+      <button class="btn btn-dark btn-sm" onclick="addEvent()" style="width:100%">Add Event</button>
+    </div>
+  </div>`;
+  document.getElementById('schedule-content').innerHTML=form+document.getElementById('schedule-content').innerHTML;
+  document.getElementById('sch-name').focus();
+}
+async function addEvent(){
+  const dateVal=document.getElementById('sch-date').value;
+  const timeVal=document.getElementById('sch-time').value;
+  const name=document.getElementById('sch-name').value.trim();
+  const location=document.getElementById('sch-loc').value.trim();
+  const isUcdfs=document.getElementById('sch-ucdfs').checked;
+  if(!dateVal||!timeVal||!name||!location){cToast('All fields required');return;}
+  const day=formatDateToDay(dateVal);
+  const time=timeVal;
+  await fetch('/comp/api/schedule/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,time,name,location,is_ucdfs:isUcdfs,password:adminPw})});
+  cToast('Event added');loadScheduleEvents().then(()=>renderSchedule());
+}
+
+/* ── Admin ── */
+function toggleAdminPwRow(){
+  const r=document.getElementById('admin-pw-row');
+  r.style.display=r.style.display==='none'?'':'none';
+  if(r.style.display!=='none') setTimeout(()=>document.getElementById('adminpw').focus(),80);
+}
+async function verifyAdmin(){
+  const pw=document.getElementById('adminpw').value;
+  const r=await fetch('/comp/api/admin/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  if(r.status===403){cToast('Wrong password');return;}
+  adminPw=pw; adminUnlocked=true;
+  document.getElementById('admin-pw-row').style.display='none';
+  document.getElementById('admin-status').textContent='🔓 Admin';
+  document.getElementById('admin-toggle-btn').style.display='none';
+  loadRoster();
+}
+
+/* ── Roster ── */
+async function loadRoster(){
+  try{
+    const r=await fetch('/comp/api/roster'), d=await r.json();
+    renderRoster(d.roster);
+  }catch(e){document.getElementById('roster-content').innerHTML='<div class="empty-c">Could not load</div>';}
+}
+function renderRoster(roster){
+  const grid={};
+  COMP_DAYS.forEach(day=>{grid[day]={};COMP_ROLES[day].forEach(role=>grid[day][role]=[]);});
+  roster.forEach(e=>{if(grid[e.day]?.[e.role]!==undefined) grid[e.day][e.role].push({id:e.id,name:e.person_name});});
+  let html='';
+  COMP_DAYS.forEach(day=>{
+    html+=`<div class="day-card"><div class="day-hd"><span>📅 ${DAY_LABELS[day]}</span></div>`;
+    COMP_ROLES[day].forEach(role=>{
+      const people=grid[day][role];
+      html+=`<div class="role-sec"><div class="role-lbl">${ROLE_LABELS[role]}</div><div class="pchips">`;
+      if(!people.length) html+=`<span class="unassigned">Unassigned</span>`;
+      people.forEach(p=>{
+        html+=`<div class="pchip"><div class="av av28 av-purple">${initials(p.name)}</div>${esc(p.name)}`;
+        if(adminUnlocked) html+=`<button class="chip-del" onclick="removeRoster(${p.id})">✕</button>`;
+        html+=`</div>`;
+      });
+      html+=`</div>`;
+      if(adminUnlocked) html+=`<div class="add-row"><input type="text" placeholder="Add person…" onkeydown="if(event.key==='Enter')addRoster('${day}','${role}',this)"><button class="btn btn-ghost btn-xs" onclick="addRoster('${day}','${role}',this.previousElementSibling)">+ Add</button></div>`;
+      html+=`</div>`;
+    });
+    html+=`</div>`;
+  });
+  document.getElementById('roster-content').innerHTML=html;
+}
+async function addRoster(day,role,input){
+  const name=input.value.trim(); if(!name) return;
+  const r=await fetch('/comp/api/roster',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,role,name,password:adminPw})});
+  if(!r.ok){cToast('Failed to add');return;}
+  input.value=''; loadRoster();
+}
+async function removeRoster(id){
+  await fetch('/comp/api/roster/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,password:adminPw})});
+  loadRoster();
+}
+
+/* ── Users / autocomplete ── */
+async function loadUsers(){
+  try{const r=await fetch('/comp/api/users'),d=await r.json();allUsers=d.users.filter(n=>n!==cName);}
+  catch(e){}
+}
+function renderSplitChips(){
+  document.getElementById('split-chips-wrap').innerHTML=splitWith.map(n=>
+    `<div class="split-chip"><div class="av av28 av-purple">${initials(n)}</div>${esc(n)}<button class="split-chip-del" onmousedown="event.preventDefault()" onclick="removeSplit('${esc(n)}')">✕</button></div>`
+  ).join('');
+}
+function removeSplit(name){splitWith=splitWith.filter(n=>n!==name);renderSplitChips();}
+let splitMatches=[];
+function addSplit(name){
+  if(!splitWith.includes(name)){splitWith.push(name);renderSplitChips();}
+  document.getElementById('split-search').value='';
+  hideSplitDd();
+}
+function hideSplitDd(){document.getElementById('split-dd').style.display='none';}
+function showSplitDd(matches){
+  splitMatches=matches;
+  const dd=document.getElementById('split-dd');
+  if(!matches.length){dd.innerHTML='<div class="split-none">No matches</div>';}
+  else{
+    dd.innerHTML=matches.map((n,i)=>`<div class="split-opt" data-i="${i}"><div class="av av28 av-purple">${initials(n)}</div><span class="split-opt-name">${esc(n)}</span></div>`).join('');
+  }
+  dd.style.display='';
+}
+function onSplitInput(e){
+  const q=e.target.value.toLowerCase().trim();
+  if(!q){hideSplitDd();return;}
+  const matches=allUsers.filter(n=>n.toLowerCase().includes(q)&&!splitWith.includes(n)).slice(0,6);
+  showSplitDd(matches);
+}
+
+/* ── Runner ── */
+async function loadRunner(){
+  const r=await fetch('/comp/api/runner'),d=await r.json();
+  currentRunner=d.runner||null; renderRunnerBanner();
+}
+function renderRunnerBanner(){
+  const el=document.getElementById('runner-wrap'), isMe=currentRunner===cName;
+  if(currentRunner){
+    el.innerHTML=`<div class="rbanner on"><div class="ri">🛒</div><div class="rt"><div class="rt-name">${esc(currentRunner)} is shopping</div><div class="rt-sub">${isMe?"That's you — enter prices below":"They'll be back soon"}</div></div>${isMe?`<button class="btn btn-ghost btn-sm" onclick="clearRunner()">Done</button>`:adminUnlocked?`<button class="btn btn-ghost btn-sm" onclick="adminUnassignRunner()">Unassign</button>`:''}</div>`;
+  }else{
+    el.innerHTML=`<div class="rbanner off"><div class="ri">🛒</div><div class="rt"><div class="rt-name">No shop runner yet</div><div class="rt-sub">Heading to the shops?</div></div><button class="btn btn-purple btn-sm" onclick="declareRunner()">I'm going</button></div>`;
+  }
+}
+async function declareRunner(){
+  await fetch('/comp/api/runner',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:cName})});
+  currentRunner=cName; renderRunnerBanner(); loadRequests();
+}
+async function clearRunner(){
+  await fetch('/comp/api/runner',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:''})});
+  currentRunner=null; renderRunnerBanner(); loadRequests();
+}
+async function adminUnassignRunner(){
+  if(!confirm(`Unassign ${esc(currentRunner)} from shopping?`)) return;
+  await fetch('/comp/api/runner',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:''})});
+  currentRunner=null; cToast('Runner unassigned'); renderRunnerBanner(); loadRequests();
+}
+
+/* ── Cutoff banner ── */
+async function loadCutoffBanner(){
+  const el=document.getElementById('cutoff-banner');
+  try{
+    const r=await fetch('/comp/api/shop-cutoff'),d=await r.json();
+    const fmt=new Date(d.target_shop_date+'T12:00:00').toLocaleDateString('en-IE',{weekday:'long',day:'numeric',month:'short'});
+    const cutoffTxt=d.cutoff_hour===12?'12:00pm':(d.cutoff_hour>12?`${d.cutoff_hour-12}:00pm`:`${d.cutoff_hour}:00am`);
+    if(d.is_same_day){
+      el.innerHTML=`⏰ It's before <strong>${cutoffTxt}</strong>${d.is_extended_cutoff?' (extended cutoff today)':''} — requests now still get <strong>same-day</strong> delivery. After ${cutoffTxt} they move to tomorrow's shop.`;
+    }else{
+      el.innerHTML=`🕙 Requests need to be in by <strong>${cutoffTxt}</strong> for same-day delivery — you've missed today's cutoff, so this will go on the shop for <strong>${fmt}</strong>.`;
+    }
+  }catch(e){}
+}
+
+/* ── Requests ── */
+let editingId=null;
+async function loadRequests(){
+  const r=await fetch('/comp/api/requests'),d=await r.json();
+  requestsData=d.requests; renderRequests(requestsData);
+}
+function reqDayLabel(isoDate){
+  const today = new Date().toISOString().split('T')[0];
+  const tom   = new Date(Date.now()+86400000).toISOString().split('T')[0];
+  const yest  = new Date(Date.now()-86400000).toISOString().split('T')[0];
+  const fmt   = new Date(isoDate+'T12:00:00').toLocaleDateString('en-IE',{weekday:'long',day:'numeric',month:'short'});
+  if(isoDate===today) return 'Today — '+fmt;
+  if(isoDate===tom)   return 'Tomorrow — '+fmt;
+  if(isoDate===yest)  return 'Yesterday — '+fmt;
+  return fmt;
+}
+function fmtTime(ts){
+  return new Date(ts).toLocaleTimeString('en-IE',{hour:'2-digit',minute:'2-digit'});
+}
+function groupByShopDate(reqs){
+  const groups={};
+  reqs.forEach(r=>{
+    const key=r.shop_date || r.created_at.split('T')[0];
+    if(!groups[key]) groups[key]=[];
+    groups[key].push(r);
+  });
+  // soonest shop date first
+  return Object.entries(groups).sort(([a],[b])=>a.localeCompare(b));
+}
+function renderRequests(reqs){
+  const el=document.getElementById('req-list'), isRunner=currentRunner===cName;
+  if(!reqs.length){el.innerHTML='<div class="empty-c"><div class="ei">🛒</div>No requests yet</div>';return;}
+  const days=groupByShopDate(reqs);
+  let html='';
+  days.forEach(([isoDate,dayReqs],di)=>{
+    const pending=dayReqs.filter(r=>r.status==='pending');
+    const bought =dayReqs.filter(r=>r.status==='bought');
+    html+=`<div class="day-group-hd">🛒 Shop for: ${reqDayLabel(isoDate)}<span class="day-group-ct">${dayReqs.length} item${dayReqs.length!==1?'s':''}</span></div>`;
+    pending.forEach(r=>{html+=reqCard(r,isRunner);});
+    if(bought.length){
+      const total=bought.reduce((s,r)=>s+(r.price!=null?parseFloat(r.price):0),0);
+      html+=`<div class="bought-summary" onclick="toggleBought('bg-${di}',this)">
+        <span class="bs-check">✅</span>
+        <span class="bs-text">${bought.length} bought</span>
+        <span class="bs-total">£${total.toFixed(2)}</span>
+        <span class="bs-chev">⌄</span>
+      </div>
+      <div id="bg-${di}" style="display:none">${bought.map(r=>reqCard(r,false)).join('')}</div>`;
+    }
+  });
+  el.innerHTML=html;
+}
+function toggleBought(id,el){
+  const c=document.getElementById(id);
+  const open=c.style.display==='none';
+  c.style.display=open?'':'none';
+  el.classList.toggle('open',open);
+}
+function reqCard(r,isRunner){
+  const sw=r.split_with||[], isMine=r.requester===cName, isBuyer=r.bought_by===cName;
+  if(editingId===r.id) return reqCardEdit(r);
+  const splitTxt=sw.length?`÷ with ${sw.map(esc).join(', ')}`:null;
+  const priceTxt=r.price!=null?`£${parseFloat(r.price).toFixed(2)}${sw.length?` (÷${sw.length+1})`:''}`:null;
+  const timeStr=r.created_at?fmtTime(r.created_at):'';
+  const buyerTxt=r.bought_by?`bought by ${esc(r.bought_by)}`:null;
+  return `<div class="rcard ${r.status==='bought'?'bought':''}">
+    <div class="rcard-top">
+      <div class="av av32 av-purple">${initials(r.requester)}</div>
+      <div class="rinfo">
+        <div class="ritem">${esc(r.item)}${r.quantity>1?`<span class="qty-badge">×${r.quantity}</span>`:''}</div>
+        <div class="rwho">${esc(r.requester)}${timeStr?` · <span style="opacity:.7">${timeStr}</span>`:''}</div>
+        ${splitTxt?`<div class="rsplit">${splitTxt}</div>`:''}
+        ${priceTxt?`<div class="rprice">${priceTxt}${buyerTxt?` · <span style="color:var(--muted);font-weight:500">${buyerTxt}</span>`:''}</div>`:''}
+      </div>
+      <div class="ract">
+        ${r.status==='bought'?`<span style="font-size:1.1rem">✅</span>${isBuyer?`<button class="btn btn-ghost btn-xs" onclick="undoBought(${r.id})">↩️</button>`:''}`:isMine&&r.status==='pending'?`<button class="btn btn-ghost btn-xs" onclick="startEditReq(${r.id})">✏️</button><button class="btn btn-ghost btn-xs" onclick="deleteReq(${r.id})">🗑️</button>`:''}
+      </div>
+    </div>
+    ${isRunner&&r.status==='pending'?`<div class="price-row"><label>Price £ (Total)</label><input type="number" step="0.01" min="0" id="pr-${r.id}" placeholder="0.00"><button class="btn btn-green btn-sm" onclick="markBought(${r.id})">✓ Bought</button></div>`:''}
+  </div>`;
+}
+function reqCardEdit(r){
+  const sw=(r.split_with||[]).join(', ');
+  return `<div class="rcard">
+    <div class="rcard-top">
+      <div class="av av32 av-purple">${initials(r.requester)}</div>
+      <div class="rinfo" style="width:100%">
+        <textarea class="text-input" style="width:100%;padding:8px 10px;font-size:.88rem;border-radius:10px;resize:none;font-family:inherit" rows="2" id="edit-item-${r.id}">${esc(r.item)}</textarea>
+        <div class="qty-row">
+          <label>Qty</label>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="stepQty('edit-qty-${r.id}',-1)">−</button>
+          <input type="number" id="edit-qty-${r.id}" min="1" step="1" value="${r.quantity||1}" inputmode="numeric">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="stepQty('edit-qty-${r.id}',1)">+</button>
+        </div>
+        <input class="text-input" style="width:100%;margin-top:6px;padding:7px 10px;font-size:.8rem;border-radius:9px" type="text" id="edit-split-${r.id}" placeholder="Splitting with (comma-separated, optional)" value="${esc(sw)}">
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-dark btn-sm" onclick="saveEditReq(${r.id})">Save</button>
+          <button class="btn btn-ghost btn-sm" onclick="cancelEditReq()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function startEditReq(id){editingId=id; renderRequests(requestsData);}
+function cancelEditReq(){editingId=null; renderRequests(requestsData);}
+async function saveEditReq(id){
+  const item=document.getElementById('edit-item-'+id).value.trim();
+  if(!item){cToast("Item can't be empty");return;}
+  const quantity=Math.max(1,parseInt(document.getElementById('edit-qty-'+id).value)||1);
+  const split=document.getElementById('edit-split-'+id).value.split(',').map(s=>s.trim()).filter(Boolean);
+  const r=await fetch('/comp/api/requests/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name:cName,item,quantity,split_with:split})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));cToast(d.detail||'Failed to save');return;}
+  editingId=null; cToast('Updated'); loadRequests();
+}
+function stepQty(id,delta){
+  const el=document.getElementById(id);
+  el.value=Math.max(1,(parseInt(el.value)||1)+delta);
+}
+async function addRequest(btn){
+  const item=document.getElementById('req-item').value.trim();
+  if(!item){cToast('Enter an item first');return;}
+  const quantity=Math.max(1,parseInt(document.getElementById('req-qty').value)||1);
+  const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+  const r=await fetch('/comp/api/requests',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:cName,item,quantity,split_with:splitWith})});
+  btn.innerHTML=orig; btn.disabled=false;
+  if(!r.ok){cToast('Failed to add');return;}
+  const d=await r.json().catch(()=>({}));
+  document.getElementById('req-item').value='';
+  document.getElementById('req-qty').value='1';
+  splitWith=[]; renderSplitChips();
+  if(d.shop_date){
+    const fmt=new Date(d.shop_date+'T12:00:00').toLocaleDateString('en-IE',{weekday:'short',day:'numeric',month:'short'});
+    cToast(`Added — on the list for ${fmt}`);
+  }else cToast('Added!');
+  loadRequests();
+}
+async function deleteReq(id){
+  if(!confirm('Remove this request?')) return;
+  const r=await fetch('/comp/api/requests/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name:cName})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));cToast(d.detail||'Failed to remove');return;}
+  loadRequests();
+}
+async function markBought(id){
+  const v=parseFloat(document.getElementById('pr-'+id)?.value);
+  if(isNaN(v)||v<0){cToast('Enter a valid price');return;}
+  await fetch('/comp/api/requests/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,price:v,status:'bought',bought_by:cName})});
+  loadRequests();
+}
+async function undoBought(id){
+  if(!confirm('Mark this as unpurchased?')) return;
+  await fetch('/comp/api/requests/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status:'pending',bought_by:null,price:null})});
+  cToast('Reverted to pending');
+  loadRequests();
+}
+/* ── Expenses ── */
+async function loadExpenses(){
+  const el=document.getElementById('exp-list');
+  el.innerHTML='<div class="empty-c"><div class="ei">⏳</div>Loading…</div>';
+  try{
+    const r=await fetch('/comp/api/expenses'),d=await r.json();
+    renderExpenses(d);
+  }catch(e){el.innerHTML='<div class="empty-c">Could not load</div>';}
+}
+function eToggle(hd){hd.nextElementSibling.style.display=hd.nextElementSibling.style.display==='none'?'':'none';}
+function renderExpenses(data){
+  const el=document.getElementById('exp-list');
+  const rate=data.rate, expenses=data.expenses||[], debts=data.debts||[];
+  if(!expenses.length){el.innerHTML='<div class="empty-c"><div class="ei">💰</div>No expenses yet</div>';return;}
+  const eur=g=>(g*rate).toFixed(2);
+  let html=`<div class="rate-note">💱 £1 = €${rate.toFixed(3)} · prices entered in GBP, pay back in EUR</div>`;
+
+  // ── Settle up: grouped by creditor (who needs paying back) ──
+  if(debts.length){
+    const byCreditor={};
+    debts.forEach(d=>{(byCreditor[d.creditor]=byCreditor[d.creditor]||[]).push(d);});
+    html+=`<div class="section-label" style="margin-bottom:8px">💸 Settle up</div>`;
+    Object.keys(byCreditor).sort().forEach(creditor=>{
+      const list=byCreditor[creditor].sort((a,b)=>b.eur-a.eur);
+      const totEur=list.reduce((s,d)=>s+d.eur,0);
+      html+=`<div class="ecard">
+        <div class="ehd" onclick="eToggle(this)">
+          <div class="av av32 av-green">${initials(creditor)}</div>
+          <div class="ename">Pay back ${esc(creditor)}</div>
+          <div class="etotal">€${totEur.toFixed(2)}</div>
+          <span style="color:var(--muted);font-size:.7rem;margin-left:4px">▼</span>
+        </div>
+        <div class="eitems" style="display:none">
+          ${list.map(d=>`<div class="eitem"><div>${esc(d.debtor)} owes</div><div class="eitem-share">€${d.eur.toFixed(2)} <span class="etag">£${d.gbp.toFixed(2)}</span></div></div>`).join('')}
+        </div>
+      </div>`;
+    });
+  }
+
+  // ── Spending breakdown per person ──
+  const total=expenses.reduce((s,e)=>s+e.total,0);
+  html+=`<div class="section-label" style="margin-top:18px;margin-bottom:8px">Spending breakdown</div>`;
+  html+=`<div style="text-align:right;font-size:.75rem;color:var(--muted);margin-bottom:12px">Total: <strong>£${total.toFixed(2)}</strong> · €${eur(total)}</div>`;
+  expenses.forEach(e=>{
+    html+=`<div class="ecard">
+      <div class="ehd" onclick="eToggle(this)">
+        <div class="av av32 av-purple">${initials(e.name)}</div>
+        <div class="ename">${esc(e.name)}</div>
+        <div class="etotal">€${eur(e.total)}</div>
+        <span style="color:var(--muted);font-size:.7rem;margin-left:4px">▼</span>
+      </div>
+      <div class="eitems" style="display:none">
+        ${e.items.map(i=>`<div class="eitem"><div>${esc(i.item)}${i.shared?'<span class="etag">(shared)</span>':''}</div><div class="eitem-share">€${eur(i.share)} <span class="etag">£${i.share.toFixed(2)}</span></div></div>`).join('')}
+      </div>
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+/* ── Toast ── */
+function cToast(msg){ UCDFS.toast(msg,3000); }
+
+/* ── Init ── */
+document.addEventListener('DOMContentLoaded',()=>{
+  const si=document.getElementById('split-search');
+  si.addEventListener('input',onSplitInput);
+  si.addEventListener('blur',()=>setTimeout(hideSplitDd,200));
+  si.addEventListener('keydown',e=>{
+    if(e.key==='Escape') hideSplitDd();
+    if(e.key==='Enter'){
+      e.preventDefault();
+      if(splitMatches.length) addSplit(splitMatches[0]);
+    }
+  });
+  // mousedown fires before the input's blur, so selection registers reliably
+  document.getElementById('split-dd').addEventListener('mousedown',e=>{
+    const opt=e.target.closest('.split-opt');
+    if(!opt) return;
+    e.preventDefault();
+    addSplit(splitMatches[+opt.dataset.i]);
+    si.focus();
+  });
+  document.getElementById('split-box').addEventListener('focus',()=>document.getElementById('split-box').classList.add('focused'),true);
+  document.getElementById('split-box').addEventListener('blur',()=>document.getElementById('split-box').classList.remove('focused'),true);
+  UCDFS.gate(cShowMain);
+});
+</script>
+</body>
+</html>

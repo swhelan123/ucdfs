@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Attendance</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Attendance-only styles. Tokens, header, setup card, buttons, toast,
+   spinner and empty states all come from shared.css. */
+:root { --page-max: 1100px; }
+
+/* ── Layout ── */
+.main-grid { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 720px) {
+  .main-grid { flex-direction: row; align-items: flex-start; }
+  .panel-list { flex: 1 1 0; min-width: 0; overflow: hidden; }
+  .panel-form { flex: 1 1 0; position: sticky; top: 82px; }
+}
+
+/* ── Day picker ── */
+.day-picker {
+  display: flex; gap: 6px; margin-bottom: 16px;
+  overflow-x: auto; padding: 4px 2px 10px; -ms-overflow-style: none; scrollbar-width: none;
+}
+.day-picker::-webkit-scrollbar { display: none; }
+.day-sep { width: 1px; background: var(--border); flex-shrink: 0; align-self: stretch; margin: 2px 4px; }
+.day-btn {
+  flex: 1; min-width: 52px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px;
+  padding: 10px 6px; border: 1.5px solid var(--border); border-radius: 14px;
+  background: var(--card); cursor: pointer; box-shadow: var(--shadow-sm);
+  transition: all 0.15s;
+}
+.day-btn:hover { border-color: var(--indigo-light); background: var(--indigo-bg); }
+.day-btn.active {
+  background: #0f172a; border-color: #0f172a; color: #fff;
+  box-shadow: 0 4px 12px rgba(15,23,42,0.25);
+}
+.day-btn.is-today .day-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--indigo);
+  margin-top: 2px;
+}
+.day-btn.active.is-today .day-dot { background: var(--indigo-light); }
+.day-name { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); }
+.day-num  { font-size: 1.1rem; font-weight: 700; line-height: 1; }
+.day-btn.active .day-name { color: rgba(255,255,255,0.7); }
+.day-btn.active .day-num  { color: #fff; }
+
+/* ── Form card ── */
+.form-card {
+  background: var(--card); border-radius: 20px; padding: 22px 20px;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md);
+}
+
+/* ── Status toggle ── */
+.status-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+.status-btn {
+  padding: 18px 10px; border: 2px solid transparent; border-radius: 16px;
+  cursor: pointer; text-align: center; font-weight: 700;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  transition: transform 0.14s cubic-bezier(0.34,1.56,0.64,1),
+              box-shadow 0.14s ease, border-color 0.14s;
+}
+.status-btn:hover  { transform: translateY(-2px); }
+.status-btn:active { transform: scale(0.95); transition-duration: 0.05s; }
+.s-icon { font-size: 1.7rem; line-height: 1; }
+.s-text { font-size: 0.82rem; }
+.btn-in  {
+  background: var(--green-bg); color: var(--green-text);
+  box-shadow: 0 3px 10px rgba(22,163,74,0.15);
+}
+.btn-in.active {
+  border-color: var(--green); background: var(--green-bg);
+  box-shadow: 0 5px 16px rgba(22,163,74,0.28);
+}
+.btn-out {
+  background: var(--red-bg); color: var(--red-text);
+  box-shadow: 0 3px 10px rgba(220,38,38,0.12);
+}
+.btn-out.active {
+  border-color: var(--red); background: var(--red-bg);
+  box-shadow: 0 5px 16px rgba(220,38,38,0.22);
+}
+
+/* ── Time fields ── */
+.times-wrap {
+  overflow: hidden;
+  transition: max-height 0.28s ease, opacity 0.22s ease;
+  max-height: 160px; opacity: 1;
+}
+.times-wrap.hidden { max-height: 0; opacity: 0; }
+.time-field {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 14px; background: var(--bg); border-radius: 12px;
+  margin-bottom: 10px; border: 1.5px solid var(--border);
+}
+.time-field label { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+.time-input {
+  padding: 7px 10px; border: 1.5px solid var(--border); border-radius: 9px;
+  font-size: 0.9rem; outline: none; background: var(--card);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.time-input:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
+}
+
+/* ── Submit button ── */
+.submit-btn {
+  width: 100%; padding: 15px; margin-top: 4px;
+  background: #0f172a; color: #fff; border: none; border-radius: 14px;
+  font-size: 1rem; font-weight: 700; cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: transform 0.12s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.12s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.submit-btn:hover  { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.submit-btn:active { transform: scale(0.97); box-shadow: var(--shadow-sm); transition-duration: 0.05s; }
+.submit-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
+.submit-btn.done {
+  background: var(--green); box-shadow: 0 4px 14px rgba(22,163,74,0.3);
+}
+
+/* ── Attendance list ── */
+.att-card {
+  background: var(--card); border-radius: 20px; overflow: hidden;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md);
+}
+.person {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.person:last-child { border-bottom: none; }
+.person:hover { background: #fafbfc; }
+.avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.65rem; font-weight: 800; letter-spacing: 0.03em; flex-shrink: 0;
+}
+.av-in  { background: var(--green-mid); color: var(--green-text); }
+.av-out { background: var(--red-mid);   color: var(--red-text); }
+.pinfo  { flex: 1; min-width: 0; }
+.pname  { font-weight: 600; font-size: 0.9rem; }
+.ptimes {
+  font-size: 0.75rem; color: var(--muted); margin-top: 2px;
+  display: flex; align-items: center; gap: 4px;
+}
+.pbadge {
+  font-size: 0.75rem; font-weight: 600; padding: 3px 9px; border-radius: 99px;
+}
+.pbadge-in  { background: var(--green-bg); color: var(--green); }
+.pbadge-out { background: var(--red-bg);   color: var(--red); }
+
+/* ── Row actions (edit / delete) ── */
+.row-actions { display: flex; gap: 4px; margin-left: 4px; }
+.row-btn {
+  width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); cursor: pointer; font-size: 0.8rem;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, border-color 0.12s; flex-shrink: 0;
+}
+.row-btn:hover { background: var(--bg); }
+.row-btn-del:hover { background: var(--red-bg); border-color: var(--red-mid); }
+
+/* ── View toggle ── */
+.list-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.list-header .section-label { margin-bottom: 0; }
+.view-toggle { display: flex; gap: 3px; background: var(--border); padding: 3px; border-radius: 8px; }
+.view-btn { padding: 4px 12px; border: none; border-radius: 6px; font-size: 0.72rem; font-weight: 600;
+  cursor: pointer; background: transparent; color: var(--muted); transition: all 0.15s; }
+.view-btn.active { background: var(--card); color: var(--text); box-shadow: var(--shadow-sm); }
+
+/* ── Timeline ── */
+.tl-card { background: var(--card); border-radius: 20px; overflow: hidden;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md); min-width: 0; }
+.tl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
+.tl-inner { display: inline-block; min-width: 100%; position: relative; }
+.tl-now-line {
+  position: absolute; top: 36px; bottom: 0; width: 2px;
+  background: #ef4444; z-index: 1; pointer-events: none;
+}
+.tl-now-line::before {
+  content: ''; position: absolute; top: -5px; left: -4px;
+  width: 10px; height: 10px; border-radius: 50%; background: #ef4444;
+}
+.tl-head { display: flex; border-bottom: 2px solid var(--border); background: var(--bg); }
+.tl-name-h { width: 130px; flex-shrink: 0; padding: 9px 12px; font-size: 0.65rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); border-right: 1px solid var(--border);
+  position: sticky; left: 0; z-index: 3; background: var(--bg); }
+.tl-hours-h { display: flex; }
+.tl-hour-h  { width: 90px; flex-shrink: 0; padding: 9px 0; text-align: center; font-size: 0.68rem; color: var(--muted); font-weight: 600; }
+.tl-row { display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+.tl-row:last-child { border-bottom: none; }
+.tl-name-c { width: 130px; flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-right: 1px solid var(--border); min-width: 0;
+  position: sticky; left: 0; z-index: 2; background: var(--card); }
+.tl-pname { font-size: 0.8rem; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.tl-bar-c { flex: 1; position: relative; height: 48px; }
+.tl-grid  { position: absolute; inset: 0; display: flex; pointer-events: none; }
+.tl-gc    { width: 90px; flex-shrink: 0; border-left: 1px solid var(--border); }
+.tl-gc:first-child { border-left: none; }
+.tl-bar {
+  position: absolute; top: 11px; height: 26px;
+  background: var(--green-mid); border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 700; color: var(--green-text);
+  overflow: hidden; white-space: nowrap; padding: 0 6px;
+  box-shadow: 0 2px 6px rgba(22,163,74,0.2);
+  transition: opacity 0.12s;
+}
+.tl-bar:hover { opacity: 0.75; }
+.tl-empty { padding: 36px 16px; text-align: center; color: var(--muted); font-size: 0.875rem; }
+
+</style>
+</head>
+<body>
+
+<!-- ── Main ── -->
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo">📋</div>
+      <div class="header-text">
+        <div class="header-title">UCDFS Attendance</div>
+        <div class="header-sub" id="header-sub"></div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <!-- Day picker -->
+    <div class="section-label">Select a day</div>
+    <div class="day-picker" id="day-picker"></div>
+
+    <div class="main-grid">
+      <!-- Form (mobile: first; desktop: right via order) -->
+      <div class="panel-form">
+        <div class="section-label">Log your attendance</div>
+        <div class="form-card">
+          <div class="status-toggle">
+            <button class="status-btn btn-in active" id="sbtn-in" onclick="setStatus('arriving')">
+              <span class="s-icon">✅</span>
+              <span class="s-text">Coming in</span>
+            </button>
+            <button class="status-btn btn-out" id="sbtn-out" onclick="setStatus('absent')">
+              <span class="s-icon">❌</span>
+              <span class="s-text">Not coming in</span>
+            </button>
+          </div>
+
+          <div class="times-wrap" id="times-wrap">
+            <div class="time-field">
+              <label for="arrival-input">Arrival time</label>
+              <input id="arrival-input" class="time-input" type="time">
+            </div>
+            <div class="time-field">
+              <label for="depart-input">Departure time</label>
+              <input id="depart-input" class="time-input" type="time">
+            </div>
+          </div>
+
+          <button class="submit-btn" id="submit-btn" onclick="submitLog(this)">
+            Log attendance
+          </button>
+        </div>
+      </div>
+
+      <!-- Attendance list (mobile: second; desktop: left via order) -->
+      <div class="panel-list" style="order:-1">
+        <div class="list-header">
+          <div class="section-label" id="list-label">Who's in</div>
+          <div class="view-toggle">
+            <button class="view-btn active" id="vbtn-list"     onclick="switchView('list')">List</button>
+            <button class="view-btn"        id="vbtn-timeline" onclick="switchView('timeline')">Timeline</button>
+          </div>
+        </div>
+        <div class="att-card" id="attendance-list">
+          <div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">Loading…</div></div>
+        </div>
+        <div class="tl-card" id="timeline-view" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* The floating plans launcher that used to live here is gone — the dashboard
+   at / is the launcher now, and links to other tools come from the APPLETS
+   registry in main.py (including the Canva mech plan). */
+let selectedDate = '';
+let currentStatus = 'arriving';
+let currentView   = 'list';
+const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const sleep     = ms  => new Promise(r => setTimeout(r, ms));
+const initials  = n   => UCDFS.initials(n);
+const esc       = s   => UCDFS.esc(s);
+const fmtLong   = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-IE',
+                    {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+
+function getWeekDays() {
+  const today = new Date();
+  const todayIso = today.toISOString().split('T')[0];
+  const dow = today.getDay();
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + mondayOffset);
+  return Array.from({length: 14}, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const iso = d.toISOString().split('T')[0];
+    return { iso, name: DAY_NAMES[i % 7], num: d.getDate(), isToday: iso === todayIso };
+  });
+}
+
+function buildDayPicker() {
+  const days = getWeekDays();
+  const picker = document.getElementById('day-picker');
+  picker.innerHTML = '';
+  let todayBtn = null;
+  days.forEach((day, i) => {
+    if (i === 7) {
+      const sep = document.createElement('div');
+      sep.className = 'day-sep';
+      picker.appendChild(sep);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'day-btn' +
+      (day.isToday          ? ' is-today' : '') +
+      (day.iso === selectedDate ? ' active'   : '');
+    btn.innerHTML = `<span class="day-name">${day.name}</span>
+                     <span class="day-num">${day.num}</span>
+                     <span class="day-dot"></span>`;
+    btn.onclick = () => selectDay(day.iso);
+    picker.appendChild(btn);
+    if (day.isToday) todayBtn = btn;
+  });
+  if (todayBtn) requestAnimationFrame(() =>
+    todayBtn.scrollIntoView({inline: 'center', block: 'nearest', behavior: 'instant'})
+  );
+}
+
+function selectDay(iso) {
+  selectedDate = iso;
+  document.getElementById('header-sub').textContent  = fmtLong(iso);
+  document.getElementById('list-label').textContent  = "Who's in — " +
+    new Date(iso + 'T12:00:00').toLocaleDateString('en-IE', {weekday:'long', day:'numeric', month:'short'});
+  document.getElementById('arrival-input').value = '';
+  document.getElementById('depart-input').value  = '';
+  buildDayPicker();
+  loadAttendance();
+}
+
+function setStatus(s) {
+  currentStatus = s;
+  document.getElementById('sbtn-in').classList.toggle('active',  s === 'arriving');
+  document.getElementById('sbtn-out').classList.toggle('active', s === 'absent');
+  document.getElementById('times-wrap').classList.toggle('hidden', s === 'absent');
+}
+
+/* Identity now lives in shared.js — UCDFS.gate() shows #setup or #main and
+   hands us the user once we have one. */
+function showMain(user) {
+  UCDFS.renderPill();
+  selectedDate = UCDFS.todayISO();
+  buildDayPicker();
+  selectDay(selectedDate);
+}
+
+async function loadAttendance() {
+  document.getElementById('attendance-list').innerHTML =
+    '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">Loading…</div></div>';
+  document.getElementById('timeline-view').innerHTML = '';
+  try {
+    const r    = await fetch('/api/attendance?target_date=' + selectedDate);
+    const data = await r.json();
+    renderAttendance(data.rows);
+    renderTimeline(data.rows);
+  } catch(e) {
+    document.getElementById('attendance-list').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Could not load</div></div>';
+  }
+}
+
+function switchView(v) {
+  currentView = v;
+  document.getElementById('vbtn-list').classList.toggle('active',     v === 'list');
+  document.getElementById('vbtn-timeline').classList.toggle('active', v === 'timeline');
+  document.getElementById('attendance-list').style.display = v === 'list'     ? '' : 'none';
+  document.getElementById('timeline-view').style.display   = v === 'timeline' ? '' : 'none';
+}
+
+const timeToMins = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+function renderTimeline(rows) {
+  const el      = document.getElementById('timeline-view');
+  const arriving = (rows || []).filter(r => r.status === 'arriving' && r.time);
+  if (!arriving.length) {
+    el.innerHTML = '<div class="tl-empty">No arrivals logged yet</div>';
+    return;
+  }
+
+  const COL_W = 90; // px per hour — must match CSS
+  const allArr = arriving.map(r => timeToMins(r.time));
+  const allDep = arriving.filter(r => r.departure_time).map(r => timeToMins(r.departure_time));
+  const TL_START = Math.floor(Math.min(...allArr) / 60);
+  const TL_END   = Math.ceil((allDep.length ? Math.max(...allDep) : Math.max(...allArr) + 60) / 60);
+  const TL_HOURS = TL_END - TL_START;
+
+  const hours     = Array.from({length: TL_HOURS}, (_, i) => TL_START + i);
+  const gridCells = hours.map(() => '<div class="tl-gc"></div>').join('');
+  const hourHdrs  = hours.map(h => `<div class="tl-hour-h">${h}:00</div>`).join('');
+
+  const rowsHtml = arriving.map(r => {
+    const arrMins = timeToMins(r.time) - TL_START * 60;
+    const depMins = r.departure_time
+      ? timeToMins(r.departure_time) - TL_START * 60
+      : TL_HOURS * 60;
+    const left  = Math.max(0, arrMins / 60 * COL_W);
+    const width = Math.max(4, (depMins - arrMins) / 60 * COL_W);
+    const label = r.departure_time ? `${r.time} – ${r.departure_time}` : r.time;
+    return `<div class="tl-row">
+      <div class="tl-name-c">
+        <div class="avatar av-in" style="width:28px;height:28px;font-size:0.58rem;flex-shrink:0">${initials(r.name)}</div>
+        <div class="tl-pname">${esc(r.name)}</div>
+      </div>
+      <div class="tl-bar-c" style="width:${TL_HOURS * COL_W}px">
+        <div class="tl-grid">${gridCells}</div>
+        <div class="tl-bar" style="left:${left}px;width:${width}px" title="${esc(r.name)}: ${label}">${label}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const NAME_COL = 130;
+  const now = new Date();
+  const isToday = selectedDate === now.toISOString().split('T')[0];
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const nowOffset = nowMins - TL_START * 60;
+  const nowLine = (isToday && nowOffset > 0 && nowOffset < TL_HOURS * 60)
+    ? `<div class="tl-now-line" style="left:${NAME_COL + nowOffset / 60 * COL_W}px"></div>`
+    : '';
+
+  el.innerHTML = `<div class="tl-scroll"><div class="tl-inner">
+    ${nowLine}
+    <div class="tl-head">
+      <div class="tl-name-h">Name</div>
+      <div class="tl-hours-h">${hourHdrs}</div>
+    </div>
+    ${rowsHtml}
+  </div></div>`;
+}
+
+function timesLabel(arrival, departure) {
+  const parts = [];
+  if (arrival)   parts.push('↑ ' + arrival);
+  if (departure) parts.push('↓ ' + departure);
+  return parts.join('  ');
+}
+
+function renderAttendance(rows) {
+  const el = document.getElementById('attendance-list');
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Nothing logged yet</div></div>';
+    return;
+  }
+  const myName   = (UCDFS.user() || {}).name || '';
+  const arriving = rows.filter(r => r.status === 'arriving');
+  const absent   = rows.filter(r => r.status === 'absent');
+  let html = '';
+  arriving.forEach(r => {
+    const tl    = timesLabel(r.time, r.departure_time);
+    const isMine = r.name === myName;
+    html += `<div class="person">
+      <div class="avatar av-in">${initials(r.name)}</div>
+      <div class="pinfo">
+        <div class="pname">${esc(r.name)}</div>
+        ${tl ? `<div class="ptimes">${tl}</div>` : ''}
+      </div>
+      <span class="pbadge pbadge-in">In</span>
+      ${isMine ? `<div class="row-actions">
+        <button class="row-btn" title="Edit" onclick="editEntry('arriving','${r.time||''}','${r.departure_time||''}')">✏️</button>
+        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry()">🗑️</button>
+      </div>` : ''}
+    </div>`;
+  });
+  absent.forEach(r => {
+    const isMine = r.name === myName;
+    html += `<div class="person">
+      <div class="avatar av-out">${initials(r.name)}</div>
+      <div class="pinfo"><div class="pname">${esc(r.name)}</div></div>
+      <span class="pbadge pbadge-out">Out</span>
+      ${isMine ? `<div class="row-actions">
+        <button class="row-btn" title="Edit" onclick="editEntry('absent','','')">✏️</button>
+        <button class="row-btn row-btn-del" title="Delete" onclick="deleteEntry()">🗑️</button>
+      </div>` : ''}
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function editEntry(status, arrival, departure) {
+  setStatus(status);
+  document.getElementById('arrival-input').value = arrival;
+  document.getElementById('depart-input').value  = departure;
+  document.querySelector('.panel-form').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+async function deleteEntry() {
+  if (!confirm('Remove your entry for this day?')) return;
+  const me = UCDFS.user() || {};
+  const fn = me.first, ln = me.last;
+  try {
+    const r = await fetch('/api/log/delete', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({first_name: fn, last_name: ln, date: selectedDate})
+    });
+    if (!r.ok) throw new Error();
+    showToast('Entry removed');
+    loadAttendance();
+  } catch(e) {
+    showToast('Could not delete entry, try again');
+  }
+}
+
+async function submitLog(btn) {
+  const me  = UCDFS.user() || {};
+  const fn  = me.first, ln  = me.last;
+  const arrival   = document.getElementById('arrival-input').value;
+  const departure = document.getElementById('depart-input').value;
+
+  if (currentStatus === 'arriving' && (!arrival || !departure)) {
+    showToast('Please enter both arrival and departure times');
+    return;
+  }
+  if (currentStatus === 'arriving' && arrival >= departure) {
+    showToast('Departure time must be after arrival time');
+    return;
+  }
+
+  const origHTML  = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  let ok = false;
+  try {
+    const r = await fetch('/api/log', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        first_name:     fn,
+        last_name:      ln,
+        date:           selectedDate,
+        status:         currentStatus,
+        arrival_time:   arrival   || null,
+        departure_time: departure || null,
+      })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    showToast(data.reply || 'Logged!');
+    loadAttendance();
+    ok = true;
+  } catch(e) {
+    showToast('Something went wrong, try again');
+  }
+
+  if (ok) {
+    btn.className += ' done';
+    btn.innerHTML = '✓  Logged!';
+    await sleep(1400);
+    btn.className = btn.className.replace(' done', '');
+  }
+  btn.innerHTML = origHTML;
+  btn.disabled  = false;
+}
+
+function showToast(msg) { UCDFS.toast(msg, 3500); }
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('arrival-input').addEventListener('change', () => {
+    const arr = document.getElementById('arrival-input').value;
+    document.getElementById('depart-input').min = arr || '';
+  });
+
+  UCDFS.gate(showMain);
+});
+
+setInterval(() => { if (selectedDate) loadAttendance(); }, 30000);
+</script>
+</body>
+</html>

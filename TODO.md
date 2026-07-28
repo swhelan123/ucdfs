@@ -48,24 +48,40 @@ that will die next March for the same reasons.
 Small things, mostly reusing data we already store. Worth doing before any new
 applet because they make the homepage worth opening daily.
 
-### 1. Days to competition — *tiny*
-A countdown on the dashboard. FSUK is a fixed date; a number that goes down is
-free motivation and instantly orients anyone opening the page. Put the season
-milestones behind it (design freeze, manufacturing deadline, first test day).
+### 1. Days to competition — ✅ done
+Navy/gold strip at the top of the dashboard. The season calendar
+(`FSUK_DATE`, `SEASON_MILESTONES`) is one editable block at the top of `main.py`
+and is the only input.
 
-### 2. Activity feed — *small*
-`pt_done_log` already stores `node_id`, `user_name`, `created_at`. That's a feed
-with no new schema: *"Shane ticked off Mount cooling fan · 2h ago"*. Extend the
-same append-only log pattern to other applets and the dashboard gets a live
-pulse of the whole team's work.
+Two things still open:
+- **The date is provisional** — `date(2027, 7, 13)`, extrapolated from the 2026
+  pattern. The card says "provisional" until `FSUK_PROVISIONAL` is cleared.
+  Update both the day IMechE announce.
+- `SEASON_MILESTONES` is empty. The machinery renders "Next: design freeze in 42
+  days" as soon as there are dates to put in it.
 
-Worth generalising into one `activity_log` table (`applet`, `actor`, `verb`,
-`subject`, `created_at`) that every applet writes to.
+### 2. Activity feed — ✅ done
+Bottom of the dashboard, newest eight. Merges two sources: `pt_done_log` (the PT
+plan's existing audit log, adapted rather than duplicated) and the new
+`activity_log` table — `migrations/002`, **not yet applied**, written to via
+`log_activity()`. The feed works before it is applied; the comp-hub lines
+(requested / bought) only start appearing after.
 
-### 3. Who's in the workshop right now — *small*
-`attendance` already has arrival and departure times. The dashboard says
-"nobody logged in yet"; it could say *"4 people in now — Shane, Aoife, +2, until
-17:00"*. Makes the attendance log useful rather than just a record.
+Attendance deliberately doesn't write to it — twenty people logging a day each
+morning would bury everything else, and the nowbar covers it. Worth revisiting
+when there are more applets writing: eight items is thin now and will be noisy
+later, so the feed probably wants its own page and a "load more".
+
+### 3. Who's in the workshop right now — ✅ done
+*"4 in the workshop now — Shane, Aoife, Cian +1 · until 17:00"*, with avatars, in
+a bar under the headline. Only rendered when someone actually is in; the
+headline drops its own workshop line in that case so the two never duplicate.
+
+Someone who logged no departure time counts as still here — we can't know, and
+showing a present person as gone is the worse error.
+
+Watch for: it's a snapshot at page load, not live. If people start leaving the
+dashboard open on the workshop TV it wants a poll or the existing websocket.
 
 ### 4. Your own stuff — *small*
 "3 tasks assigned to you", "you owe Aoife £14.20". Personalises the homepage,
@@ -296,10 +312,34 @@ Turning "we think we comply" into "here is the evidence" is worth real points.
 
 ## Finish before starting
 
-**The Wiring Harness Mapper is incomplete.** Worth saying plainly: a platform
-with one half-finished tool on it teaches people the tools here are unreliable,
-and that reputation is what makes the *next* launch fail. Finishing harness is
-worth more than starting two new applets.
+**The Wiring Harness Mapper — audited and fixed, 2026-07-28.** The "incomplete"
+label was wrong, and worth correcting because it was steering the roadmap. The
+tool is feature-complete (canvas, splices, nets, DRC, BOM, KiCad import, four
+CSV/YAML exports, five print reports, live multiplayer, revisions, library).
+What it had instead was **defects in the numbers people would have ordered from**:
+
+- **DTM connectors emitted Deutsch DT part numbers.** DTM is the smaller
+  sibling with its own housings, its own wedgelock and size-20 contacts.
+  Ordering from that BOM got you parts that do not physically fit.
+- **12 of 34 connector types produced no BOM lines at all**, silently —
+  Superseal (all 6), AMPSEAL, Micro-Fit, stud, splice, header, custom. You'd
+  have ordered wire and nothing to crimp it into.
+
+Both fixed. `connParts()` now guarantees every connector yields at least one
+line; where a part number can't be derived it emits `(specify)` and the rule
+check lists it, rather than the connector vanishing. Two new rule-check
+categories: **Contacts** (wire gauge vs the contact's crimp range) and
+**Parts** (connectors with no number). `tests/suite-harness.js` — 40 checks —
+pins all of it.
+
+**The real gap is that it holds exactly one harness.** `HARNESS_DOC_ID="main"`
+is hardcoded, so the team can never have an LV harness *and* an HV harness. Same
+`plan_id` generalisation as Build Plans above, and worth doing at the same time.
+
+Also still browser-local, so not yet a team resource:
+- The parts **Library** lives in `localStorage` — templates don't reach anyone
+  else. Wants the same server-side treatment as the document.
+- No **cost** field, so the BOM can't total a spend (pairs with Budget, Tier 2).
 
 Also outstanding from the auth work:
 - Assign `committee` / `admin` roles to the rest of the committee, then drop
@@ -323,12 +363,14 @@ Also outstanding from the auth work:
 
 ## Suggested order
 
-1. Dashboard wins — countdown, activity feed, who's in now  *(days)*
+1. ~~Dashboard wins — countdown, activity feed, who's in now~~ ✅
+   *(apply `migrations/002` and set the real FSUK date to finish)*
 2. **Subteams** — profile field + registry tags + dashboard filter. Do it before
    Profiles so the onboarding flow is built once  *(days)*
 3. **Team Profiles** — ship for September recruitment  *(1–2 weeks)*
 4. **Teams notifications** — make everything else visible  *(days)*
-5. Finish the Wiring Harness Mapper
+5. ~~Finish the Wiring Harness Mapper~~ ✅ audited + BOM/rule-check defects fixed
+   — remaining: multiple harnesses, server-side library, cost
 6. **Build Plans** — generalise PT, land it before the design phase ends so it's
    in place *before* the March crunch that killed the last one
 7. Inventory & Orders, then Budget

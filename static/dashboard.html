@@ -19,6 +19,73 @@
 .greet-date { font-size: 0.85rem; color: var(--muted); margin-top: 3px; }
 @media (min-width: 720px) { .greet-hi { font-size: 1.9rem; } }
 
+/* ── Countdown: days to the competition ── */
+.countdown {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--ucd-navy); color: #fff;
+  border-radius: 16px; padding: 15px 18px; margin-bottom: 13px;
+  box-shadow: var(--shadow-md);
+}
+.cd-num {
+  font-size: 2.1rem; font-weight: 800; line-height: 1; flex-shrink: 0;
+  color: var(--ucd-gold); letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;   /* so it doesn't jiggle day to day */
+}
+.cd-body { flex: 1; min-width: 0; }
+.cd-main { font-size: 0.95rem; font-weight: 700; }
+.cd-sub  { font-size: 0.72rem; opacity: 0.72; margin-top: 3px; }
+.cd-tag {
+  font-size: 0.57rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.07em; padding: 2px 6px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.32); margin-left: 7px; white-space: nowrap;
+}
+.cd-next {
+  font-size: 0.72rem; margin-top: 5px; padding-top: 5px;
+  border-top: 1px solid rgba(255,255,255,0.14); opacity: 0.85;
+}
+
+/* ── Who's in the workshop right now ── */
+.nowbar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  border-radius: 14px; padding: 11px 15px;
+  /* Pulls up against the headline's 28px when shown; when hidden it is
+     display:none, so the margin collapses away and the headline keeps its gap. */
+  margin: -15px 0 28px;
+  box-shadow: var(--shadow-sm);
+}
+.now-avs { display: flex; flex-shrink: 0; }
+.now-av {
+  width: 29px; height: 29px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.58rem; font-weight: 800; color: #fff;
+  border: 2px solid var(--card); margin-left: -9px; flex-shrink: 0;
+}
+.now-av:first-child { margin-left: 0; }
+.now-more  { background: var(--muted); }
+.now-body  { flex: 1; min-width: 0; }
+.now-main  { font-size: 0.87rem; font-weight: 700; }
+.now-sub   { font-size: 0.73rem; color: var(--muted); margin-top: 2px; }
+.now-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--green); animation: livepulse 2.2s ease-in-out infinite;
+}
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── Activity feed ── */
+.feed { padding: 4px 16px; margin-bottom: 30px; }
+.feed-item {
+  display: flex; align-items: baseline; gap: 11px;
+  padding: 11px 0; border-bottom: 1px solid var(--border);
+  font-size: 0.84rem; line-height: 1.45;
+}
+.feed-item:last-child { border-bottom: none; }
+.feed-icon  { flex-shrink: 0; width: 20px; text-align: center; font-size: 0.95rem; }
+.feed-text  { flex: 1; min-width: 0; }
+.feed-actor { font-weight: 700; }
+.feed-when  { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+
 /* ── Headline strip: the one thing worth knowing right now ── */
 .headline {
   display: flex; align-items: center; gap: 13px;
@@ -131,6 +198,8 @@
       <div class="greet-date" id="greet-date"></div>
     </div>
 
+    <div class="countdown" id="countdown" style="display:none"></div>
+
     <div class="headline" id="headline">
       <div class="headline-icon">⏳</div>
       <div class="headline-body">
@@ -138,8 +207,13 @@
       </div>
     </div>
 
+    <div class="nowbar" id="nowbar" style="display:none"></div>
+
     <div class="section-label">Tools</div>
     <div class="applet-grid" id="applet-grid"></div>
+
+    <div class="section-label">Recent activity</div>
+    <div class="card feed" id="feed"></div>
 
     <div class="foot">
       UCD Formula Student · <span id="foot-count"></span>
@@ -217,6 +291,105 @@ const HAS_TILE = { attendance: 1, pt: 1, harness: 1, comp: 1 };
 let APPLETS = [];
 let TILES   = {};
 
+/* ── Countdown ──
+   Everything here comes from the season calendar at the top of main.py. */
+function renderCountdown(cd) {
+  const el = document.getElementById('countdown');
+  if (!cd) { el.style.display = 'none'; return; }
+
+  const when = new Date(cd.date + 'T00:00:00').toLocaleDateString('en-IE',
+    { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  let num, main, sub;
+  if (cd.state === 'today') {
+    num  = '🏁';
+    main = cd.name + ' is today';
+    sub  = 'Good luck.';
+  } else if (cd.state === 'past') {
+    // Not a negative countdown — a past date means the calendar needs updating.
+    num  = '—';
+    main = cd.name + ' has been and gone';
+    sub  = 'Season calendar needs updating';
+  } else {
+    num  = cd.days;
+    main = 'day' + (cd.days === 1 ? '' : 's') + ' to ' + cd.name;
+    sub  = when;
+  }
+
+  const tag  = cd.provisional && cd.state === 'future'
+    ? '<span class="cd-tag">provisional</span>' : '';
+  const next = cd.next
+    ? `<div class="cd-next">Next: ${UCDFS.esc(cd.next.label)} in
+       ${cd.next.days} day${cd.next.days === 1 ? '' : 's'}</div>` : '';
+
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="cd-num">${UCDFS.esc(num)}</div>
+    <div class="cd-body">
+      <div class="cd-main">${UCDFS.esc(main)}</div>
+      <div class="cd-sub">${UCDFS.esc(sub)}${tag}</div>
+      ${next}
+    </div>`;
+}
+
+/* ── Who's in the workshop right now ──
+   Only rendered when someone actually is; an empty workshop is not news, and
+   the headline covers "nobody has logged anything" already. */
+function renderNow(att) {
+  const el   = document.getElementById('nowbar');
+  const here = (att && att.here) || [];
+  if (!here.length) { el.style.display = 'none'; return; }
+
+  const shown = here.slice(0, 5);
+  const extra = here.length - shown.length;
+  const avs = shown.map(p =>
+      `<div class="now-av" style="background:${UCDFS.colour(p.name)}"
+            title="${UCDFS.esc(p.name)}">${UCDFS.esc(UCDFS.initials(p.name))}</div>`
+    ).join('') +
+    (extra > 0 ? `<div class="now-av now-more">+${extra}</div>` : '');
+
+  // First names only — everyone here knows everyone, and it fits on a phone.
+  const firsts = here.slice(0, 3).map(p => p.name.split(' ')[0]);
+  const rest   = here.length - firsts.length;
+  const who    = firsts.join(', ') + (rest > 0 ? ' +' + rest : '');
+
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="now-avs">${avs}</div>
+    <div class="now-body">
+      <div class="now-main">${here.length} in the workshop now</div>
+      <div class="now-sub">${UCDFS.esc(who)}${att.until ? ' · until ' + UCDFS.esc(att.until) : ''}</div>
+    </div>
+    <div class="now-dot"></div>`;
+}
+
+/* ── Activity feed ── */
+function appletIcon(id) {
+  const a = APPLETS.find(x => x.id === id);
+  return (a && a.icon) || '•';
+}
+
+function renderFeed(items) {
+  const el = document.getElementById('feed');
+  if (!items || !items.length) {
+    el.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">🌱</div>
+        <div class="empty-text">Nothing logged yet. Tick something off in a build plan.</div>
+      </div>`;
+    return;
+  }
+  el.innerHTML = items.map(i => `
+    <div class="feed-item">
+      <div class="feed-icon">${appletIcon(i.applet)}</div>
+      <div class="feed-text">
+        <span class="feed-actor">${UCDFS.esc(i.actor)}</span>
+        ${UCDFS.esc(i.verb)} ${UCDFS.esc(i.subject)}
+      </div>
+      <div class="feed-when">${UCDFS.esc(i.ago || '')}</div>
+    </div>`).join('');
+}
+
 function render() {
   document.getElementById('applet-grid').innerHTML =
     APPLETS.map(a => appletCard(a, TILES[a.id])).join('');
@@ -236,7 +409,9 @@ function renderHeadline() {
     icon = '🛒';
     main = `${comp.pending} shop request${comp.pending === 1 ? '' : 's'} still pending`;
     sub  = 'Competition Hub · waiting to be bought';
-  } else if (att && att.in > 0) {
+  } else if (att && att.in > 0 && !att.now) {
+    // Only when nobody is in *right now* — otherwise the nowbar below says it
+    // better, and the headline would be repeating itself.
     icon = '🔧';
     main = `${att.in} ${att.in === 1 ? 'person is' : 'people are'} in the workshop today`;
     sub  = att.logged > att.in
@@ -266,15 +441,19 @@ async function boot(user) {
   APPLETS = await UCDFS.applets();
   render();
 
+  let data = {};
   try {
     const r = await fetch('/api/dashboard');
-    const j = await r.json();
-    TILES = j.tiles || {};
+    data  = await r.json();
+    TILES = data.tiles || {};
   } catch (e) {
     TILES = {};
   }
   render();
   renderHeadline();
+  renderCountdown(data.countdown);
+  renderNow(TILES.attendance);
+  renderFeed(data.activity);
 }
 
 UCDFS.gate(boot);

@@ -30,6 +30,7 @@ alone.
 | `pages` | every page loads and wires up without throwing; dashboard tiles populate |
 | `login` | the sign-in screen picks the right form on any device |
 | `comp` | the shared-CSS class rename held; all four tabs render |
+| `harness` | the numbers people order parts from: nets, rule check, BOM, exports, reports |
 
 ## Regressions these exist to catch
 
@@ -42,6 +43,10 @@ Each of these was a real bug found during development, not a hypothetical:
 - **Signing in on a second device pushed you through signup.** The login screen
   guessed "new user" from a per-device localStorage name. `login` covers all five
   device states.
+- **The harness BOM ordered parts that don't fit.** DTM connectors emitted
+  Deutsch DT part numbers (different series, size-16 vs size-20 contacts), and
+  12 of 34 connector types produced no BOM lines at all — silently. `harness`
+  covers both, and asserts every type yields a line.
 - **A class rename left an unstyled page.** 187 class attributes changed when
   `comp.html` moved onto `shared.css`; a missed one renders as plain HTML that
   nothing else would flag. `static` and `comp` both check.
@@ -57,6 +62,13 @@ knowing before you add a browser test:
   returns them ready to use.
 - **Click the button, don't dispatch a `submit` event.** jsdom does not reliably
   run submit listeners for a hand-built `Event('submit')`. Use `submit(d)`.
+
+A third, specific to `harness`: the page's top-level `let DOC` / `const wmap`
+are global **lexical** bindings, not properties of `window`. Assigning
+`w.DOC = …` silently creates an unrelated property and every later assertion
+passes vacuously against the real document. Drive that page through `w.eval()`.
+And never let it save — `/harness/api/save` overwrites the team's single live
+harness; the suite stubs it and asserts the stub held.
 
 Always assert you are on the page you think you are. A test that silently ends up
 on `/login` will pass every check vacuously.

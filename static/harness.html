@@ -705,6 +705,8 @@ const TYPES=[
 ];
 const TYPE_BY_ID={}; TYPES.forEach(t=>TYPE_BY_ID[t.id]=t);
 function typeLabel(id){ const t=TYPE_BY_ID[id]; return t?t.name:(id||'Custom'); }
+// Same, tidied for a printed parts order — "Custom…" reads as a truncation.
+function typeName(id){ return typeLabel(id).replace(/…$/,'').trim(); }
 function isSingle(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.single); }
 function isJst(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.jst); }
 // Little JST connector housing glyph (decorative, scalable)
@@ -765,10 +767,13 @@ const cmap={};   // id -> connector
 const wmap={};   // id -> wire
 const bmap={};   // id -> board (PCB)
 const smap={};   // id -> splice
+const nodemap={};// id -> breakout node
+const segmap={}; // id -> segment
 const connEls={};// id -> {root, pins:[...]}
 const wireEls={};// id -> {g, casing, core, hit}
 const boardEls={};// id -> board element
 const spliceEls={};// id -> splice element
+const nodeEls={};// id -> breakout node element
 let selWire=null, selConn=null, selSplice=null;
 let applyingRemote=false;   // true while applying a change received over the websocket
 
@@ -838,44 +843,117 @@ const AWG_SPEC={
 function awgSpec(g){ return AWG_SPEC[g]||AWG_SPEC['20']; }
 
 // ── Parts library: harness-side housings + crimp contacts ────────────
+// One rule governs this section: **every connector produces at least one BOM
+// line.** A BOM that silently drops a connector is worse than one that admits a
+// gap — you find out when the box arrives with wire and nothing to crimp it
+// into. connParts() below guarantees it, and the rule check lists anything
+// still missing a number.
+//
+// Part numbers are given where the series numbering is deterministic (Deutsch,
+// JST, Micro-Fit) or the part is a single fixed reference (AMPSEAL). Where the
+// number varies by way-count in a way we cannot derive, the line still appears
+// with an empty pn, shown as PN_TBD — visible and actionable, not absent.
+//
+// `awg` on a contact is its crimp range as [thickest, thinnest] AWG. The
+// Contacts rule in runDRC() checks every landed wire against it, so adding a
+// part here extends the rule check for free.
+const PN_TBD='(specify)';
+const awgTxt=r=>r?r[0]+'-'+r[1]+' AWG':'';
+
+// Standard wire-insulation colours, for naming a swatch on a parts order.
+// "Wire 20 AWG — #1a1a1a" is not something a supplier can fill; "Black" is.
+// Nearest match in RGB, which is crude but only ever has to pick between
+// eleven well-separated colours.
+const WIRE_COLORS=[['Black',0,0,0],['White',255,255,255],['Red',226,59,59],
+  ['Blue',67,99,216],['Green',60,180,75],['Yellow',255,225,25],['Orange',245,130,49],
+  ['Brown',154,99,36],['Violet',145,30,180],['Grey',128,128,128],['Pink',250,190,212]];
+function colorName(hex){
+  const h=toHex(hex||'#000000');
+  // toHex falls back to a canvas for named colours, which not every environment
+  // provides. An unparseable colour just keeps its raw value on the BOM line.
+  if(!/^#[0-9a-f]{6}$/i.test(h||'')) return String(hex||'');
+  const r=parseInt(h.slice(1,3),16), g=parseInt(h.slice(3,5),16), b=parseInt(h.slice(5,7),16);
+  let best=WIRE_COLORS[0], bd=Infinity;
+  WIRE_COLORS.forEach(c=>{ const d=(r-c[1])**2+(g-c[2])**2+(b-c[3])**2; if(d<bd){ bd=d; best=c; } });
+  return best[0];
+}
+
 // JST harness-side (the plug that mates the PCB B*B header).
 const JST_PARTS={
-  PH:{hb:'PHR', contact:'SPH-002T-P0.5S', awg:'24-28'},
-  XH:{hb:'XHP', contact:'SXH-001T-P0.6N', awg:'22-28'},
-  SH:{hb:'SHR', hsuf:'V-S-B', pad:2, contact:'SSHL-002T-P0.2', awg:'28-32'},
-  GH:{hb:'GHR', hsuf:'V-S',   pad:2, contact:'SSHL-003T-P0.2', awg:'26-30'},
-  ZH:{hb:'ZHR', contact:'SZH-002T-P0.5', awg:'24-30'},
-  EH:{hb:'EHR', contact:'SEH-001T-P0.6', awg:'22-28'},
-  VH:{hb:'VHR', hsuf:'N', contact:'SVH-21T-P1.1', awg:'18-22'},
+  PH:{hb:'PHR', contact:'SPH-002T-P0.5S', awg:[24,28]},
+  XH:{hb:'XHP', contact:'SXH-001T-P0.6N', awg:[22,28]},
+  SH:{hb:'SHR', hsuf:'V-S-B', pad:2, contact:'SSHL-002T-P0.2', awg:[28,32]},
+  GH:{hb:'GHR', hsuf:'V-S',   pad:2, contact:'SSHL-003T-P0.2', awg:[26,30]},
+  ZH:{hb:'ZHR', contact:'SZH-002T-P0.5', awg:[24,30]},
+  EH:{hb:'EHR', contact:'SEH-001T-P0.6', awg:[22,28]},
+  VH:{hb:'VHR', hsuf:'N', contact:'SVH-21T-P1.1', awg:[18,22]},
 };
 function jstSeries(typeId){ const t=TYPE_BY_ID[typeId]; return (t&&t.jst)?t.series:null; }
 function jstHousingPN(series,pins){ const p=JST_PARTS[series]; if(!p) return ''; return p.pad?`${p.hb}-${String(pins).padStart(p.pad,'0')}${p.hsuf||''}`:`${p.hb}-${pins}${p.hsuf||''}`; }
-function jstContactPN(series){ return (JST_PARTS[series]||{}).contact||''; }
-// Deutsch DT (size-16 contacts, 14-20 AWG). Gender M = pin housing (DT04), F = socket housing (DT06).
-function dtHousingPN(pins,gender){ return (gender==='M'?'DT04-':'DT06-')+pins+(gender==='M'?'P':'S'); }
-function dtWedgePN(pins,gender){ return 'W'+pins+(gender==='M'?'P':'S'); }
-function dtContactPN(gender){ return gender==='M'?'0460-202-16141':'0462-201-16141'; }
-// Per-connector parts → [{pn,desc,per}] where per='conn' (1 each) or 'contact' (1 per populated pin)
+
+// Deutsch. DTM is NOT a DT variant — it is the smaller sibling with its own
+// housings, its own wedgelock and size-20 contacts. This used to emit DT
+// numbers for both, which orders parts that physically do not fit.
+const DEUTSCH={
+  dt: {fam:'DT',  hp:'DT04-',  hs:'DT06-',  wp:'W',   ws:'W',
+       pin:'0460-202-16141', sock:'0462-201-16141', size:16, awg:[14,20]},
+  dtm:{fam:'DTM', hp:'DTM04-', hs:'DTM06-', wp:'WM-', ws:'WM-',
+       pin:'0460-202-20141', sock:'0462-201-20141', size:20, awg:[20,24]},
+};
+function deutschFam(typeId){ typeId=typeId||'';
+  return /^dtm\d/.test(typeId)?DEUTSCH.dtm:(/^dt\d/.test(typeId)?DEUTSCH.dt:null); }
+
+/** The housing to order, or null for types that ARE a terminal (ring, stud,
+ *  butt splice) and so carry no separate housing. */
+function housingSpec(c){
+  if(c.partno) return {pn:c.partno,desc:typeLabel(c.type)+' housing (specified)'};
+  const s=jstSeries(c.type);
+  if(s) return {pn:jstHousingPN(s,c.pins),desc:`JST ${s} ${c.pins}-way housing`};
+  const d=deutschFam(c.type);
+  if(d) return {pn:(c.gender==='M'?d.hp:d.hs)+c.pins+(c.gender==='M'?'P':'S'),
+                desc:`Deutsch ${d.fam} ${c.pins}-way ${c.gender==='M'?'pin':'socket'} housing`};
+  if(c.type==='molex') return {pn:'43025-'+String(c.pins).padStart(2,'0')+'00',
+                               desc:`Molex Micro-Fit 3.0 ${c.pins}-circuit receptacle housing`};
+  if(c.type==='amphd') return {pn:'776273-1',desc:'AMPSEAL 23-way plug housing'};
+  if(/^ss\d/.test(c.type||'')) return {pn:'',desc:`TE Superseal 1.5 ${c.pins}-way housing`};
+  if(c.type==='ring'||c.type==='mxn'||c.type==='splice') return null;
+  return {pn:'',desc:`${typeName(c.type)} — ${c.pins}-way housing`};
+}
+
+/** The crimp contact for a connector: {pn,desc,awg:[lo,hi]} or null when the
+ *  type takes no separate contact. Also drives the Contacts rule check. */
+function contactSpec(c){
+  if(!c) return null;
+  const s=jstSeries(c.type);
+  if(s) return {pn:JST_PARTS[s].contact,desc:`JST ${s} crimp contact`,awg:JST_PARTS[s].awg};
+  const d=deutschFam(c.type);
+  if(d) return {pn:c.gender==='M'?d.pin:d.sock,
+                desc:`Deutsch ${d.fam} size-${d.size} ${c.gender==='M'?'pin':'socket'}`,awg:d.awg};
+  if(/^ss\d/.test(c.type||'')) return {pn:'',desc:'Superseal 1.5 contact',awg:[16,20]};
+  if(c.type==='amphd') return {pn:'770520-1',desc:'AMPSEAL contact',awg:[16,20]};
+  if(c.type==='molex') return {pn:'43030-0007',desc:'Micro-Fit 3.0 crimp terminal',awg:[20,24]};
+  if(c.type==='ring'||c.type==='mxn') return {pn:'',desc:'Ring terminal / lug — set stud size & gauge',awg:null};
+  if(c.type==='splice') return {pn:'',desc:'Butt splice / crimp joint',awg:null};
+  return null;
+}
+
+// Per-connector parts → [{pn,desc,per}] where per='conn' (1 each) or
+// 'contact' (1 per populated pin).
 function connParts(c){
-  const series=jstSeries(c.type), out=[];
-  if(c.partno) out.push({pn:c.partno,desc:'Housing (specified)',per:'conn'});
-  if(series){
-    if(!c.partno) out.push({pn:jstHousingPN(series,c.pins),desc:`JST ${series} ${c.pins}-way housing`,per:'conn'});
-    out.push({pn:jstContactPN(series),desc:`JST ${series} crimp contact (${JST_PARTS[series].awg} AWG)`,per:'contact'});
-  } else if(/^dtm?\d/.test(c.type||'')){
-    if(!c.partno) out.push({pn:dtHousingPN(c.pins,c.gender),desc:`Deutsch DT ${c.pins}-way ${c.gender==='M'?'pin':'socket'} housing`,per:'conn'});
-    out.push({pn:dtWedgePN(c.pins,c.gender),desc:'Deutsch DT wedgelock',per:'conn'});
-    out.push({pn:dtContactPN(c.gender),desc:`Deutsch size-16 ${c.gender==='M'?'pin':'socket'} (14-20 AWG)`,per:'contact'});
-  } else if(c.type==='ring'){
-    out.push({pn:'RING-TERM',desc:'Ring terminal (set gauge/stud)',per:'contact'});
-  }
+  const out=[];
+  const h=housingSpec(c); if(h) out.push({pn:h.pn,desc:h.desc,per:'conn'});
+  const d=deutschFam(c.type);
+  if(d&&!c.partno) out.push({pn:(c.gender==='M'?d.wp:d.ws)+c.pins+(c.gender==='M'?'P':'S'),
+                             desc:`Deutsch ${d.fam} wedgelock`,per:'conn'});
+  const k=contactSpec(c);
+  if(k) out.push({pn:k.pn,desc:k.desc+(k.awg?` (${awgTxt(k.awg)})`:''),per:'contact'});
+  // The guarantee. An unrecognised type still has to reach the parts order,
+  // even if only as a line telling someone to fill the number in.
+  if(!out.length) out.push({pn:'',desc:`${typeName(c.type)} — specify part number`,per:'conn'});
   return out;
 }
 // crimp terminal PN for whichever connector a wire end lands on (''=splice/none)
-function terminalPN(ep){ if(!ep||epIsSplice(ep)) return ''; const c=cmap[ep.c]; if(!c) return '';
-  const s=jstSeries(c.type); if(s) return jstContactPN(s);
-  if(/^dtm?\d/.test(c.type||'')) return dtContactPN(c.gender);
-  if(c.type==='ring') return 'ring'; return ''; }
+function terminalPN(ep){ if(!ep||epIsSplice(ep)) return ''; const k=contactSpec(cmap[ep.c]); return k?k.pn:''; }
 
 // Union-find over endpoints → logical nets. Returns array of
 // {id, eps:[ep], wires:[w], pins:[{c,p}], signals:Set, signal, current, vclass, lengthMm}
@@ -2197,6 +2275,12 @@ function updateUndoBtns(){ const u=document.getElementById('btn-undo'),r=documen
 function normalizeDoc(d){
   d=d||{};
   const ep=e=>{ if(!e) return e; return epIsSplice(e)?{s:e.s}:{c:e.c,p:e.p}; };
+  // A SEGMENT endpoint anchors to a connector body, a splice or a breakout
+  // node — never to a pin. Wires terminate at pins; the bundle they run inside
+  // does not. Keeping the two endpoint shapes separate is what stops the
+  // physical model and the electrical one from bleeding into each other.
+  const sep=e=>{ if(!e) return null; if(e.n!=null) return {n:e.n}; if(e.s!=null) return {s:e.s}; return {c:e.c}; };
+  const pts=a=>Array.isArray(a)?a.filter(p=>p&&typeof p.x==='number').map(p=>({x:p.x,y:p.y})):[];
   return {
     boards:(d.boards||[]).map(b=>({id:b.id||uid('b_'),name:b.name||'PCB',color:b.color||ACCENTS[0],x:b.x||120,y:b.y||120})),
     connectors:(d.connectors||[]).map(c=>({id:c.id||uid('c_'),name:c.name||'Connector',type:c.type||'custom',
@@ -2204,12 +2288,23 @@ function normalizeDoc(d){
       rot:(((+c.rot||0)%360)+360)%360,
       pinLabels:(c.pinLabels&&typeof c.pinLabels==='object')?c.pinLabels:null,x:c.x||100,y:c.y||100})),
     splices:(d.splices||[]).map(s=>({id:s.id||uid('sp_'),name:s.name||'',x:s.x||200,y:s.y||200,kind:s.kind||'splice'})),
+    // Physical topology. A breakout node is a bare point the bundle passes
+    // through or branches at; a segment is the run between two anchors.
+    nodes:(d.nodes||[]).map(n=>({id:n.id||uid('n_'),name:n.name||'',x:n.x||300,y:n.y||300})),
+    segments:(d.segments||[]).map(g=>({id:g.id||uid('g_'),a:sep(g.a),b:sep(g.b),
+      len:+g.len||0,name:g.name||'',sleeve:g.sleeve||'',mids:pts(g.mids)})),
     wires:(d.wires||[]).map(w=>({id:w.id||uid('w_'),from:ep(w.from),to:ep(w.to),signal:w.signal||'',
       color:w.color||'',auto:w.auto!==false,length:w.length||0,gauge:w.gauge||'20',
       current:+w.current||0,vclass:w.vclass||'',cable:w.cable||'',shield:!!w.shield,
       stripA:(w.stripA!=null?+w.stripA:null),stripB:(w.stripB!=null?+w.stripB:null),service:+w.service||0,
       mids:Array.isArray(w.mids)?w.mids.filter(p=>p&&typeof p.x==='number').map(p=>({x:p.x,y:p.y}))
-           :((w.mid&&typeof w.mid.x==='number')?[{x:w.mid.x,y:w.mid.y}]:[]),notes:w.notes||''})),
+           :((w.mid&&typeof w.mid.x==='number')?[{x:w.mid.x,y:w.mid.y}]:[]),notes:w.notes||'',
+      // The segments this wire physically runs through, in order. Empty = not
+      // routed, in which case it keeps the old point-to-point behaviour and
+      // its hand-entered length. lenManual pins a measured length even when
+      // routed — see wireLenMm().
+      route:Array.isArray(w.route)?w.route.filter(x=>typeof x==='string'):[],
+      lenManual:!!w.lenManual,label:w.label||''})),
     cables:(d.cables||[]).map(cb=>({id:cb.id||uid('cb_'),name:cb.name||'',kind:cb.kind||'twisted',shield:!!cb.shield,wires:Array.isArray(cb.wires)?cb.wires.slice():[]})),
     rules:(d.rules&&d.rules.length)?d.rules.map(r=>({pat:r.pat||'',color:r.color||'#4a7de0'})):DEFAULT_RULES.map(r=>({...r})),
     revisions:Array.isArray(d.revisions)?d.revisions.slice(-30):[],
@@ -2217,6 +2312,9 @@ function normalizeDoc(d){
     unit:d.unit||'mm',
     sysV:+d.sysV||24,
     grid:d.grid!=null?+d.grid:0,
+    show:{bundles:(d.show?d.show.bundles:true)!==false,
+          dims:(d.show?d.show.dims:true)!==false,
+          labels:!!(d.show&&d.show.labels)},
   };
 }
 function rebuildAll(){
@@ -2424,6 +2522,21 @@ function runDRC(){
       if(pct>3) issues.push({sev:pct>10?'err':'warn',cat:'Voltage drop',msg:`${n.signal||'net'}: ${vd.toFixed(2)} V drop (${pct.toFixed(1)}% of ${DOC.sysV} V)`,ref:{type:'wire',id:n.wires[0].id}}); } });
   DOC.connectors.forEach(c=>{ const cls=new Set(); DOC.wires.forEach(w=>[w.from,w.to].forEach(ep=>{ if(!epIsSplice(ep)&&ep.c===c.id&&w.vclass) cls.add(w.vclass); })); if(cls.has('HV')&&cls.has('LV')) issues.push({sev:'err',cat:'HV/LV segregation',msg:`${connFullName(c)} mixes HV and LV wires`,ref:{type:'conn',id:c.id}}); });
   DOC.splices.forEach(s=>{ const n=(pw['S'+s.id]||[]).length; if(!n) issues.push({sev:'warn',cat:'Connectivity',msg:`Splice ${s.name||''} has no wires`,ref:{type:'splice',id:s.id}}); else if(n<3) issues.push({sev:'info',cat:'Connectivity',msg:`Splice ${s.name||''} joins only ${n} wire${n>1?'s':''}`,ref:{type:'splice',id:s.id}}); });
+  // A contact has to actually crimp the wire landing in it. Ranges come from
+  // the parts library, so adding a part there extends this check for free.
+  DOC.connectors.forEach(c=>{ const k=contactSpec(c); if(!k||!k.awg) return;
+    const lo=k.awg[0], hi=k.awg[1];
+    for(let i=0;i<c.pins;i++) (pw[c.id+':'+i]||[]).forEach(w=>{ const g=+w.gauge;
+      if(g&&(g<lo||g>hi)) issues.push({sev:'warn',cat:'Contacts',
+        msg:`${connFullName(c)} pin ${i+1}: ${w.gauge} AWG is outside the ${awgTxt(k.awg)} crimp range of the ${k.desc}`,
+        ref:{type:'wire',id:w.id}}); });
+  });
+  // Counterpart to connParts() never returning an empty list: a connector whose
+  // number nobody has filled in would otherwise reach the order as "(specify)".
+  const noPN=DOC.connectors.filter(c=>connParts(c).some(p=>!p.pn));
+  if(noPN.length) issues.push({sev:'warn',cat:'Parts',
+    msg:`${noPN.length} connector${noPN.length>1?'s need':' needs'} a part number: ${noPN.slice(0,4).map(connFullName).join(', ')}${noPN.length>4?'…':''}`,
+    ref:{type:'conn',id:noPN[0].id}});
   return issues;
 }
 function drcCounts(is){ return {err:is.filter(i=>i.sev==='err').length,warn:is.filter(i=>i.sev==='warn').length,info:is.filter(i=>i.sev==='info').length}; }
@@ -2456,10 +2569,10 @@ function computeBOM(){
   const items={}, pw=pinWireMap();
   const add=(cat,pn,desc,qty,uom)=>{ const k=cat+'|'+pn+'|'+desc+'|'+(uom||'ea'); (items[k]=items[k]||{cat,pn,desc,qty:0,uom:uom||'ea'}).qty+=qty; };
   DOC.connectors.forEach(c=>{ let wired=0; for(let i=0;i<c.pins;i++) if(pw[c.id+':'+i]) wired++;
-    connParts(c).forEach(p=>{ const qty=p.per==='contact'?wired:1; if(qty>0) add('Connectors & contacts',p.pn||'(set PN)',p.desc,qty); }); });
+    connParts(c).forEach(p=>{ const qty=p.per==='contact'?wired:1; if(qty>0) add('Connectors & contacts',p.pn||PN_TBD,p.desc,qty); }); });
   const u=DOC.unit, agg={};
   DOC.wires.forEach(w=>{ const k=w.gauge+'|'+wireColor(w); (agg[k]=agg[k]||{g:w.gauge,c:wireColor(w),len:0}).len+=wireCutMm(w); });
-  Object.values(agg).forEach(a=>add('Wire',`${a.g} AWG`,`Wire ${a.g} AWG — ${a.c}`,+(a.len/UNIT_FACTOR[u]).toFixed(1),u));
+  Object.values(agg).forEach(a=>add('Wire',`${a.g} AWG`,`Wire ${a.g} AWG — ${colorName(a.c)} (${a.c})`,+(a.len/UNIT_FACTOR[u]).toFixed(1),u));
   // cable / twist groups → one line each with computed bundle OD
   const cables={}; DOC.wires.forEach(w=>{ if(w.cable){ const g=cables[w.cable]=cables[w.cable]||{cores:0,area:0,len:0,shield:false}; g.cores++; g.area+=awgSpec(w.gauge).mm2; g.len=Math.max(g.len,wireCutMm(w)); if(w.shield) g.shield=true; } });
   Object.keys(cables).forEach(name=>{ const g=cables[name]; const od=(2*Math.sqrt((g.area/Math.PI))/0.55+0.8).toFixed(1);

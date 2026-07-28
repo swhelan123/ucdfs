@@ -4,5 +4,8 @@
   "description": "Browser-side test suites for the UCDFS webapp (jsdom).",
   "dependencies": {
     "jsdom": "^24.0.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.4.0"
   }
 }

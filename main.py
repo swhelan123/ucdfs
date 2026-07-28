@@ -62,6 +62,28 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 30          # 30 days
 # Set COOKIE_SECURE=0 only for local http testing.
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
 
+# ── Season calendar ───────────────────────────────────────────────────────────
+# Hand-edited once a season. The dashboard countdown reads this and nothing
+# else, so changing the date here is the whole job.
+#
+# Times the team logs (attendance arrival/departure) are wall-clock Dublin, not
+# UTC. COMP_TZ further down is Europe/London on purpose — that one is about
+# where the competition physically is, not where we are.
+TEAM_TZ = ZoneInfo("Europe/Dublin")
+
+FSUK_NAME = "FSUK 2027"
+# PROVISIONAL. IMechE had not published the 2027 dates when this was written;
+# this follows the 2026 pattern (arrival was Tue 14 Jul 2026 — see
+# SAME_DAY_SPECIAL_DATE). Change it the day they announce. A countdown the team
+# finds out is wrong is worse than no countdown, so the dashboard says
+# "provisional" out loud until this flag flips.
+FSUK_DATE        = date(2027, 7, 13)
+FSUK_PROVISIONAL = True
+
+# (label, date) — design freeze, manufacturing deadline, first test day, …
+# Empty is fine: the countdown then just shows the competition on its own.
+SEASON_MILESTONES: list[tuple[str, date]] = []
+
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -619,6 +641,29 @@ def get_attendance_for_date(target_date: str) -> list:
     return result.data or []
 
 
+def log_activity(applet: str, actor: str, verb: str, subject: str = "") -> None:
+    """Append one line to the shared activity feed (see migrations/002).
+
+    Deliberately silent on failure. Two reasons, both load-bearing:
+      - a feed write must never fail the action it is describing;
+      - the table doesn't exist until 002 is applied by hand, and the app has to
+        keep working in the gap between deploying this and running the SQL.
+
+    Subjects are stored as text, not as a foreign key, so a line still reads
+    correctly after the thing it refers to is renamed or deleted. The feed is a
+    record of what happened, not a live view of what exists.
+    """
+    try:
+        supabase.table("activity_log").insert({
+            "applet":  applet,
+            "actor":   (actor or "Someone").strip(),
+            "verb":    verb,
+            "subject": (subject or "").strip(),
+        }).execute()
+    except Exception as e:
+        logger.debug(f"[activity] not logged ({applet}/{verb}): {e}")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -1116,11 +1161,13 @@ async def comp_requests_add(request: Request):
         raise HTTPException(400, "name and item required")
     split = [s.strip() for s in (b.get("split_with") or []) if s.strip()]
     shop_date = compute_shop_date()
+    qty = _parse_quantity(b.get("quantity"))
     supabase.table("comp_requests").insert({
         "requester": name, "item": item,
         "split_with": split, "status": "pending",
-        "shop_date": shop_date, "quantity": _parse_quantity(b.get("quantity")),
+        "shop_date": shop_date, "quantity": qty,
     }).execute()
+    log_activity("comp", name, "requested", f"{qty}× {item}" if qty > 1 else item)
     return {"ok": True, "shop_date": shop_date}
 
 
@@ -1172,6 +1219,13 @@ async def comp_requests_update(request: Request):
     if not update:
         raise HTTPException(400, "nothing to update")
     supabase.table("comp_requests").update(update).eq("id", b["id"]).execute()
+    # Only a status change is feed-worthy. Price edits and re-assignments happen
+    # repeatedly on the same request and would drown everything else out.
+    if update.get("status") == "bought":
+        row = (supabase.table("comp_requests").select("item,requester")
+               .eq("id", b["id"]).execute().data or [{}])[0]
+        log_activity("comp", update.get("bought_by") or "Someone",
+                     "bought", row.get("item") or "")
     return {"ok": True}
 
 @app.get("/comp/api/shop-cutoff")
@@ -1315,13 +1369,51 @@ def _tile(fn):
         return None
 
 
+def _hm(t) -> Optional[str]:
+    """Attendance times are wall-clock strings; Postgres hands them back as
+    '09:00:00' but the <input type=time> that wrote them sent '09:00'. Trim to
+    HH:MM so both shapes compare as plain zero-padded strings."""
+    if not t:
+        return None
+    s = str(t).strip()
+    return s[:5] if len(s) >= 5 else None
+
+
 def _attendance_tile() -> dict:
-    rows = get_attendance_for_date(date.today().isoformat())
+    now      = datetime.now(TEAM_TZ)
+    rows     = get_attendance_for_date(now.date().isoformat())
     arriving = [r for r in rows if r.get("status") == "arriving"]
+    now_hm   = now.strftime("%H:%M")
+
+    # In *now*, not merely in at some point today. Someone who logged no
+    # departure time counts as still here: we genuinely don't know when they
+    # leave, and wrongly showing a present person as gone is the worse error —
+    # the whole point of this is answering "is anyone in the workshop?".
+    here = []
+    for r in arriving:
+        arr = _hm(r.get("time"))
+        dep = _hm(r.get("departure_time"))
+        if arr and arr <= now_hm and (dep is None or now_hm < dep):
+            here.append({"name": (r.get("name") or "").strip(), "until": dep})
+    here.sort(key=lambda p: p["name"])
+
+    # The last of them out — "until 17:00" means the workshop empties then.
+    until = max([p["until"] for p in here if p["until"]], default=None)
+
+    if here:
+        detail = f"{len(here)} in now" + (f" · until {until}" if until else "")
+    elif arriving:
+        detail = f"{len(arriving)} in today"
+    else:
+        detail = "nobody logged in yet"
+
     return {
         "in":     len(arriving),
         "logged": len(rows),
-        "detail": f"{len(arriving)} in today" if arriving else "nobody logged in yet",
+        "now":    len(here),
+        "here":   here,
+        "until":  until,
+        "detail": detail,
     }
 
 
@@ -1376,10 +1468,100 @@ def _ago(ts: str) -> str:
     return "a while ago"
 
 
+def _countdown() -> dict:
+    """Days to the competition, plus the next season milestone behind it.
+
+    Reads the season calendar at the top of this file and nothing else."""
+    today = datetime.now(TEAM_TZ).date()
+    days  = (FSUK_DATE - today).days
+
+    upcoming = sorted((d, label) for label, d in SEASON_MILESTONES if d >= today)
+    nxt = None
+    if upcoming:
+        d, label = upcoming[0]
+        nxt = {"label": label, "date": d.isoformat(), "days": (d - today).days}
+
+    return {
+        "name":        FSUK_NAME,
+        "date":        FSUK_DATE.isoformat(),
+        "days":        days,
+        # A past date means the calendar above needs updating, so say so rather
+        # than counting down into negative numbers.
+        "state":       "future" if days > 0 else ("today" if days == 0 else "past"),
+        "provisional": FSUK_PROVISIONAL,
+        "next":        nxt,
+    }
+
+
+# ── Activity feed ─────────────────────────────────────────────────────────────
+# Two sources on purpose:
+#
+#   pt_done_log   the PT plan's own append-only audit log, which predates this
+#                 feed and is still what pt.html reads. It is already exactly
+#                 the right shape, so the feed adapts it rather than making the
+#                 PT plan write every tick twice.
+#   activity_log  the general table (migrations/002) that every *other* applet
+#                 writes to via log_activity().
+#
+# Merging the two means the feed has history from day one and keeps working
+# before 002 is applied. Attendance is deliberately not in here — twenty people
+# logging a day each morning would bury everything else, and "who's in now"
+# already covers it.
+def _ts_key(ts) -> float:
+    """Sort key for a feed row. Unparseable or missing timestamps sort oldest
+    rather than blowing up the whole feed."""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _pt_activity(limit: int) -> list:
+    rows = supabase.table("pt_done_log").select("node_id,done,user_name,created_at") \
+        .order("created_at", desc=True).limit(limit).execute().data or []
+    if not rows:
+        return []
+    labels = {n["id"]: n.get("label") for n in
+              (supabase.table("pt_nodes").select("id,label").execute().data or [])}
+    return [{
+        "applet":     "pt",
+        "actor":      r.get("user_name") or "Someone",
+        "verb":       "ticked off" if r.get("done") else "un-ticked",
+        # Falls back to the raw id for a node that has since been deleted.
+        "subject":    labels.get(r.get("node_id")) or r.get("node_id") or "",
+        "created_at": r.get("created_at"),
+    } for r in rows]
+
+
+def _general_activity(limit: int) -> list:
+    rows = supabase.table("activity_log").select("applet,actor,verb,subject,created_at") \
+        .order("created_at", desc=True).limit(limit).execute().data or []
+    return [dict(r) for r in rows]
+
+
+def _activity(limit: int = 8) -> list:
+    items = []
+    for source in (_pt_activity, _general_activity):
+        try:
+            items += source(limit)
+        except Exception as e:
+            # One dead source degrades to a shorter feed, never to no feed.
+            logger.info(f"[activity] {source.__name__} unavailable: {e}")
+    items.sort(key=lambda i: _ts_key(i.get("created_at")), reverse=True)
+    for i in items:
+        i["ago"] = _ago(i.get("created_at")) if i.get("created_at") else ""
+    return items[:limit]
+
+
 @app.get("/api/dashboard")
 async def api_dashboard():
     return {
-        "date":  date.today().isoformat(),
+        # Dublin, not the container's clock — which is UTC, so date.today()
+        # here would report yesterday between midnight and 1am in summer,
+        # disagreeing with the day the tiles below are actually describing.
+        "date":      datetime.now(TEAM_TZ).date().isoformat(),
+        "countdown": _tile(_countdown),
+        "activity":  _tile(_activity) or [],
         "tiles": {
             "attendance": _tile(_attendance_tile),
             "pt":         _tile(_pt_tile),

@@ -109,6 +109,53 @@ identity and grants nothing.
   time — leave them.
 - Server-side failures should degrade, not blank the page. `/api/dashboard`
   computes each tile independently so one failing table nulls one tile.
+- **Anything with a wall clock uses `TEAM_TZ`** (Europe/Dublin), not
+  `datetime.now()`. The container runs on UTC, so a naive call is an hour out
+  all summer — enough to show someone as gone while they're still in the
+  workshop. `COMP_TZ` is Europe/London and is a different thing: where the
+  competition physically is.
+
+## The activity feed
+
+The dashboard feed reads two sources, merged newest-first:
+
+- `pt_done_log` — the PT plan's own audit log, which predates the feed and is
+  still what `pt.html` reads. Already the right shape, so it's adapted rather
+  than duplicated.
+- `activity_log` — the general table (`migrations/002`) everything else writes
+  to via `log_activity(applet, actor, verb, subject)`.
+
+**New applets call `log_activity()`; they don't invent their own log.** It is
+best-effort and never raises — a feed write must not fail the action it
+describes, and the table doesn't exist until 002 is applied by hand.
+
+Subjects are stored as text captured at write time, not as a foreign key, so a
+line still reads correctly after the thing it names is renamed or deleted.
+Attendance deliberately does not write to it: twenty people logging a day each
+morning would bury everything else, and the "who's in now" bar covers it.
+
+## The harness parts library
+
+`connParts()` in `harness.html` has one invariant: **every connector returns at
+least one BOM line.** A BOM that silently omits a connector is worse than one
+that admits a gap — you find out when the box arrives with wire and nothing to
+crimp it into. When a part number can't be derived, emit the line with an empty
+`pn` (rendered `(specify)`); the Parts rule check then lists it. Never return an
+empty array, and never invent a part number to fill the hole.
+
+Contacts carry an `awg: [thickest, thinnest]` crimp range. The Contacts rule
+check reads it, so adding a part extends the rule check for free.
+
+Deutsch **DT and DTM are different series** — different housings, different
+wedgelock, size-16 vs size-20 contacts. They are separate entries in `DEUTSCH`
+for a reason; collapsing them orders parts that don't fit.
+
+## The season calendar
+
+`FSUK_DATE` / `FSUK_NAME` / `SEASON_MILESTONES` near the top of `main.py` are the
+only inputs to the dashboard countdown — changing the date there is the whole
+job. `FSUK_PROVISIONAL` makes the card say so out loud; clear it once IMechE
+publish the real dates.
 
 ## Working on this safely
 

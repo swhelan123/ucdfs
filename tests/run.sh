@@ -2,7 +2,7 @@
 # UCDFS test runner.
 #
 #   ./tests/run.sh                 everything
-#   ./tests/run.sh static          one suite (static|auth|pages|login|comp)
+#   ./tests/run.sh static          one suite (static|auth|pages|login|comp|harness)
 #   ./tests/run.sh --keep          leave the test container up afterwards
 #
 # Runs against a throwaway container on :3979 built from the working tree.
@@ -22,7 +22,7 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness)
 
 load_env
 
@@ -70,6 +70,7 @@ for suite in "${SUITES[@]}"; do
     pages)  TEST_BASE="$BASE" node "$ROOT/tests/suite-pages.js" || total_fail=$((total_fail+1)) ;;
     login)  TEST_BASE="$BASE" node "$ROOT/tests/suite-login.js" || total_fail=$((total_fail+1)) ;;
     comp)   TEST_BASE="$BASE" node "$ROOT/tests/suite-comp.js"  || total_fail=$((total_fail+1)) ;;
+    harness) TEST_BASE="$BASE" node "$ROOT/tests/suite-harness.js" || total_fail=$((total_fail+1)) ;;
     *)      echo "Unknown suite: $suite" >&2; total_fail=$((total_fail+1)) ;;
   esac
 done

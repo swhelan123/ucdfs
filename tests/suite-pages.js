@@ -5,7 +5,7 @@
  * "plans launcher" broke — the element went, its event wiring did not, and the
  * page threw on load.
  */
-const { check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp } = require('./lib');
 
 const PAGES = [
   { path: '/',           name: 'dashboard'  },
@@ -17,6 +17,9 @@ const PAGES = [
 
 (async () => {
   const { setCookies } = await signUp('Page', 'Check');
+  // Same session, as a request header — for the checks that hit the API directly
+  // rather than through a page.
+  const cookieHeader = setCookies.map(c => c.split(';')[0]).join('; ');
 
   console.log('signed-in page loads');
   for (const page of PAGES) {
@@ -51,7 +54,65 @@ const PAGES = [
       [...cards].some(c => (c.getAttribute('href') || '').startsWith('http') &&
                             c.getAttribute('target') === '_blank'));
     check('no page errors', errors.length === 0, errors.join('; '));
+
+    // ── Countdown ──
+    const cd    = d.getElementById('countdown');
+    const cdNum = cd.querySelector('.cd-num');
+    check('countdown rendered', cd.style.display !== 'none' && !!cdNum,
+      cd.textContent.replace(/\s+/g, ' ').trim());
+    check('countdown shows a real number of days',
+      !!cdNum && /^\d+$/.test(cdNum.textContent.trim()),
+      cdNum ? cdNum.textContent.trim() : '(none)');
+
+    // ── Who's in now ──
+    // Data-dependent, so assert the invariant instead of a fixed value: the
+    // nowbar and the headline must never both narrate the workshop, which is
+    // the duplication the headline's !att.now guard exists to prevent.
+    const nowbar   = d.getElementById('nowbar');
+    const nowShown = nowbar.style.display !== 'none';
+    check('nowbar consistent with its content',
+      nowShown ? /in the workshop now/.test(nowbar.textContent) : nowbar.innerHTML === '',
+      nowShown ? nowbar.textContent.replace(/\s+/g, ' ').trim() : 'hidden (nobody in)');
+    check('workshop is narrated in one place only',
+      !(nowShown && /in the workshop today/.test(d.getElementById('headline').textContent)));
+
+    // ── Activity feed ──
+    // A blank card means the fetch or the render broke; either a row or the
+    // empty state is a pass.
+    const feed = d.getElementById('feed');
+    check('feed resolved to rows or an empty state',
+      feed.querySelectorAll('.feed-item').length > 0 || !!feed.querySelector('.empty'),
+      `${feed.querySelectorAll('.feed-item').length} rows`);
     w.close();
+  }
+
+  console.log('\ndashboard API');
+  {
+    const r = await fetch(BASE + '/api/dashboard', { headers: { Cookie: cookieHeader } });
+    const j = await r.json();
+
+    const cd = j.countdown;
+    check('countdown in payload', !!cd && typeof cd.days === 'number',
+      cd ? `${cd.days} days to ${cd.name}` : '(missing)');
+    // Recompute independently — catches a wrong target date or a sign error
+    // that a "looks like a number" check would sail past. One day of slack
+    // because the server counts in Europe/Dublin and this runs in the host's
+    // timezone; the two legitimately differ for an hour around midnight.
+    const expected = Math.round(
+      (Date.parse(cd.date + 'T00:00:00Z') - Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00Z'))
+      / 86400000);
+    check('countdown arithmetic agrees', Math.abs(cd.days - expected) <= 1,
+      `${cd.days} vs ${expected}`);
+
+    const att = j.tiles.attendance;
+    check('attendance tile reports who is in now',
+      att && typeof att.now === 'number' && Array.isArray(att.here) &&
+      att.now === att.here.length && att.now <= att.in,
+      att ? `${att.now} now of ${att.in} today` : '(missing)');
+
+    check('activity feed is a list', Array.isArray(j.activity), `${(j.activity || []).length} items`);
+    const bad = (j.activity || []).filter(i => !i.actor || !i.verb || !('created_at' in i));
+    check('every feed item is complete', bad.length === 0, JSON.stringify(bad[0] || {}));
   }
 
   console.log('\nattendance behaviour');

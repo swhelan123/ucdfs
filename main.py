@@ -1,7 +1,10 @@
 import os
+import re
 import json
 import time
 import uuid
+import base64
+import binascii
 import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -40,6 +43,32 @@ if not SUPABASE_SERVICE_KEY:
 
 # Everything the backend does server-side goes through the service key.
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_KEY)
+
+# ── Uploads ───────────────────────────────────────────────────────────────────
+# Profile photos live on this server's disk, not in Supabase Storage. They are
+# small, few, and only ever read by us — a bucket would add a second storage
+# system, a second set of credentials and a second thing to back up, to hold a
+# few megabytes we already have a machine for.
+#
+# Two rules this path has to satisfy, both learned from the shape of the deploy:
+#   - it is NOT under static/. Dockerfile COPYs static/ into the image, so a
+#     photo written there is wiped by the next rebuild and, worse, served by
+#     StaticFiles to anyone who guesses the URL. Avatars go out through
+#     /media/avatars/… instead, which sits behind the auth middleware.
+#   - it is a mounted volume (see docker-compose.yml). Anything written inside
+#     the container and not mounted out dies with the container.
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
+AVATAR_DIR = os.path.join(UPLOAD_DIR, "avatars")
+try:
+    os.makedirs(AVATAR_DIR, exist_ok=True)
+except OSError as e:
+    # Non-fatal on purpose: the whole site should not fail to boot because the
+    # photo directory is unwritable. Uploads 503 and everything else works.
+    logger.warning(f"[uploads] {AVATAR_DIR} is not writable: {e} — photo upload will fail")
+
+# Photos are resized in the browser before upload (see profiles.html), so this
+# is a backstop against a crafted request, not the normal path.
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 # ── Auth config ───────────────────────────────────────────────────────────────
 # Self-signup is restricted to UCD addresses; nobody who finds the URL can join.
@@ -89,18 +118,59 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+# ── Subteams ──────────────────────────────────────────────────────────────────
+# The team's three halves-of-a-whole. One list, read by the applet registry, the
+# dashboard filter, the first-sign-in picker and the profiles directory, so the
+# names and colours can never drift between them.
+#
+# These are RELEVANCE, not permission. An Operations member must still be able
+# to open the PT plan — it just should not be the first thing they see. Anything
+# that needs actually gating uses a role (see require_role); if the two ever get
+# conflated we will lock someone out of something they need at 2am before a
+# deadline. Keep them separate.
+#
+# A person's subteam may be null ("not sure yet"), which is a supported state
+# during September recruitment and not a gap to be filled in.
+SUBTEAMS = [
+    {"id": "pt",   "name": "Powertrain", "icon": "🏎️", "accent": "teal"},
+    {"id": "mech", "name": "Mechanical", "icon": "⚙️", "accent": "green"},
+    {"id": "ops",  "name": "Operations", "icon": "📋", "accent": "purple"},
+]
+
+SUBTEAM_IDS = {s["id"] for s in SUBTEAMS}
+SUBTEAMS_BY_ID = {s["id"]: s for s in SUBTEAMS}
+
+
+def _clean_subteam(value) -> Optional[str]:
+    """A subteam id, or None. Anything unrecognised becomes None rather than an
+    error — a stale value from an old client should degrade to "not set", not
+    reject the whole save."""
+    v = (value or "").strip().lower()
+    return v if v in SUBTEAM_IDS else None
+
+
+@app.get("/api/subteams")
+async def api_subteams():
+    """The vocabulary, so no page has to hardcode the three names."""
+    return {"subteams": SUBTEAMS}
+
+
 # ── Applet registry ───────────────────────────────────────────────────────────
 # The single source of truth for what exists on the site. It generates the page
 # routes AND feeds /api/applets, which the dashboard renders. Adding an applet
 # is one entry here plus one file in static/ — the dashboard needs no edit.
 #
-#   status: "live"  — working, full brightness on the dashboard
-#           "quiet" — real but dormant (off-season); dimmed, still clickable
-#           "soon"  — placeholder card, not clickable
-#   accent: a colour token from shared.css (indigo/purple/green/amber/teal/red)
+#   status:   "live"  — working, full brightness on the dashboard
+#             "quiet" — real but dormant (off-season); dimmed, still clickable
+#             "soon"  — placeholder card, not clickable
+#   accent:   a colour token from shared.css (indigo/purple/green/amber/teal/red)
+#   subteams: who this is most relevant to — ids from SUBTEAMS above, or ["all"].
+#             Drives the dashboard filter chips and nothing else. Omitting it
+#             means "all", so an entry that forgets the field stays visible to
+#             everyone rather than quietly disappearing for most of the team.
 #
 # When auth lands, add e.g. "requires_role": "committee" here and gate in one
-# place rather than in each page.
+# place rather than in each page. That is the permission field; subteams is not.
 APPLETS = [
     {
         "id":     "attendance",
@@ -111,6 +181,18 @@ APPLETS = [
         "blurb":  "Log who's in the workshop and when",
         "accent": "indigo",
         "status": "live",
+        "subteams": ["all"],
+    },
+    {
+        "id":     "profiles",
+        "name":   "Team Profiles",
+        "icon":   "🧑‍🔧",
+        "route":  "/profiles",
+        "file":   "profiles.html",
+        "blurb":  "Who's who, and who to ask about what",
+        "accent": "red",
+        "status": "live",
+        "subteams": ["all"],
     },
     {
         "id":     "pt",
@@ -121,6 +203,7 @@ APPLETS = [
         "blurb":  "Powertrain build tasks, dependencies and progress",
         "accent": "teal",
         "status": "live",
+        "subteams": ["pt"],
     },
     {
         "id":     "harness",
@@ -131,6 +214,7 @@ APPLETS = [
         "blurb":  "Connectors, pinouts and wire runs",
         "accent": "amber",
         "status": "live",
+        "subteams": ["pt"],
     },
     {
         "id":     "comp",
@@ -141,6 +225,7 @@ APPLETS = [
         "blurb":  "Roster, shop runs and expense splitting",
         "accent": "purple",
         "status": "quiet",
+        "subteams": ["ops"],
     },
     {
         "id":     "mech",
@@ -151,6 +236,7 @@ APPLETS = [
         "accent": "green",
         "status": "live",
         "external": True,
+        "subteams": ["mech"],
     },
 ]
 
@@ -313,8 +399,15 @@ def _upsert_profile(user_id: str, first: str, last: str, email: str) -> dict:
     return {**row, "role": "member"}
 
 
-def _public_profile(profile: dict) -> dict:
-    """What the browser is allowed to know about the signed-in user."""
+def _public_profile(profile: dict, photo: Optional[str] = None) -> dict:
+    """What the browser is allowed to know about the signed-in user.
+
+    subteam and photo ride along so the dashboard can default its filter chips
+    and draw your face without a round trip — UCDFS.user() has to stay
+    synchronous. That is safe precisely because neither grants anything: they
+    are presentational, and the server never reads them back off the cookie.
+    Never put anything here that is checked.
+    """
     first = (profile.get("first_name") or "").strip()
     last  = (profile.get("last_name") or "").strip()
     return {
@@ -323,6 +416,8 @@ def _public_profile(profile: dict) -> dict:
         "name":  (first + " " + last).strip(),
         "email": profile.get("email") or "",
         "role":  profile.get("role") or "member",
+        "subteam": profile.get("subteam") or None,
+        "photo": photo,
     }
 
 
@@ -334,8 +429,29 @@ def _set_session(response: Response, tokens: dict, profile: dict):
     })
     response.set_cookie(SESSION_COOKIE, session, max_age=COOKIE_MAX_AGE,
                         httponly=True, secure=COOKIE_SECURE, samesite="lax", path="/")
-    # Readable by JS on purpose — display only, never an authorization input.
-    response.set_cookie(PROFILE_COOKIE, quote(json.dumps(_public_profile(profile))),
+    _set_profile_cookie(response, profile)
+
+
+def _set_profile_cookie(response: Response, profile: dict):
+    """Readable by JS on purpose — display only, never an authorization input.
+
+    Split out from _set_session because editing your profile changes what this
+    holds (your subteam, your photo) without touching the session. Rewriting it
+    there and then is what stops the dashboard filter defaulting to a subteam
+    you left ten seconds ago, or the header pill showing the photo you just
+    replaced.
+
+    The detail lookup costs one query, on sign-in and on save — not on every
+    request, which is the whole reason this lives in a cookie at all.
+    """
+    photo = _avatar_url(profile.get("id"), _get_details(profile.get("id") or ""))
+    # safe="" matters: the photo URL contains "/", which is NOT a legal raw
+    # cookie character, so leaving it unencoded makes Starlette wrap the whole
+    # value in double quotes. JSON.parse then reads that as a *string* rather
+    # than an object, UCDFS.user() returns null, and the browser decides you are
+    # signed out the moment you upload a photo. Encode everything.
+    response.set_cookie(PROFILE_COOKIE,
+                        quote(json.dumps(_public_profile(profile, photo)), safe=""),
                         max_age=COOKIE_MAX_AGE, httponly=False,
                         secure=COOKIE_SECURE, samesite="lax", path="/")
 
@@ -615,7 +731,590 @@ async def api_me(request: Request):
     profile = await resolve_user(request)
     if not profile:
         return JSONResponse({"detail": "Not signed in"}, status_code=401)
-    return {"profile": _public_profile(profile)}
+    photo = _avatar_url(profile.get("id"), _get_details(profile.get("id") or ""))
+    return {"profile": _public_profile(profile, photo)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Team profiles  (migrations/003)
+#
+#  A directory, not a social network. The prompts exist because free-text "write
+#  a bio" fields produce empty profiles and picking from a list produces filled
+#  ones — choosing is easier than composing. The tags exist because they are the
+#  reason to open this page in November: "who do I ask about CAN bus?".
+#
+#  Everything here degrades when 003 has not been applied yet. The page then
+#  shows accounts with no detail rather than an error, which matters because
+#  migrations are applied by hand and there is always a window.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Pick 3. Adding one here is the whole job — prompt_key is free text in the
+# database precisely so this list can change without a migration. Retiring one
+# does NOT delete anybody's answer; it just stops being offered.
+PROMPTS = [
+    {"key": "why-joined",       "label": "Why I joined UCDFS"},
+    {"key": "best-memory",      "label": "Favourite team memory"},
+    {"key": "proudest-part",    "label": "The part I'm proudest of"},
+    {"key": "worst-moment",     "label": "My worst workshop moment"},
+    {"key": "advice-first-year","label": "What I'd tell a first-year"},
+    {"key": "essential-tool",   "label": "The tool I can't work without"},
+    {"key": "dream-job",        "label": "Dream job after this"},
+    {"key": "useless-skill",    "label": "Most useless skill I have"},
+    {"key": "this-season",      "label": "What I'm working on this season"},
+    {"key": "build-night-song", "label": "Song that gets me through a build night"},
+    {"key": "ask-me-about",     "label": "Ask me about"},
+    {"key": "learned-hard-way", "label": "Something I learned the hard way"},
+    {"key": "pre-comp-ritual",  "label": "My pre-competition ritual"},
+    {"key": "if-not-fs",        "label": "What I'd be doing if I wasn't here"},
+    {"key": "best-purchase",    "label": "Best thing I've bought for the workshop"},
+]
+PROMPT_KEYS   = {p["key"] for p in PROMPTS}
+PROMPTS_BY_KEY = {p["key"]: p for p in PROMPTS}
+
+MAX_PROMPTS   = 3
+MAX_TAGS      = 8
+MAX_TAG_LEN   = 28
+MAX_ANSWER    = 280
+
+# Stored value / what it reads as. "Retired member" is here so people who have
+# graduated stay in the directory as themselves rather than as a stale 4th year
+# — they are usually the only ones who remember why a decision was made.
+# No PhD: nobody on the team is one, and an option nobody picks is just noise.
+YEARS = [
+    {"value": "1st",  "label": "1st year"},
+    {"value": "2nd",  "label": "2nd year"},
+    {"value": "3rd",  "label": "3rd year"},
+    {"value": "4th",  "label": "4th year"},
+    {"value": "5th",  "label": "5th year"},
+    {"value": "MSc",  "label": "MSc"},
+    {"value": "Alum", "label": "Retired member"},
+]
+YEAR_VALUES = {y["value"] for y in YEARS}
+YEAR_LABELS = {y["value"]: y["label"] for y in YEARS}
+
+# Deliberately NOT profiles.role. That column is a permission — 'member' |
+# 'committee' | 'admin' — and is checked by require_role. This one is what
+# someone calls themselves on their profile card and is checked by nothing. Two
+# fields because they answer two questions; merging them would mean editing your
+# own profile could grant you access.
+#
+# scope is the bit that took a second pass to get right. Captains and members
+# belong to a division; the Team Principal and Technical Director do not — they
+# sit across all three. So a team-wide role makes the division optional instead
+# of forcing someone to file themselves under a subteam they don't actually run.
+ROLES = [
+    {"value": "member",    "label": "Team member",        "scope": "division", "rank": 4},
+    {"value": "vice",      "label": "Vice captain",       "scope": "division", "rank": 3},
+    {"value": "captain",   "label": "Captain",            "scope": "division", "rank": 2},
+    {"value": "td",        "label": "Technical Director",  "scope": "team",     "rank": 1},
+    {"value": "principal", "label": "Team Principal",      "scope": "team",     "rank": 0},
+]
+ROLES_BY_VALUE = {r["value"]: r for r in ROLES}
+
+# Age is deliberately absent. Year + course already says it, and this page can
+# be opted into a public sponsor-facing view later. Easy to add if people ask.
+
+
+def _clean_tags(raw) -> list:
+    """Lowercased, trimmed, de-duplicated, capped. Case-folding is what makes
+    'CAN bus' and 'can bus' the same filter chip instead of two."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for t in raw:
+        t = " ".join(str(t or "").split()).lower()[:MAX_TAG_LEN]
+        if t and t not in out:
+            out.append(t)
+    return out[:MAX_TAGS]
+
+
+def _clean_year(raw) -> str:
+    v = (raw or "").strip()
+    return v if v in YEAR_VALUES else ""
+
+
+def _clean_role(raw) -> str:
+    v = (raw or "").strip()
+    return v if v in ROLES_BY_VALUE else ""
+
+
+def _clean_joined(raw) -> Optional[int]:
+    try:
+        y = int(raw)
+    except (TypeError, ValueError):
+        return None
+    this_year = datetime.now(TEAM_TZ).year
+    # The team predates none of us by much; anything outside this is a typo.
+    return y if 2000 <= y <= this_year + 1 else None
+
+
+def _get_details(user_id: str) -> dict:
+    try:
+        r = supabase.table("profile_details").select("*").eq("id", user_id).execute()
+        return (r.data or [{}])[0] if r.data else {}
+    except Exception as e:
+        logger.debug(f"[profiles] details unavailable (003 applied?): {e}")
+        return {}
+
+
+def _details_available() -> bool:
+    """Is migration 003 actually applied?
+
+    Everything on this page degrades when it is not, but the first-sign-in
+    prompt is the one thing that must not appear — asking someone to pick a
+    subteam and then failing to save it is worse than not asking. So the
+    dashboard checks this before showing the step at all.
+    """
+    try:
+        supabase.table("profile_details").select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def _get_prompts(user_id: str) -> list:
+    try:
+        r = (supabase.table("profile_prompts").select("*")
+             .eq("profile_id", user_id).order("position").execute())
+        return r.data or []
+    except Exception as e:
+        logger.debug(f"[profiles] prompts unavailable (003 applied?): {e}")
+        return []
+
+
+def _avatar_url(user_id: str, details: dict) -> Optional[str]:
+    """The URL, or None when there is no photo.
+
+    ?v= is not decoration: photos overwrite in place at a stable path, so
+    without the revision the browser keeps showing the one you just replaced.
+    """
+    ext = (details or {}).get("photo_ext") or ""
+    if not ext:
+        return None
+    return f"/media/avatars/{user_id}.{ext}?v={(details or {}).get('photo_rev') or 0}"
+
+
+def _person(profile: dict, details: dict, prompts: list) -> dict:
+    """One directory entry: account + details + answers, flattened for the page."""
+    first = (profile.get("first_name") or "").strip()
+    last  = (profile.get("last_name") or "").strip()
+    d = details or {}
+    role = ROLES_BY_VALUE.get(d.get("role_label") or "")
+    return {
+        "id":       profile.get("id"),
+        "first":    first,
+        "last":     last,
+        "name":     (first + " " + last).strip(),
+        "email":    profile.get("email") or "",
+        "subteam":  profile.get("subteam") or None,
+        "subteams_extra": profile.get("subteams_extra") or [],
+        "year":        d.get("year") or "",
+        # Sent alongside the raw value so no page has to know that "Alum" reads
+        # as "Retired member".
+        "year_label":  YEAR_LABELS.get(d.get("year") or "", ""),
+        "course":      d.get("course") or "",
+        "joined_year": d.get("joined_year"),
+        "role_label":  d.get("role_label") or "",
+        "role_name":   (role or {}).get("label", ""),
+        # 'team' means Team Principal / Technical Director: across all three
+        # divisions rather than in one, so their card leads with the role.
+        "role_scope":  (role or {}).get("scope", ""),
+        "role_rank":   (role or {}).get("rank", 9),
+        "tags":        d.get("tags") or [],
+        "is_public":   bool(d.get("is_public")),
+        "photo":       _avatar_url(profile.get("id"), d),
+        "prompts": [
+            {"key": p.get("prompt_key"),
+             "label": (PROMPTS_BY_KEY.get(p.get("prompt_key")) or {}).get(
+                 "label", p.get("prompt_key")),
+             "answer": p.get("answer") or ""}
+            for p in prompts if (p.get("answer") or "").strip()
+        ],
+    }
+
+
+@app.get("/api/profiles")
+async def api_profiles(request: Request):
+    """The whole directory in one request.
+
+    Sixty people with three prompts each is small enough that paginating it
+    would cost more in complexity than it saves in bytes, and the page filters
+    client-side so every chip is instant.
+    """
+    me = current_profile(request)
+
+    try:
+        rows = supabase.table("profiles").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"[profiles] roster query failed: {e}")
+        rows = []
+
+    # Two more queries rather than sixty: fetch the lot and group in memory.
+    details_by_id: dict = {}
+    prompts_by_id: dict = {}
+    try:
+        for d in (supabase.table("profile_details").select("*").execute().data or []):
+            details_by_id[d.get("id")] = d
+        for p in (supabase.table("profile_prompts").select("*")
+                  .order("position").execute().data or []):
+            prompts_by_id.setdefault(p.get("profile_id"), []).append(p)
+    except Exception as e:
+        # 003 not applied yet, most likely. Show the accounts we do have —
+        # an empty directory reads as "broken", a bare one reads as "new".
+        logger.debug(f"[profiles] detail tables unavailable: {e}")
+
+    people = [_person(r, details_by_id.get(r.get("id")) or {},
+                      prompts_by_id.get(r.get("id")) or [])
+              for r in rows]
+    # Filled profiles first so the grid looks populated on day one of
+    # recruitment rather than like a wall of blank cards; then by role, so it
+    # reads as a team — principal, technical director, captains, then everyone —
+    # rather than as an alphabetical list.
+    people.sort(key=lambda p: (0 if p["photo"] else 1,
+                               0 if p["prompts"] else 1,
+                               p["role_rank"],
+                               p["name"].lower()))
+
+    return {
+        "people":   people,
+        "me":       me.get("id"),
+        "prompts":  PROMPTS,
+        "subteams": SUBTEAMS,
+        "years":    YEARS,
+        "roles":    ROLES,
+        "limits":   {"prompts": MAX_PROMPTS, "tags": MAX_TAGS,
+                     "answer": MAX_ANSWER, "photo_bytes": MAX_AVATAR_BYTES},
+    }
+
+
+@app.post("/api/profile")
+async def api_profile_save(request: Request):
+    """Save the signed-in person's own profile.
+
+    There is no id in the body and there never should be: the row written is
+    always current_profile(request), so "edit someone else's profile" is not a
+    request this endpoint can express. Keep it that way — an id parameter here
+    would need an authorization check that nothing else in this file needs.
+    """
+    me  = current_profile(request)
+    uid = me["id"]
+    b   = await request.json()
+
+    subteam = _clean_subteam(b.get("subteam"))
+    extra   = [s for s in (_clean_subteam(x) for x in (b.get("subteams_extra") or []))
+               if s and s != subteam]
+    extra   = list(dict.fromkeys(extra))            # de-dupe, keep order
+
+    try:
+        supabase.table("profiles").update(
+            {"subteam": subteam, "subteams_extra": extra}).eq("id", uid).execute()
+    except Exception as e:
+        logger.error(f"[profiles] subteam save failed for {uid}: {e}")
+        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+
+    # Read before write, so the feed can tell "joined the directory" from the
+    # fifteenth tweak to someone's tag list. Deliberately NOT keyed on
+    # onboarded_at: the subteam picker sets that first, which would suppress the
+    # line on the one save that actually deserves it.
+    prev = _get_details(uid) or {}
+    was_blank = not (prev.get("year") or prev.get("course") or prev.get("tags"))
+
+    details = {
+        "id":          uid,
+        "year":        _clean_year(b.get("year")),
+        "course":      " ".join((b.get("course") or "").split())[:80],
+        "joined_year": _clean_joined(b.get("joined_year")),
+        "role_label":  _clean_role(b.get("role_label")),
+        "tags":        _clean_tags(b.get("tags")),
+        "is_public":   bool(b.get("is_public")),
+        "onboarded_at": datetime.now(TEAM_TZ).isoformat(),
+        "updated_at":  datetime.now(TEAM_TZ).isoformat(),
+    }
+    try:
+        supabase.table("profile_details").upsert(details).execute()
+    except Exception as e:
+        logger.error(f"[profiles] details save failed for {uid}: {e}")
+        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+
+    # Prompts are replace-all for this person: whatever they submitted is now
+    # the complete set. Simpler than diffing, and matches what the editor does.
+    answers = b.get("prompts")
+    if isinstance(answers, list):
+        rows, keys = [], []
+        for i, a in enumerate(answers[:MAX_PROMPTS]):
+            key = (a or {}).get("key")
+            ans = " ".join(((a or {}).get("answer") or "").split())[:MAX_ANSWER]
+            if key in PROMPT_KEYS and ans:
+                keys.append(key)
+                rows.append({"profile_id": uid, "prompt_key": key, "answer": ans,
+                             "position": i,
+                             "updated_at": datetime.now(TEAM_TZ).isoformat()})
+        try:
+            if rows:
+                supabase.table("profile_prompts").upsert(
+                    rows, on_conflict="profile_id,prompt_key").execute()
+            q = supabase.table("profile_prompts").delete().eq("profile_id", uid)
+            if keys:
+                # Clear the ones they removed, keep the ones they kept.
+                q = q.not_.in_("prompt_key", keys)
+            q.execute()
+        except Exception as e:
+            # The profile itself is already saved. Losing a prompt edit is worth
+            # far less than telling someone their whole save failed when it did
+            # not, so this degrades rather than raising.
+            logger.error(f"[profiles] prompt save failed for {uid}: {e}")
+
+    # Only the first time. Somebody joining the directory is news; somebody
+    # rewording their answer about the 10mm socket is not, and a feed that
+    # reports both is a feed people stop reading.
+    if was_blank and (details["year"] or details["course"] or details["tags"]):
+        log_activity("profiles", _public_profile(me).get("name"),
+                     "filled in their profile")
+
+    fresh = _get_profile(uid) or {**me, "subteam": subteam}
+    response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
+    # The subteam in the cookie drives the dashboard filter, so it has to move
+    # when the profile does.
+    _set_profile_cookie(response, fresh)
+    return response
+
+
+@app.post("/api/profile/subteam")
+async def api_profile_subteam(request: Request):
+    """The first-sign-in question, on its own.
+
+    Separate from the full save so the onboarding card can be three buttons and
+    a fetch. "Not sure yet" posts null and still marks them onboarded — the flow
+    must never block anyone, and during recruitment half of them genuinely do
+    not know yet. Without recording that we asked, they would be asked again on
+    every single page load.
+    """
+    me  = current_profile(request)
+    uid = me["id"]
+    b   = await request.json()
+    subteam = _clean_subteam(b.get("subteam"))
+
+    try:
+        supabase.table("profiles").update({"subteam": subteam}).eq("id", uid).execute()
+        supabase.table("profile_details").upsert({
+            "id": uid,
+            "onboarded_at": datetime.now(TEAM_TZ).isoformat(),
+            "updated_at":   datetime.now(TEAM_TZ).isoformat(),
+        }).execute()
+    except Exception as e:
+        logger.error(f"[profiles] subteam pick failed for {uid}: {e}")
+        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+
+    fresh = _get_profile(uid) or {**me, "subteam": subteam}
+    response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
+    _set_profile_cookie(response, fresh)
+    return response
+
+
+@app.get("/api/profile/me")
+async def api_profile_me(request: Request):
+    """Own profile plus the option lists the editor needs to render itself."""
+    me = current_profile(request)
+    uid = me["id"]
+    details = _get_details(uid)
+    return {
+        "person":    _person(me, details, _get_prompts(uid)),
+        "onboarded": bool(details.get("onboarded_at")),
+        "ready":     _details_available(),
+        "prompts":   PROMPTS,
+        "subteams":  SUBTEAMS,
+        "years":     YEARS,
+        "roles":     ROLES,
+        "limits":    {"prompts": MAX_PROMPTS, "tags": MAX_TAGS,
+                      "answer": MAX_ANSWER, "photo_bytes": MAX_AVATAR_BYTES},
+    }
+
+
+# ── Profile photos ────────────────────────────────────────────────────────────
+# Stored on this machine's disk under UPLOAD_DIR (a mounted volume), not in
+# Supabase Storage. See the Uploads block at the top of this file for why.
+
+# Sniffed from the bytes, never taken from the declared content type — the
+# client controls that string and it proves nothing about what was sent.
+_IMAGE_MAGIC = [
+    (b"\xff\xd8\xff", "jpg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+]
+
+
+def _sniff_image(raw: bytes) -> Optional[str]:
+    for magic, ext in _IMAGE_MAGIC:
+        if raw.startswith(magic):
+            return ext
+    # WebP is RIFF....WEBP — the marker is at offset 8, not 0.
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+@app.post("/api/profile/photo")
+async def api_profile_photo(request: Request):
+    """Upload your own photo.
+
+    Takes a base64 data URL in JSON rather than multipart. The browser already
+    has to draw the image to a canvas to resize it (a 4 MB phone photo per
+    person adds up fast, and there is no image library in this container to do
+    it server-side), and a canvas hands back a data URL — so this shape costs
+    one fetch and no new dependency, where multipart would need python-multipart
+    added to requirements.txt for no gain at this size.
+    """
+    me  = current_profile(request)
+    uid = me["id"]
+    b   = await request.json()
+
+    raw_url = (b.get("data") or "")
+    if "," in raw_url:
+        raw_url = raw_url.split(",", 1)[1]
+    try:
+        blob = base64.b64decode(raw_url, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "That file didn't arrive intact. Try again.")
+
+    if not blob:
+        raise HTTPException(400, "No image received.")
+    if len(blob) > MAX_AVATAR_BYTES:
+        raise HTTPException(413, "That photo is too big — under 2 MB please.")
+
+    ext = _sniff_image(blob)
+    if not ext:
+        raise HTTPException(400, "That doesn't look like a JPEG, PNG or WebP.")
+
+    details = _get_details(uid)
+    old_ext = details.get("photo_ext") or ""
+
+    try:
+        os.makedirs(AVATAR_DIR, exist_ok=True)
+        with open(os.path.join(AVATAR_DIR, f"{uid}.{ext}"), "wb") as fh:
+            fh.write(blob)
+    except OSError as e:
+        logger.error(f"[profiles] could not write avatar for {uid}: {e}")
+        raise HTTPException(503, "Couldn't save that photo. Tell Shane.")
+
+    # A re-upload in a different format would otherwise leave the old file
+    # behind, still reachable at its own URL.
+    if old_ext and old_ext != ext:
+        try:
+            os.remove(os.path.join(AVATAR_DIR, f"{uid}.{old_ext}"))
+        except OSError:
+            pass
+
+    rev = int(details.get("photo_rev") or 0) + 1
+    try:
+        supabase.table("profile_details").upsert({
+            "id": uid, "photo_ext": ext, "photo_rev": rev,
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+        }).execute()
+    except Exception as e:
+        logger.error(f"[profiles] could not record avatar for {uid}: {e}")
+        raise HTTPException(503, "Photo saved but not recorded — has 003 been applied?")
+
+    # Rewrite the cookie so the header pill and the "who's in now" bar pick the
+    # new face up on the next page load rather than the next sign-in.
+    response = JSONResponse({
+        "ok": True,
+        "photo": _avatar_url(uid, {"photo_ext": ext, "photo_rev": rev}),
+    })
+    _set_profile_cookie(response, _get_profile(uid) or me)
+    return response
+
+
+@app.post("/api/profile/photo/remove")
+async def api_profile_photo_remove(request: Request):
+    me  = current_profile(request)
+    uid = me["id"]
+    details = _get_details(uid)
+    ext = details.get("photo_ext") or ""
+
+    if ext:
+        try:
+            os.remove(os.path.join(AVATAR_DIR, f"{uid}.{ext}"))
+        except OSError:
+            pass        # already gone is the state we wanted anyway
+    try:
+        supabase.table("profile_details").upsert({
+            "id": uid, "photo_ext": "",
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+        }).execute()
+    except Exception as e:
+        logger.error(f"[profiles] could not clear avatar for {uid}: {e}")
+        raise HTTPException(503, "Couldn't remove that photo.")
+
+    response = JSONResponse({"ok": True})
+    _set_profile_cookie(response, _get_profile(uid) or me)
+    return response
+
+
+def _photo_map() -> dict:
+    """{lowercased full name: photo URL} for everyone who has one.
+
+    Keyed by name because that is what the older tables have: attendance,
+    comp_roster and comp_requests all key people by their typed-in full name,
+    which predates accounts existing. The `profile_names` view was added in 001
+    as the bridge for exactly this, and this is the same bridge for faces.
+
+    A name that matches nobody just has no photo — never an error, and never a
+    reason for a list of people to fail to render.
+    """
+    try:
+        rows = supabase.table("profiles").select("id,first_name,last_name").execute().data or []
+        details = {d.get("id"): d for d in
+                   (supabase.table("profile_details").select("id,photo_ext,photo_rev")
+                    .execute().data or [])}
+    except Exception as e:
+        logger.debug(f"[profiles] photo map unavailable: {e}")
+        return {}
+
+    out = {}
+    for r in rows:
+        url = _avatar_url(r.get("id"), details.get(r.get("id")) or {})
+        if not url:
+            continue
+        name = ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip()
+        if name:
+            out[name.lower()] = url
+    return out
+
+
+@app.get("/api/people/photos")
+async def api_people_photos():
+    """Faces for the name-keyed pages (attendance today, the nowbar).
+
+    Its own endpoint rather than a field on each of those responses: one cached
+    fetch per page load serves every list on it, and adding a face to a new list
+    later needs no server change at all.
+    """
+    return {"photos": _photo_map()}
+
+
+# Filenames are generated by this file, never by a user, so this pattern is an
+# exact description of what is legitimately in that directory rather than a
+# blocklist of what is not. A name that does not match is not a traversal
+# attempt to sanitise — it is a request for a file we did not write.
+_AVATAR_NAME = re.compile(r"^[0-9a-fA-F-]{36}\.(jpg|png|webp)$")
+
+
+@app.get("/media/avatars/{filename}")
+async def media_avatar(filename: str):
+    """Serve a profile photo.
+
+    Not under /static and not mounted through StaticFiles, which is the whole
+    point: this path goes through the auth middleware, so photos are
+    members-only by default with no extra code. When the public sponsor page
+    lands it gets its own route that checks profile_details.is_public.
+    """
+    if not _AVATAR_NAME.match(filename):
+        raise HTTPException(404, "No such photo")
+    path = os.path.join(AVATAR_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "No such photo")
+    # Immutable is safe because the URL carries ?v=<photo_rev>: a new photo is a
+    # new URL, so nothing has to expire.
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=604800"})
 
 
 # ── Supabase helpers ──────────────────────────────────────────────────────────
@@ -1389,12 +2088,15 @@ def _attendance_tile() -> dict:
     # departure time counts as still here: we genuinely don't know when they
     # leave, and wrongly showing a present person as gone is the worse error —
     # the whole point of this is answering "is anyone in the workshop?".
+    photos = _photo_map()
     here = []
     for r in arriving:
         arr = _hm(r.get("time"))
         dep = _hm(r.get("departure_time"))
         if arr and arr <= now_hm and (dep is None or now_hm < dep):
-            here.append({"name": (r.get("name") or "").strip(), "until": dep})
+            name = (r.get("name") or "").strip()
+            here.append({"name": name, "until": dep,
+                         "photo": photos.get(name.lower())})
     here.sort(key=lambda p: p["name"])
 
     # The last of them out — "until 17:00" means the workshop empties then.

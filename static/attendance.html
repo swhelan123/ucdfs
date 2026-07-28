@@ -306,6 +306,8 @@
    registry in main.py (including the Canva mech plan). */
 let selectedDate = '';
 let currentStatus = 'arriving';
+let PHOTOS   = {};   /* name -> photo URL, from UCDFS.photos() */
+let lastRows = null; /* so a late photo load can redraw what is on screen */
 let currentView   = 'list';
 const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const sleep     = ms  => new Promise(r => setTimeout(r, ms));
@@ -381,6 +383,15 @@ function showMain(user) {
   selectedDate = UCDFS.todayISO();
   buildDayPicker();
   selectDay(selectedDate);
+
+  /* Faces, once. These rows key people by the name they typed — which predates
+     accounts — so the lookup is by name, and a name nobody matches just keeps
+     its initials. Renders immediately without them and redraws when they land,
+     so a slow fetch never holds up the list. */
+  UCDFS.photos().then(map => {
+    PHOTOS = map;
+    if (lastRows) { renderAttendance(lastRows); renderTimeline(lastRows); }
+  });
 }
 
 async function loadAttendance() {
@@ -390,6 +401,7 @@ async function loadAttendance() {
   try {
     const r    = await fetch('/api/attendance?target_date=' + selectedDate);
     const data = await r.json();
+    lastRows = data.rows;
     renderAttendance(data.rows);
     renderTimeline(data.rows);
   } catch(e) {
@@ -437,7 +449,7 @@ function renderTimeline(rows) {
     const label = r.departure_time ? `${r.time} – ${r.departure_time}` : r.time;
     return `<div class="tl-row">
       <div class="tl-name-c">
-        <div class="avatar av-in" style="width:28px;height:28px;font-size:0.58rem;flex-shrink:0">${initials(r.name)}</div>
+        ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-in', 'width:28px;height:28px;font-size:0.58rem;flex-shrink:0')}
         <div class="tl-pname">${esc(r.name)}</div>
       </div>
       <div class="tl-bar-c" style="width:${TL_HOURS * COL_W}px">
@@ -487,7 +499,7 @@ function renderAttendance(rows) {
     const tl    = timesLabel(r.time, r.departure_time);
     const isMine = r.name === myName;
     html += `<div class="person">
-      <div class="avatar av-in">${initials(r.name)}</div>
+      ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-in')}
       <div class="pinfo">
         <div class="pname">${esc(r.name)}</div>
         ${tl ? `<div class="ptimes">${tl}</div>` : ''}
@@ -502,7 +514,7 @@ function renderAttendance(rows) {
   absent.forEach(r => {
     const isMine = r.name === myName;
     html += `<div class="person">
-      <div class="avatar av-out">${initials(r.name)}</div>
+      ${UCDFS.avatar(r.name, UCDFS.photoFor(PHOTOS, r.name), 'avatar av-out')}
       <div class="pinfo"><div class="pname">${esc(r.name)}</div></div>
       <span class="pbadge pbadge-out">Out</span>
       ${isMine ? `<div class="row-actions">

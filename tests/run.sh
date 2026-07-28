@@ -2,7 +2,7 @@
 # UCDFS test runner.
 #
 #   ./tests/run.sh                 everything
-#   ./tests/run.sh static          one suite (static|auth|pages|login|comp|harness)
+#   ./tests/run.sh static          one suite (static|auth|pages|login|comp|harness|profiles)
 #   ./tests/run.sh --keep          leave the test container up afterwards
 #
 # Runs against a throwaway container on :3979 built from the working tree.
@@ -22,9 +22,13 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness profiles)
 
 load_env
+
+# Stamped before anything runs, so cleanup can find exactly the rows this run
+# wrote to the shared activity feed and nothing older.
+RUN_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 needs_container=0
 for s in "${SUITES[@]}"; do [ "$s" != "static" ] && needs_container=1; done
@@ -45,6 +49,7 @@ cleanup() {
   if [ "$needs_container" = "1" ]; then
     echo
     cleanup_test_accounts
+    cleanup_activity_log "$RUN_STARTED"
     if [ "$KEEP" = "1" ]; then
       echo "  test container left running at $BASE"
     else
@@ -71,6 +76,7 @@ for suite in "${SUITES[@]}"; do
     login)  TEST_BASE="$BASE" node "$ROOT/tests/suite-login.js" || total_fail=$((total_fail+1)) ;;
     comp)   TEST_BASE="$BASE" node "$ROOT/tests/suite-comp.js"  || total_fail=$((total_fail+1)) ;;
     harness) TEST_BASE="$BASE" node "$ROOT/tests/suite-harness.js" || total_fail=$((total_fail+1)) ;;
+    profiles) TEST_BASE="$BASE" node "$ROOT/tests/suite-profiles.js" || total_fail=$((total_fail+1)) ;;
     *)      echo "Unknown suite: $suite" >&2; total_fail=$((total_fail+1)) ;;
   esac
 done

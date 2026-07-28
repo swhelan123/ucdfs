@@ -7,7 +7,13 @@
 ./tests/run.sh --keep           # leave the test container up to poke at
 ```
 
-First run does an `npm install` in `tests/` for jsdom. Nothing else to set up.
+First run does an `npm install` in `tests/` for jsdom and Puppeteer. Nothing
+else to set up.
+
+Puppeteer is there for visual work: jsdom has no layout, so anything about how
+the canvas actually *looks* (bundle casings, dimensions, label tags) has to be
+screenshotted and looked at rather than asserted. Drive it the same way
+`suite-harness.js` does — stub `/harness/api/save` first.
 
 ## How it works
 
@@ -21,6 +27,14 @@ the GoTrue admin API. Cleanup is guarded twice: the prefix filter, then a
 per-user re-check. It reports what it removed and how many real accounts it left
 alone.
 
+Feed lines are cleaned up too. `activity_log` stores the actor as text captured
+at write time — on purpose, so a line still reads correctly after the account it
+names is gone — which means deleting the test *accounts* would otherwise leave
+their lines sitting on the live dashboard, pushing real activity off the
+homepage. `cleanup_activity_log()` removes rows written **during this run** by
+the known test display names; both conditions are required. Add a name to
+`TEST_ACTORS` in `lib.sh` if you add a `signUp()` with a new one.
+
 ## The suites
 
 | suite | what it protects |
@@ -31,6 +45,7 @@ alone.
 | `login` | the sign-in screen picks the right form on any device |
 | `comp` | the shared-CSS class rename held; all four tabs render |
 | `harness` | the numbers people order parts from: nets, rule check, BOM, exports, reports |
+| `profiles` | subteam tags stay honest and never hide a tool; profile saves are self-only; photos are members-only |
 
 ## Regressions these exist to catch
 
@@ -47,6 +62,13 @@ Each of these was a real bug found during development, not a hypothetical:
   Deutsch DT part numbers (different series, size-16 vs size-20 contacts), and
   12 of 34 connector types produced no BOM lines at all — silently. `harness`
   covers both, and asserts every type yields a line.
+- **A subteam tag that names nothing.** `"subteams": ["powertrain"]` instead of
+  `["pt"]` removes an applet from every filter chip including its own, and
+  nothing errors — the card simply stops appearing. `profiles` asserts every tag
+  resolves and that every applet is reachable under some chip.
+- **A filter that hid something.** Tags are relevance, not permission. `profiles`
+  checks that an `all`-tagged tool survives every chip and that a member of one
+  subteam can still open another's applet.
 - **A class rename left an unstyled page.** 187 class attributes changed when
   `comp.html` moved onto `shared.css`; a missed one renders as plain HTML that
   nothing else would flag. `static` and `comp` both check.

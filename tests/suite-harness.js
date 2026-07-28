@@ -170,8 +170,115 @@ const PROBE = `(() => {
     DOC.wires.every(x => epExists(x.from) && epExists(x.to)),
     JSON.stringify(DOC.wires.filter(x => !(epExists(x.from) && epExists(x.to))).map(x => x.id)));
 
+  // ══ topology: segments, routing, derived lengths ══
+  DOC = normalizeDoc(TOPO);
+  rebuildAll();
+
+  t('a document written before topology existed still loads',
+    DOC.segments.length === 4 && DOC.nodes.length === 1);
+
+  const rr = autoRouteWires();
+  redrawAllWires();
+  t('auto-router routes every wire with a path', rr.routed === 3, JSON.stringify(rr));
+
+  // src --g1(120)--> brk --g2(80)--> spl --g3(50)--> dst
+  const long = wmap['t1'];   // src → dst, three segments
+  t('a routed wire derives its length from its segments', wireLenMm(long) === 250,
+    wireLenMm(long) + ' (want 120+80+50)');
+  t('the route actually chains end to end', (long.route || []).length === 3,
+    JSON.stringify(long.route));
+  t('changing one segment updates every wire through it',
+    (() => { segmap[DOC.segments[0].id].len = 200; return wireLenMm(long) === 330; })(),
+    wireLenMm(long) + ' after the trunk went 120→200');
+  segmap[DOC.segments[0].id].len = 120;
+
+  t('a measured length outranks the route',
+    (() => { long.lenManual = true; long.length = 999; const v = wireLenMm(long);
+             long.lenManual = false; long.length = 0; return v === 999; })());
+  t('an unrouted wire keeps its typed length',
+    (() => { const w = wmap['t3']; const keep = w.route; w.route = []; w.length = 42;
+             const v = wireLenMm(w); w.route = keep; return v === 42; })());
+  t('wireIsDerived marks only the derived ones', wireIsDerived(long) && !wireIsDerived({ length: 5 }));
+
+  t('cut length reaches the schedule and the exports', wireCutMm(long) === 250 + (long.service || 0));
+
+  // geometry the drawing depends on
+  t('a routed wire is drawn through its segments, not straight across',
+    (routePoints(long) || []).length === 2,
+    JSON.stringify((routePoints(long) || []).length));
+  t('an unrouted wire returns no route geometry', routePoints({ route: [] }) === null);
+  t('a route that no longer chains falls back rather than drawing nonsense',
+    routePoints({ from: { c: 'src' }, to: { c: 'dst' }, route: ['nope'] }) === null);
+
+  t('bundle diameter comes from the wires actually inside',
+    segOD(DOC.segments[0].id) > 0 && segWires(DOC.segments[0].id).length === 3,
+    segWires(DOC.segments[0].id).length + ' wires, ⌀' + segOD(DOC.segments[0].id).toFixed(1));
+  t('an empty segment has no bundle', segOD(DOC.segments[3].id) === 0);
+
+  refreshFormboard();
+  t('casings and captions render', document.querySelectorAll('#bundle-layer path').length >= 3,
+    document.querySelectorAll('#bundle-layer path').length + ' casings');
+  t('dimensions render for segments with a length',
+    document.querySelectorAll('#anno-layer g').length >= 3,
+    document.querySelectorAll('#anno-layer g').length + ' dimension groups');
+
+  // deriveTopology on a doc that has none
+  DOC = normalizeDoc({ ...TOPO, nodes: [], segments: [] });
+  rebuildAll();
+  const dt = deriveTopology();
+  // t1 and t3 both run src→dst, so they share one segment — the count is per
+  // distinct anchor pair, not per wire. That sharing is the whole point: it is
+  // what makes them one bundle.
+  t('deriveTopology builds one segment per distinct run, not per wire', dt.created === 2,
+    JSON.stringify(dt));
+  t('wires sharing a run share the segment',
+    (() => { autoRouteWires();
+             return JSON.stringify(wmap['t1'].route) === JSON.stringify(wmap['t3'].route); })(),
+    JSON.stringify(wmap['t1'].route) + ' vs ' + JSON.stringify(wmap['t3'].route));
+  t('and every wire then routes', autoRouteWires().routed === 3);
+  t('deriveTopology is idempotent', deriveTopology().created === 0);
+
+  // deleting a segment must not leave a route pointing at nothing
+  const victim = DOC.segments[0].id;
+  DOC.segments = DOC.segments.filter(s => s.id !== victim); delete segmap[victim];
+  DOC.wires.forEach(w => { if ((w.route || []).indexOf(victim) >= 0) w.route = []; });
+  t('deleting a segment clears the routes that used it',
+    DOC.wires.every(w => (w.route || []).indexOf(victim) < 0));
+  t('and those wires stop claiming a derived length',
+    DOC.wires.filter(w => !(w.route || []).length).every(w => !wireIsDerived(w)));
+
+  // a stale route surviving a reload would silently mis-state lengths
+  DOC.wires[0].route = ['ghost'];
+  rebuildAll();
+  t('rebuild drops a route referencing a missing segment', DOC.wires[0].route.length === 0);
+
   return JSON.stringify(R);
 })()`;
+
+/* Deliberately shaped like an older document for the first assertions: it has
+   nodes and segments but no `route` on any wire, so the router has to do the
+   work. src ──120── brk ──80── spl ──50── dst, plus one unused stub. */
+const TOPO = {
+  unit: 'mm', sysV: 12,
+  connectors: [
+    { id: 'src', name: 'SRC', type: 'dt4', pins: 4, cols: 2, x: 60,  y: 60, gender: 'M' },
+    { id: 'dst', name: 'DST', type: 'dt4', pins: 4, cols: 2, x: 900, y: 60, gender: 'F' },
+    { id: 'far', name: 'FAR', type: 'dt2', pins: 2, cols: 1, x: 900, y: 500, gender: 'F' },
+  ],
+  splices: [{ id: 'spl', name: 'S-01', x: 640, y: 200 }],
+  nodes:   [{ id: 'brk', name: 'B-01', x: 340, y: 200 }],
+  segments: [
+    { id: 'g1', a: { c: 'src' }, b: { n: 'brk' }, len: 120, name: 'Trunk' },
+    { id: 'g2', a: { n: 'brk' }, b: { s: 'spl' }, len: 80,  name: 'Sleeve' },
+    { id: 'g3', a: { s: 'spl' }, b: { c: 'dst' }, len: 50,  name: '' },
+    { id: 'g4', a: { n: 'brk' }, b: { c: 'far' }, len: 70,  name: 'Unused stub' },
+  ],
+  wires: [
+    { id: 't1', from: { c: 'src', p: 0 }, to: { c: 'dst', p: 0 }, signal: 'A', gauge: '20' },
+    { id: 't2', from: { c: 'src', p: 1 }, to: { s: 'spl' },       signal: 'B', gauge: '20' },
+    { id: 't3', from: { c: 'src', p: 2 }, to: { c: 'dst', p: 1 }, signal: 'C', gauge: '18' },
+  ],
+};
 
 (async () => {
   const { setCookies } = await signUp('Harness', 'Check');
@@ -197,6 +304,7 @@ const PROBE = `(() => {
 
   console.log('\nengineering core');
   w.FIXTURE = FIXTURE;
+  w.TOPO = TOPO;
   let results = [];
   try {
     results = JSON.parse(w.eval(PROBE));

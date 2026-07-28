@@ -165,11 +165,47 @@
 .tag-quiet { background: var(--amber-bg);  color: var(--amber);  border-color: var(--amber-border); }
 .ext-arrow { font-size: 0.7rem; color: var(--muted); }
 
-/* ── Footer note ── */
-.foot {
-  text-align: center; font-size: 0.72rem; color: var(--muted);
-  padding-top: 6px; line-height: 1.6;
+/* ── First sign-in: which subteam are you on? ──
+   A full-screen step rather than a field on the signup form. That screen has
+   one job and every extra field costs completions — and during September
+   recruitment half of them genuinely don't know yet, hence "Not sure yet"
+   being a first-class answer and not a skip link. */
+.ob-wrap {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(15,23,42,0.55); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 22px;
+  overflow-y: auto;
 }
+.ob-card {
+  background: var(--card); border-radius: 24px; padding: 30px 26px;
+  box-shadow: var(--shadow-lg); width: 100%; max-width: 460px; margin: auto;
+}
+.ob-h  { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; }
+.ob-p  { color: var(--muted); font-size: 0.85rem; line-height: 1.55; margin: 7px 0 20px; }
+.ob-opts { display: grid; gap: 10px; margin-bottom: 14px; }
+.ob-opt {
+  display: flex; align-items: center; gap: 13px; width: 100%;
+  padding: 15px 16px; text-align: left; cursor: pointer;
+  background: var(--card); border: 2px solid var(--border); border-radius: 16px;
+  font-family: inherit; color: var(--text);
+  transition: border-color 0.13s, transform 0.13s, box-shadow 0.13s;
+}
+.ob-opt:hover  { border-color: var(--ob-accent, var(--indigo));
+                 transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.ob-opt:active { transform: scale(0.985); }
+.ob-opt[disabled] { opacity: 0.5; cursor: default; transform: none; }
+.ob-icon {
+  width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+  background: var(--ob-accent-bg, var(--indigo-bg));
+}
+.ob-name  { font-weight: 700; font-size: 0.95rem; }
+.ob-later {
+  width: 100%; padding: 11px; background: none; border: none; font-family: inherit;
+  font-size: 0.8rem; color: var(--muted); cursor: pointer; border-radius: 10px;
+}
+.ob-later:hover { background: var(--bg); color: var(--text); }
+
 </style>
 </head>
 <body>
@@ -210,6 +246,7 @@
     <div class="nowbar" id="nowbar" style="display:none"></div>
 
     <div class="section-label">Tools</div>
+    <div class="chips" id="subteam-chips"></div>
     <div class="applet-grid" id="applet-grid"></div>
 
     <div class="section-label">Recent activity</div>
@@ -218,6 +255,17 @@
     <div class="foot">
       UCD Formula Student · <span id="foot-count"></span>
     </div>
+  </div>
+</div>
+
+<!-- First sign-in only. Hidden until the API says this person has never been
+     asked; see maybeOnboard(). -->
+<div class="ob-wrap" id="onboard" style="display:none">
+  <div class="ob-card">
+    <div class="ob-h" id="ob-h">Which subteam are you on?</div>
+    <div class="ob-p">You can change this any time.</div>
+    <div class="ob-opts" id="ob-opts"></div>
+    <button class="ob-later" id="ob-later" type="button">Not sure yet</button>
   </div>
 </div>
 
@@ -288,8 +336,58 @@ function appletCard(a, tile) {
    cards without a tile don't sit there looking like they failed to load. */
 const HAS_TILE = { attendance: 1, pt: 1, harness: 1, comp: 1 };
 
-let APPLETS = [];
-let TILES   = {};
+let APPLETS  = [];
+let TILES    = {};
+let SUBTEAMS = [];
+let FILTER   = 'all';
+
+/* ── Subteam filter ──
+   Filter, never hide. An `all`-tagged applet is shown under every chip, and
+   clearing the filter always brings everything back — nothing on this page can
+   become unreachable because of a chip. Relevance, not permission: an Ops
+   member can still open the PT plan, it just isn't the first thing they see. */
+const FILTER_KEY = 'ucdfs_dash_subteam';   /* remembered per device, not per account */
+
+function appletSubteams(a) {
+  /* A missing field means "everyone". An entry that forgets to tag itself must
+     stay visible rather than quietly vanishing for most of the team. */
+  return (a.subteams && a.subteams.length) ? a.subteams : ['all'];
+}
+
+function visibleUnder(a, filter) {
+  if (filter === 'all') return true;
+  const s = appletSubteams(a);
+  return s.indexOf('all') >= 0 || s.indexOf(filter) >= 0;
+}
+
+function setFilter(f) {
+  FILTER = f;
+  try { localStorage.setItem(FILTER_KEY, f); } catch (e) { /* private mode */ }
+  render();
+}
+
+function renderChips() {
+  const el = document.getElementById('subteam-chips');
+  /* One subteam means no meaningful choice, so don't put a decision on screen
+     that has only one answer. */
+  if (!SUBTEAMS.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const chip = (id, label, accent) => {
+    const n = APPLETS.filter(a => a.status !== 'soon' && visibleUnder(a, id)).length;
+    const style = accent ? ` style="--chip-accent:${accent}"` : '';
+    return `<button class="chip ${FILTER === id ? 'active' : ''}"${style}
+              type="button" data-filter="${UCDFS.esc(id)}">
+              ${UCDFS.esc(label)} <span class="chip-count">${n}</span>
+            </button>`;
+  };
+
+  el.innerHTML = chip('all', 'All', '') +
+    SUBTEAMS.map(s => chip(s.id, s.name, (ACCENTS[s.accent] || ACCENTS.indigo)[0])).join('');
+
+  el.querySelectorAll('.chip').forEach(b =>
+    b.addEventListener('click', () => setFilter(b.dataset.filter)));
+}
 
 /* ── Countdown ──
    Everything here comes from the season calendar at the top of main.py. */
@@ -342,10 +440,9 @@ function renderNow(att) {
 
   const shown = here.slice(0, 5);
   const extra = here.length - shown.length;
-  const avs = shown.map(p =>
-      `<div class="now-av" style="background:${UCDFS.colour(p.name)}"
-            title="${UCDFS.esc(p.name)}">${UCDFS.esc(UCDFS.initials(p.name))}</div>`
-    ).join('') +
+  /* Photos come from the tile itself — the server already looked them up by
+     name, so there is nothing extra to fetch here. */
+  const avs = shown.map(p => UCDFS.avatar(p.name, p.photo, 'now-av')).join('') +
     (extra > 0 ? `<div class="now-av now-more">+${extra}</div>` : '');
 
   // First names only — everyone here knows everyone, and it fits on a phone.
@@ -391,8 +488,14 @@ function renderFeed(items) {
 }
 
 function render() {
+  const shown = APPLETS.filter(a => visibleUnder(a, FILTER));
   document.getElementById('applet-grid').innerHTML =
-    APPLETS.map(a => appletCard(a, TILES[a.id])).join('');
+    shown.map(a => appletCard(a, TILES[a.id])).join('');
+  renderChips();
+
+  /* The count is of everything, not of what the filter is showing — it is a
+     statement about the site, and it would be alarming for it to drop when you
+     tapped a chip. */
   const live = APPLETS.filter(a => a.status !== 'soon').length;
   document.getElementById('foot-count').textContent =
     live + (live === 1 ? ' tool' : ' tools');
@@ -434,11 +537,107 @@ function renderHeadline() {
     </div>`;
 }
 
+/* ── First sign-in: subteam, then a nudge to fill in a profile ──
+   One sequence, not two. Building the subteam picker and the "finish your
+   profile" prompt as separate flows would mean asking the same person two
+   unrelated questions on two different days. */
+function closeOnboard() { document.getElementById('onboard').style.display = 'none'; }
+
+function onboardStep2(picked) {
+  const s = SUBTEAMS.find(x => x.id === picked);
+  document.getElementById('ob-h').textContent =
+    s ? `You're on ${s.name} ${s.icon}` : 'Nice one';
+  document.querySelector('.ob-p').textContent =
+    'Add a photo and pick three prompts to finish setting up your profile. ' +
+    'Takes a minute.';
+  document.getElementById('ob-opts').innerHTML =
+    '<a class="btn btn-dark btn-full" href="/profiles?edit=1">Set up my profile</a>';
+  const later = document.getElementById('ob-later');
+  later.textContent = 'Later';
+  later.onclick = closeOnboard;
+}
+
+async function pickSubteam(id, buttons) {
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    const r = await fetch('/api/profile/subteam', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subteam: id }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Save failed');
+  } catch (e) {
+    buttons.forEach(b => { b.disabled = false; });
+    UCDFS.toast(e.message || "Couldn't save that — try again");
+    return;
+  }
+  /* The server rewrote the profile cookie, so re-read it rather than trusting
+     the copy taken at page load. */
+  const fresh = UCDFS.refreshUser();
+  if (id) setFilter(id); else render();
+  if (fresh) renderGreeting(fresh);
+  onboardStep2(id);
+}
+
+async function maybeOnboard(user) {
+  /* Already answered — never ask again. Cheap enough to check before the fetch
+     that most page loads skip the request entirely. */
+  if (user.subteam) return;
+
+  let meta;
+  try {
+    const r = await fetch('/api/profile/me');
+    if (!r.ok) return;
+    meta = await r.json();
+  } catch (e) {
+    return;             /* offline, or the API is unhappy. Never block the page. */
+  }
+  /* Asking someone to pick a subteam and then failing to save it is worse than
+     not asking, so this stays quiet until 003 is applied. */
+  if (!meta.ready) return;
+  if (meta.onboarded) return;   /* they answered "not sure yet" — that counts */
+
+  const wrap = document.getElementById('onboard');
+  const opts = document.getElementById('ob-opts');
+  opts.innerHTML = (meta.subteams || []).map(s => {
+    const [accent, accentBg] = ACCENTS[s.accent] || ACCENTS.indigo;
+    return `<button class="ob-opt" type="button" data-subteam="${UCDFS.esc(s.id)}"
+              style="--ob-accent:${accent};--ob-accent-bg:${accentBg}">
+              <div class="ob-icon">${s.icon}</div>
+              <div class="ob-name">${UCDFS.esc(s.name)}</div>
+            </button>`;
+  }).join('');
+
+  const buttons = [...opts.querySelectorAll('.ob-opt'),
+                   document.getElementById('ob-later')];
+  opts.querySelectorAll('.ob-opt').forEach(b =>
+    b.addEventListener('click', () => pickSubteam(b.dataset.subteam, buttons)));
+  /* "Not sure yet" posts null and still marks them onboarded. It is an answer,
+     not a skip — half of September's intake genuinely don't know yet, and
+     asking them again tomorrow would be the annoying version of this. */
+  document.getElementById('ob-later').onclick = () => pickSubteam(null, buttons);
+
+  wrap.style.display = 'flex';
+}
+
 async function boot(user) {
   UCDFS.renderPill();
   renderGreeting(user);
 
-  APPLETS = await UCDFS.applets();
+  /* Default the filter to your own subteam, unless this device has a
+     preference — someone who deliberately switched to All meant it. */
+  let saved = null;
+  try { saved = localStorage.getItem(FILTER_KEY); } catch (e) { /* private mode */ }
+  FILTER = saved || user.subteam || 'all';
+
+  const [applets, subteams] = await Promise.all([
+    UCDFS.applets(),
+    fetch('/api/subteams').then(r => r.json()).then(j => j.subteams || []).catch(() => []),
+  ]);
+  APPLETS  = applets;
+  SUBTEAMS = subteams;
+  /* A subteam that no longer exists must not leave the grid filtered to
+     nothing — fall back to All. */
+  if (FILTER !== 'all' && !SUBTEAMS.some(s => s.id === FILTER)) FILTER = 'all';
   render();
 
   let data = {};
@@ -454,6 +653,8 @@ async function boot(user) {
   renderCountdown(data.countdown);
   renderNow(TILES.attendance);
   renderFeed(data.activity);
+
+  maybeOnboard(user);
 }
 
 UCDFS.gate(boot);

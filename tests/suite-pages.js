@@ -13,6 +13,7 @@ const PAGES = [
   { path: '/comp',       name: 'comp'       },
   { path: '/pt',         name: 'pt'         },
   { path: '/harness',    name: 'harness'    },
+  { path: '/profiles',   name: 'profiles'   },
 ];
 
 (async () => {
@@ -44,6 +45,14 @@ const PAGES = [
     const { w, d, errors } = await open('/', { setCookies, failOnPrompt: true });
     const cards = d.querySelectorAll('#applet-grid .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);
+    // The grid is filtered by the subteam chips now. A fresh test account has no
+    // subteam, so it must land on All and show everything — a default that hid
+    // most of the site from a new member would be the worst possible first
+    // impression. The filter's own behaviour is covered in suite-profiles.
+    check('a new account sees the whole grid, unfiltered',
+      cards.length === (await (await fetch(BASE + '/api/applets',
+        { headers: { Cookie: cookieHeader } })).json()).applets.length,
+      `${cards.length} cards shown`);
     check('greeting personalised', /Page/.test(d.getElementById('greet-hi').textContent),
       d.getElementById('greet-hi').textContent);
     const stats = [...d.querySelectorAll('.applet-stat')].map(e => e.textContent.trim());

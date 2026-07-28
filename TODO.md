@@ -91,8 +91,32 @@ which is the single biggest driver of repeat visits.
 
 ## Tier 1 — build these first
 
-### Team Profiles  🧑‍🔧
+### Team Profiles  🧑‍🔧 — ✅ built 2026-07-28, ship in September
 *The idea from the chat, and I think it's the right one to do first.*
+
+**Shipped:** `/profiles` — directory grid, croppable photo, year/course/joined,
+role, division badges, skill tags typed as bubbles, three prompts from a list of
+fifteen, search, and filter chips for division and tag. `migrations/003`,
+`tests/suite-profiles.js` (79 checks). Photos are on this server's disk under
+`./data/uploads`, served through `/media/avatars/…` behind the auth middleware,
+so profiles are members-only by default — and they show up in the header pill,
+the "who's in now" bar and the attendance log, not just here. `is_public` is
+stored per profile but nothing reads it yet; the sponsor page is deliberately
+deferred, see below.
+
+**Roles are the real ones:** Captain / Vice captain / Team member *per division*,
+plus **Team Principal** and **Technical Director**, which are not in a division
+at all and so hide the division picker rather than forcing a wrong answer. Year
+runs 1st–5th and MSc plus **Retired member** for alumni; there is no PhD option
+because nobody on the team is one.
+
+**Still open:**
+- The **public / sponsor page** the `is_public` toggle exists for. Separate
+  audience, separate design; not what recruitment week needs.
+- Nobody's profile is filled in yet. Worth seeding a few before September so the
+  grid doesn't look abandoned on the day 30 people first open it.
+- The prompt list has never met a real user. Expect to swap two or three out
+  after the first week — that costs one line in `PROMPTS`, no migration.
 
 Not because it's the most useful — because it's the only one with a **social**
 reason to open the site. Adoption is the thing that killed the last attempt, and
@@ -142,9 +166,17 @@ Notes:
 
 ---
 
-### Subteams — self-assignment + applet filtering  🏷️
+### Subteams — self-assignment + applet filtering  🏷️ — ✅ done 2026-07-28
 People pick **Powertrain**, **Mechanical** or **Operations**, applets get tagged
 with the same three, and the dashboard filters to what's relevant to you.
+
+**Shipped as designed below:** `SUBTEAMS` in `main.py` is the single vocabulary,
+every registry entry carries a `subteams` tag, the dashboard has filter chips
+that remember your choice per device and default to your own subteam, and the
+first-sign-in step asks the question with **Not sure yet** as a real answer.
+Picking a subteam hands straight over to "set up your profile" — one onboarding
+sequence, as intended. The suite asserts both invariants: no applet is
+unreachable under any chip, and a tag never gates a route.
 
 Worth doing early because it's cross-cutting: it feeds Team Profiles, the applet
 registry, the dashboard, Build Plans and Teams notification routing. Cheap now,
@@ -332,14 +364,45 @@ categories: **Contacts** (wire gauge vs the contact's crimp range) and
 **Parts** (connectors with no number). `tests/suite-harness.js` — 40 checks —
 pins all of it.
 
-**The real gap is that it holds exactly one harness.** `HARNESS_DOC_ID="main"`
-is hardcoded, so the team can never have an LV harness *and* an HV harness. Same
-`plan_id` generalisation as Build Plans above, and worth doing at the same time.
+**Topology model landed 2026-07-28.** The tool was wire-centric — a wire went
+pin→pin and its bezier waypoints were decoration. Professional harness tools are
+topology-centric, and that difference is what separates a drawing *of* the
+design from the design itself. Added, additively:
 
-Also still browser-local, so not yet a team resource:
-- The parts **Library** lives in `localStorage` — templates don't reach anyone
-  else. Wants the same server-side treatment as the document.
-- No **cost** field, so the BOM can't total a spend (pairs with Budget, Tier 2).
+- `nodes` (breakouts) and `segments` (runs between anchors); wires gain
+  `route: [segmentId]` and are drawn *through* their segments.
+- **Lengths are derived.** `wireLenMm()` sums the route; change a branch and
+  every wire through it updates. `lenManual` pins a measured value. This is the
+  correctness win — hand-typed lengths drift and produce wrong cut lists.
+- BFS auto-router, plus **Build topology from wires** which gives an existing
+  design a formboard in one action.
+- Bundle casings that branch, drafting dimensions with terminators, wire label
+  tags. Bundle ⌀ comes from the wires actually inside the segment.
+- Unrouted wires behave exactly as before, so old documents load unchanged.
+
+63 checks in `tests/suite-harness.js`. Puppeteer is now a tests/ dev dependency
+so this stuff can be screenshot-verified rather than guessed at.
+
+### Next on harness, in order
+
+1. **Clips, sleeving and tape at a distance along a segment.** The model now has
+   somewhere to attach them; the BOM already lists them as untargeted
+   consumables. This is the cheapest remaining win.
+2. **Connector face views** — the cavity diagram beside each connector. Half of
+   it exists in `repPinout()` already.
+3. **It still holds exactly one harness.** `HARNESS_DOC_ID="main"` is hardcoded,
+   so there can never be an LV harness *and* an HV harness. Same `plan_id`
+   generalisation as Build Plans — do both at once.
+4. **Versions out of the document.** Revisions live *inside* the doc JSON, so
+   the blob grows without bound and every save rewrites the whole history. Wants
+   an append-only `harness_version` table. (Supabase, not the homeserver — the
+   SD card is the least reliable component in the stack.)
+5. **Library is `localStorage`** — templates never reach a teammate. This is the
+   one thing Harness Hive genuinely has that we don't: a shared parts library.
+6. **No cost field**, so the BOM can't total a spend (pairs with Budget, Tier 2).
+7. **Docs viewer** — a document mode with live-embedded views of the BOM and
+   drawing. The cleverest idea in Harness Hive: the embed is the live object,
+   not a screenshot of one.
 
 Also outstanding from the auth work:
 - Assign `committee` / `admin` roles to the rest of the committee, then drop
@@ -364,11 +427,14 @@ Also outstanding from the auth work:
 ## Suggested order
 
 1. ~~Dashboard wins — countdown, activity feed, who's in now~~ ✅
-   *(apply `migrations/002` and set the real FSUK date to finish)*
-2. **Subteams** — profile field + registry tags + dashboard filter. Do it before
-   Profiles so the onboarding flow is built once  *(days)*
-3. **Team Profiles** — ship for September recruitment  *(1–2 weeks)*
+   *(set the real FSUK date to finish)*
+2. ~~**Subteams** — profile field + registry tags + dashboard filter~~ ✅
+3. ~~**Team Profiles** — ship for September recruitment~~ ✅ built; the
+   remaining work is content, not code — seed a few real profiles before
+   September so the grid isn't empty on day one
 4. **Teams notifications** — make everything else visible  *(days)*
+   *Now the highest-value thing left: profiles only pay off if people open the
+   site, and this is what makes them.*
 5. ~~Finish the Wiring Harness Mapper~~ ✅ audited + BOM/rule-check defects fixed
    — remaining: multiple harnesses, server-side library, cost
 6. **Build Plans** — generalise PT, land it before the design phase ends so it's

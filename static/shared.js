@@ -31,6 +31,7 @@
 
   var cachedUser = null;   // null = not yet read, false = read and absent
   var appletsPromise = null;
+  var photosPromise = null;
 
   // ── Identity ─────────────────────────────────────────────────────────────
 
@@ -40,7 +41,19 @@
     if (!first && !last) return null;
     var name = (first + ' ' + last).trim();
     var u = { first: first, last: last, name: name, initials: initials(name) };
-    if (extra) { u.email = extra.email || ''; u.role = extra.role || 'member'; }
+    if (extra) {
+      u.email = extra.email || '';
+      u.role  = extra.role  || 'member';
+      /* Presentational only — it defaults the dashboard filter and nothing
+         else. Null is a real value ("not sure yet"), so it stays null rather
+         than being coerced to a subteam nobody picked. An older cookie written
+         before subteams existed simply has no field, which lands in the same
+         place. */
+      u.subteam = extra.subteam || null;
+      /* Your own face, so a page can draw it without waiting on a fetch. Null
+         when you haven't uploaded one — every caller falls back to initials. */
+      u.photo = extra.photo || null;
+    }
     return u;
   }
 
@@ -48,6 +61,14 @@
     var parts = ('; ' + document.cookie).split('; ' + name + '=');
     if (parts.length !== 2) return null;
     var raw = parts.pop().split(';').shift();
+    /* A value containing a character that is not legal raw — "/" in a photo
+       URL, say — comes back wrapped in double quotes. Strip them, or JSON.parse
+       reads the payload as a string and identity silently vanishes. The server
+       encodes to avoid this; this is the belt to that pair of braces, and it
+       also rescues any cookie issued before that fix. */
+    if (raw.length > 1 && raw.charAt(0) === '"' && raw.charAt(raw.length - 1) === '"') {
+      raw = raw.slice(1, -1);
+    }
     try { return decodeURIComponent(raw); } catch (e) { return raw; }
   }
 
@@ -64,6 +85,19 @@
   function user() {
     if (cachedUser === null) cachedUser = readProfile() || false;
     return cachedUser || null;
+  }
+
+  /**
+   * Re-read the profile cookie, discarding the cache.
+   *
+   * Needed because the server rewrites that cookie when you edit your own
+   * profile — picking a subteam, say. Without this, user() keeps handing back
+   * the version from page load and the dashboard filter defaults to the subteam
+   * you just left.
+   */
+  function refreshUser() {
+    cachedUser = null;
+    return user();
   }
 
   /**
@@ -166,8 +200,56 @@
     if (!u) return;
     var av = document.getElementById('pill-avatar');
     var nm = document.getElementById('pill-name');
-    if (av) av.textContent = u.initials;
+    if (av) {
+      if (u.photo) {
+        /* Set as a background rather than an <img> so the one element works
+           either way and nothing reflows when a photo is added or removed. */
+        av.textContent = '';
+        av.style.backgroundImage = 'url("' + u.photo + '")';
+        av.className = 'pill-avatar pill-avatar-photo';
+      } else {
+        av.textContent = u.initials;
+        av.style.backgroundImage = '';
+        av.className = 'pill-avatar';
+      }
+    }
     if (nm) nm.textContent = u.name;
+  }
+
+  /**
+   * {lowercased full name: photo URL} for the whole team, fetched once.
+   *
+   * The name-keyed pages (attendance, the nowbar) predate accounts, so a face
+   * has to be looked up by the name that was typed. Cached like applets() —
+   * every list on a page shares one request.
+   */
+  function photos() {
+    if (!photosPromise) {
+      photosPromise = fetch('/api/people/photos')
+        .then(function (r) { return r.json(); })
+        .then(function (j) { return j.photos || {}; })
+        .catch(function () { photosPromise = null; return {}; });
+    }
+    return photosPromise;
+  }
+
+  /** The photo for a name, or null. Takes the map from photos(). */
+  function photoFor(map, name) {
+    return (map && map[String(name || '').trim().toLowerCase()]) || null;
+  }
+
+  /**
+   * One avatar, as a photo when there is one and initials when there isn't.
+   * `cls` is the caller's own avatar class, so each page keeps its own sizing.
+   */
+  function avatar(name, photo, cls, style) {
+    var extra = style ? ';' + style : '';
+    if (photo) {
+      return '<div class="' + cls + ' has-photo" style="background-image:url(\'' +
+             esc(photo) + '\')' + extra + '" title="' + esc(name) + '"></div>';
+    }
+    return '<div class="' + cls + '" style="background:' + colour(name) + extra +
+           '" title="' + esc(name) + '">' + esc(initials(name)) + '</div>';
   }
 
   // ── Applet registry ──────────────────────────────────────────────────────
@@ -207,12 +289,16 @@
 
   window.UCDFS = {
     user: user,
+    refreshUser: refreshUser,
     legacyName: legacyName,
     signOut: signOut,
     gate: gate,
     requireName: requireName,
     renderPill: renderPill,
     applets: applets,
+    photos: photos,
+    photoFor: photoFor,
+    avatar: avatar,
     initials: initials,
     hue: hue,
     colour: colour,

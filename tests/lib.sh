@@ -110,6 +110,46 @@ print(f"  cleanup: removed {removed} test account(s), {kept} real account(s) unt
 PY
 }
 
+# Display names the suites sign up as. activity_log stores the actor as text
+# captured at write time — deliberately, so a feed line still reads correctly
+# after the thing it names is gone — which means deleting the test *accounts*
+# leaves their feed lines behind on the live dashboard. Without this, every run
+# pushes real activity further down the homepage.
+#
+# Keep in step with the signUp() calls in the suites.
+TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Page Check,Comp Check,Harness Check,Test Bot'
+
+# Remove feed lines written during THIS run by those names. Guarded on both:
+# a name on its own could in principle belong to a real member, and a time
+# window on its own would take out real activity.
+cleanup_activity_log() {
+  local since="${1:-}"
+  [ -z "$since" ] && return 0
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_ACTORS" "$since" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, actors, since = sys.argv[1], sys.argv[2], sys.argv[3].split(','), sys.argv[4]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+
+# Names contain spaces, so the in-list has to be percent-encoded. " and , are
+# PostgREST syntax here, not data, and stay literal.
+inlist = ",".join('"' + a.replace('"', '') + '"' for a in actors)
+q = ("/rest/v1/activity_log?actor=in.(" + urllib.parse.quote(inlist, safe='",') + ")" +
+     "&created_at=gte." + urllib.parse.quote(since))
+
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test feed line(s)")
+except Exception as e:
+    # The table may not exist yet (002 unapplied). Never fail a run over tidying.
+    print(f"  cleanup: could not tidy the activity feed ({e})")
+PY
+}
+
 summary() { # summary <suite-name>
   echo
   if [ "$fail" -eq 0 ]; then

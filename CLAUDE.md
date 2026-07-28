@@ -29,6 +29,7 @@ static/
   login.html          the sign-in screen
   attendance.html     card-based applet
   comp.html           card-based applet
+  profiles.html       card-based applet — the team directory
   pt.html             full-screen canvas tool
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
@@ -59,14 +60,17 @@ the dashboard to add a tool.**
 ```python
 {"id": "inventory", "name": "Inventory", "icon": "📦",
  "route": "/inventory", "file": "inventory.html",
- "blurb": "…", "accent": "teal", "status": "live"}
+ "blurb": "…", "accent": "teal", "status": "live",
+ "subteams": ["mech"]}
 ```
 
 - `status`: `live` | `quiet` (dimmed, off-season) | `soon` (placeholder, not clickable)
 - `accent`: a colour token from `shared.css`
 - `external: True` with a URL in `route` for off-site links (e.g. the Canva mech plan)
+- `subteams`: ids from `SUBTEAMS`, or `["all"]`. Drives the dashboard filter
+  chips and nothing else — see "Subteams" below. Omitting it means everyone.
 
-Current ids: `attendance`, `pt`, `harness`, `comp`, `mech`.
+Current ids: `attendance`, `profiles`, `pt`, `harness`, `comp`, `mech`.
 
 ## Auth and data access
 
@@ -133,6 +137,123 @@ Subjects are stored as text captured at write time, not as a foreign key, so a
 line still reads correctly after the thing it names is renamed or deleted.
 Attendance deliberately does not write to it: twenty people logging a day each
 morning would bury everything else, and the "who's in now" bar covers it.
+
+## Subteams
+
+`SUBTEAMS` in `main.py` (Powertrain / Mechanical / Operations) is the vocabulary
+for the whole site: the registry's `subteams` tags, the dashboard filter chips,
+the first-sign-in picker and the profiles directory all read it, so the names and
+colours cannot drift apart.
+
+Two rules, both load-bearing:
+
+- **Tags are relevance; roles are permission.** `subteams` is soft, cosmetic and
+  user-facing. `requires_role` (still to be added) is server-enforced. An
+  Operations member must still be able to open the PT plan — it just isn't the
+  first thing they see. Conflating them locks someone out of something they need
+  at 2am before a deadline. `tests/suite-profiles.js` asserts this.
+- **Filter, never hide.** `all`-tagged applets show under every chip, clearing
+  the filter always restores everything, and an applet with no `subteams` field
+  defaults to visible rather than vanishing. A filter that permanently hides
+  something is worse than no filter.
+
+A person's subteam may be **null** — "not sure yet" is a real answer during
+September recruitment, not a gap. `profile_details.onboarded_at` records that we
+asked, so nobody is asked twice. The subteam rides in the profile cookie purely
+so `UCDFS.user()` can stay synchronous; like everything else in that cookie it
+is never an authorization input.
+
+## Team profiles
+
+The directory (`migrations/003`): `profile_details` extends `profiles` 1:1, and
+`profile_prompts` holds up to three answers each. `profiles` is loaded by the
+auth middleware on *every* request, which is why the detail columns live in their
+own table rather than widening the hot row.
+
+- **Prompts are picked, not written.** Free-text "write a bio" fields produce
+  empty profiles. `PROMPTS` in `main.py` is free text in the database on purpose:
+  adding one is a one-line change with no migration, and retiring one never
+  deletes anybody's answer.
+- **Tags are the reason it still matters in November.** Lowercased and
+  de-duplicated on write, or "CAN bus" and "can bus" become two chips for one
+  skill and the directory stops being searchable.
+- `profile_details.role_label` is **not** `profiles.role`. One is what you call
+  yourself, the other is a permission. Merging them would mean editing your own
+  profile could grant you access.
+- **Roles carry a `scope`.** Captain / Vice captain / Team member belong to a
+  division; **Team Principal and Technical Director do not** — they sit across
+  all three, so a team-wide role hides the division picker entirely and their
+  card leads with the role rather than a subteam badge. `role_rank` orders the
+  directory so it reads as a team rather than an alphabet.
+- `YEARS` carries `value` + `label`, and the API sends `year_label` alongside
+  `year` so no page has to know that `Alum` reads as "Retired member". There is
+  no PhD option — nobody on the team is one.
+- `POST /api/profile` takes **no id** and writes only the caller's row. Keep it
+  that way — an id parameter would need an authorization check nothing else in
+  the file needs.
+
+### Photos are on this machine's disk
+
+Not Supabase Storage. They live under `UPLOAD_DIR` (`/app/uploads`), which
+`docker-compose.yml` mounts from `./data/uploads` — **the mount is required**,
+since the image is rebuilt in place and anything unmounted dies with the
+container.
+
+Deliberately **not** under `static/`: the Dockerfile copies that directory into
+the image, so photos there would be wiped on deploy *and* served by `StaticFiles`
+to anyone with the URL. They go out through `GET /media/avatars/{file}`, which
+sits behind the auth middleware — that is what makes profiles members-only for
+free. The public sponsor page, when it lands, gets its own route that checks
+`is_public`.
+
+You crop before uploading: a square canvas you drag and zoom, rendered to 512px
+and posted as a base64 data URL in JSON. Doing it client-side is what avoids both
+an image library in the container and `python-multipart` in requirements for a
+40 KB payload. The stored type is sniffed from the bytes, never from the declared
+content type. URLs carry `?v=photo_rev` because photos overwrite in place —
+without it the browser keeps showing the old one.
+
+**The photo URL is in the profile cookie, and that cookie must stay
+percent-encoded** (`quote(..., safe="")`). A `/` is not a legal raw cookie
+character, so leaving it unencoded makes Starlette wrap the whole value in
+quotes; `JSON.parse` then reads it as a string, `UCDFS.user()` returns null, and
+every page decides you are signed out the moment you upload a photo. `readCookie`
+in `shared.js` strips surrounding quotes as a second line of defence, and
+`suite-profiles` asserts both.
+
+Faces reach three places, by two different routes. Your own comes from the
+cookie, so `renderPill()` stays synchronous. Everyone else's comes from
+`GET /api/people/photos`, a name-keyed map — attendance and the nowbar identify
+people by the name they typed, which predates accounts, and `UCDFS.avatar()`
+falls back to initials for any name it can't match.
+
+## The harness topology model
+
+`harness.html` holds two models, and keeping them apart is load-bearing:
+
+- **Electrical** — wires between *pins*. What is connected to what.
+- **Physical** — `nodes` and `segments`. What runs where. A wire gains
+  `route: [segmentId]` and then travels *through* segments instead of flying
+  point-to-point.
+
+**A routed wire's length is derived**: `wireLenMm()` sums its segments, so
+changing one branch updates every wire through it. Read length through that
+accessor, never `w.length` directly — the raw field is only the manual override,
+pinned by `w.lenManual` when someone types a measured value. Hand-typed lengths
+drift the moment routing changes, and that is the usual cause of a wrong cut list.
+
+Segment endpoints anchor to a connector *body*, a splice or a breakout node —
+never a pin. A **breakout node is not a splice**: nothing is electrically joined
+there, the run just divides. Conflating them invents phantom nets.
+
+Everything else falls out of the segment graph: bundle diameter from the wires
+actually inside it, dimensions annotating a real length, and (next) clips at a
+distance along a run.
+
+Unrouted wires keep the old point-to-point behaviour exactly, so documents saved
+before any of this load unchanged. If you change routing, call `redrawAllWires()`
+— `refreshFormboard()` alone redraws the casings but leaves the wires where they
+were.
 
 ## The harness parts library
 

@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Profiles · UCDFS</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Profiles-only styles. Cards, chips, buttons and the toast come from
+   shared.css — see the top of that file for the split. */
+:root { --page-max: 1000px; }
+
+/* ── Head of the page ── */
+.dir-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+.dir-title { flex: 1; min-width: 0; }
+.dir-h  { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+.dir-p  { font-size: 0.83rem; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+.search-box { margin-bottom: 14px; }
+
+/* ── The grid ── */
+.dir-grid { display: grid; gap: 13px; grid-template-columns: 1fr; margin-bottom: 24px; }
+@media (min-width: 560px) { .dir-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 860px) { .dir-grid { grid-template-columns: 1fr 1fr 1fr; } }
+
+.person {
+  background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+  padding: 17px; box-shadow: var(--shadow-sm); cursor: pointer;
+  text-align: left; font-family: inherit; color: var(--text); width: 100%;
+  display: flex; flex-direction: column; gap: 11px;
+  transition: transform 0.14s cubic-bezier(0.34,1.56,0.64,1),
+              box-shadow 0.14s, border-color 0.14s;
+}
+.person:hover  { transform: translateY(-3px); box-shadow: var(--shadow-lg);
+                 border-color: var(--p-accent, var(--indigo)); }
+.person:active { transform: scale(0.985); transition-duration: 0.05s; }
+/* Someone who has signed up but filled nothing in. Dimmed rather than hidden:
+   they are on the team, and a missing profile is a nudge, not a secret. */
+.person.bare   { opacity: 0.66; border-style: dashed; box-shadow: none; }
+.person.bare:hover { opacity: 1; }
+.person.me { border-color: var(--p-accent, var(--indigo)); }
+
+.p-top  { display: flex; align-items: center; gap: 12px; }
+.p-face { width: 54px; height: 54px; border-radius: 50%; flex-shrink: 0;
+          object-fit: cover; background: var(--bg); display: block; }
+.p-init {
+  width: 54px; height: 54px; border-radius: 50%; flex-shrink: 0; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: 0.02em;
+}
+.p-id   { flex: 1; min-width: 0; }
+.p-name { font-weight: 700; font-size: 0.98rem; display: flex; align-items: center;
+          gap: 6px; flex-wrap: wrap; }
+.p-meta { font-size: 0.76rem; color: var(--muted); margin-top: 3px; line-height: 1.4;
+          overflow: hidden; text-overflow: ellipsis; }
+
+/* Subteam badge. Colour comes from the registry accent, set inline per card. */
+.p-team {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
+  background: var(--p-accent-bg, var(--indigo-bg)); color: var(--p-accent, var(--indigo));
+  white-space: nowrap;
+}
+.p-you {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
+  background: var(--dark); color: #fff;
+}
+/* Team Principal / Technical Director — across all three divisions, so they get
+   the team's own colours rather than a division's. */
+.p-lead {
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
+  background: var(--ucd-navy); color: var(--ucd-gold); white-space: nowrap;
+}
+
+.p-quote { font-size: 0.8rem; line-height: 1.5; }
+.p-qlabel { font-size: 0.66rem; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 0.07em; color: var(--muted); margin-bottom: 3px; }
+.p-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 2px; }
+.p-tag {
+  font-size: 0.68rem; font-weight: 600; padding: 3px 8px; border-radius: 7px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+}
+.p-empty { font-size: 0.78rem; color: var(--muted); font-style: italic; }
+
+/* ── Sheets: the editor and the single-person view ── */
+.sheet {
+  position: fixed; inset: 0; z-index: 70; background: rgba(15,23,42,0.55);
+  backdrop-filter: blur(3px); display: flex; align-items: flex-start;
+  justify-content: center; padding: 20px; overflow-y: auto;
+}
+.sheet-card {
+  background: var(--card); border-radius: 22px; box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 520px; margin: auto; padding: 24px 22px 22px;
+}
+.sheet-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.sheet-h { flex: 1; font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em; }
+.sheet-x {
+  width: 32px; height: 32px; border-radius: 9px; border: none; background: var(--bg);
+  color: var(--muted); font-size: 1rem; cursor: pointer; font-family: inherit;
+  flex-shrink: 0;
+}
+.sheet-x:hover { background: var(--border); color: var(--text); }
+
+/* ── Editor form ── */
+.field { margin-bottom: 15px; }
+.field-row { display: flex; gap: 10px; }
+.field-row .field { flex: 1; }
+.field-hint { font-size: 0.72rem; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+.select-input {
+  width: 100%; padding: 12px 13px; font-size: 0.9rem; font-family: inherit;
+  border: 2px solid var(--border); border-radius: 13px; background: var(--card);
+  color: var(--text); outline: none;
+}
+.select-input:focus { border-color: var(--indigo); }
+.area-input {
+  width: 100%; padding: 12px 13px; font-size: 0.9rem; font-family: inherit;
+  border: 2px solid var(--border); border-radius: 13px; background: var(--card);
+  color: var(--text); outline: none; resize: vertical; min-height: 66px;
+  line-height: 1.5;
+}
+.area-input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+
+/* Photo picker */
+.photo-row { display: flex; align-items: center; gap: 15px; }
+.photo-prev { width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
+              background: var(--bg); flex-shrink: 0; display: block; }
+.photo-init {
+  width: 76px; height: 76px; border-radius: 50%; flex-shrink: 0; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; font-weight: 800;
+}
+.photo-acts { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.file-hidden { display: none; }
+
+/* ── Crop ──
+   Square, because every place a face is shown is a circle. Panning is on the
+   canvas itself rather than on a draggable frame — you move the photo under a
+   fixed hole, which is what every phone does. */
+.crop-stage {
+  position: relative; width: 100%; max-width: 300px; margin: 0 auto 16px;
+  aspect-ratio: 1; border-radius: 50%; overflow: hidden;
+  background: var(--bg); box-shadow: var(--shadow-md); touch-action: none;
+  cursor: grab;
+}
+.crop-stage:active { cursor: grabbing; }
+.crop-canvas { display: block; width: 100%; height: 100%; }
+.crop-zoom { width: 100%; margin-bottom: 6px; accent-color: var(--indigo); }
+.crop-hint { font-size: 0.75rem; color: var(--muted); text-align: center;
+             margin-bottom: 16px; }
+
+/* Subteam picker inside the editor */
+.pick-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pick {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 13px;
+  border-radius: 13px; border: 2px solid var(--border); background: var(--card);
+  font-family: inherit; font-size: 0.85rem; font-weight: 600; color: var(--muted);
+  cursor: pointer; transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.pick:hover  { color: var(--text); }
+.pick.on     { border-color: var(--pick-accent, var(--indigo));
+               color: var(--pick-accent, var(--indigo));
+               background: var(--pick-accent-bg, var(--indigo-bg)); }
+
+/* ── Tag input ──
+   Type a skill, press Enter, it becomes a bubble. The wrapper is styled to look
+   like the text field it replaces, and the real input sits inside it with no
+   border of its own so the whole thing reads as one box. */
+.tag-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  width: 100%; padding: 9px 11px; min-height: 48px;
+  border: 2px solid var(--border); border-radius: 13px; background: var(--card);
+  cursor: text; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tag-box.focused { border-color: var(--indigo); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+.tag-bubble {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 10px; border-radius: 9px;
+  background: var(--indigo-bg); color: var(--indigo);
+  font-size: 0.8rem; font-weight: 600; white-space: nowrap;
+}
+.tag-x {
+  border: none; background: none; padding: 0 2px; cursor: pointer;
+  color: inherit; opacity: 0.6; font-size: 0.85rem; line-height: 1;
+  font-family: inherit;
+}
+.tag-x:hover { opacity: 1; }
+.tag-entry {
+  flex: 1; min-width: 90px; border: none; outline: none; background: none;
+  font-family: inherit; font-size: 0.9rem; color: var(--text); padding: 4px 0;
+}
+
+/* Prompt slots */
+.slot { border: 1px solid var(--border); border-radius: 14px; padding: 12px;
+        margin-bottom: 10px; background: var(--bg); }
+.slot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.slot-n { font-size: 0.66rem; font-weight: 800; color: var(--muted);
+          text-transform: uppercase; letter-spacing: 0.07em; flex-shrink: 0; }
+.slot-count { font-size: 0.68rem; color: var(--muted); text-align: right; margin-top: 4px;
+              font-variant-numeric: tabular-nums; }
+
+/* The public/members-only toggle */
+.toggle-row {
+  display: flex; align-items: flex-start; gap: 11px; padding: 13px;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--bg);
+}
+.toggle-box { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; accent-color: var(--indigo); }
+.toggle-body { flex: 1; }
+.toggle-name { font-size: 0.85rem; font-weight: 700; }
+.toggle-sub  { font-size: 0.73rem; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+
+.sheet-actions { display: flex; gap: 9px; margin-top: 20px; }
+.sheet-actions .btn { flex: 1; }
+
+/* ── Person viewer ── */
+.view-top { display: flex; align-items: center; gap: 15px; margin-bottom: 18px; }
+.view-face { width: 82px; height: 82px; border-radius: 50%; object-fit: cover;
+             background: var(--bg); flex-shrink: 0; display: block; }
+.view-init {
+  width: 82px; height: 82px; border-radius: 50%; flex-shrink: 0; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; font-weight: 800;
+}
+.view-name { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.01em; }
+.view-meta { font-size: 0.8rem; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+.view-q { margin-bottom: 15px; }
+.view-qlabel { font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+               letter-spacing: 0.07em; color: var(--muted); margin-bottom: 4px; }
+.view-qtext { font-size: 0.92rem; line-height: 1.55; }
+.view-mail { font-size: 0.8rem; color: var(--indigo); text-decoration: none; word-break: break-all; }
+.view-mail:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="Back to dashboard">‹</a>
+      <img class="logo-mark" src="/static/img/logo-96.png"
+           alt="UCD Formula Student" width="40" height="40">
+      <div class="header-text">
+        <div class="header-title">Team Profiles</div>
+        <div class="header-sub">Who's who</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="dir-head">
+      <div class="dir-title">
+        <div class="dir-h">The team</div>
+        <div class="dir-p" id="dir-p">Loading…</div>
+      </div>
+      <button class="btn btn-dark btn-sm" id="edit-btn" type="button">Edit mine</button>
+    </div>
+
+    <input class="text-input search-box" id="search" type="search"
+           placeholder="Search a name, course or skill"
+           autocomplete="off">
+
+    <div class="chips" id="team-chips"></div>
+    <div class="chips" id="tag-chips"></div>
+
+    <div class="dir-grid" id="grid"></div>
+
+    <div class="foot" id="foot"></div>
+  </div>
+</div>
+
+<!-- ── Single person ── -->
+<div class="sheet" id="viewer" style="display:none">
+  <div class="sheet-card" id="viewer-card"></div>
+</div>
+
+<!-- ── Crop the photo you just chose ── -->
+<div class="sheet" id="cropper" style="display:none">
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <div class="sheet-h">Position your photo</div>
+      <button class="sheet-x" id="crop-cancel" type="button" title="Cancel">✕</button>
+    </div>
+    <div class="crop-stage" id="crop-stage">
+      <canvas class="crop-canvas" id="crop-canvas" width="300" height="300"></canvas>
+    </div>
+    <input class="crop-zoom" id="crop-zoom" type="range" min="1" max="3" step="0.01" value="1">
+    <div class="crop-hint">Drag to move · slide to zoom</div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="crop-back" type="button">Cancel</button>
+      <button class="btn btn-dark" id="crop-save" type="button">
+        <span id="crop-label">Use photo</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Your own profile ── -->
+<div class="sheet" id="sheet" style="display:none">
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <div class="sheet-h">Your profile</div>
+      <button class="sheet-x" id="sheet-close" type="button" title="Close">✕</button>
+    </div>
+
+    <div class="field">
+      <div class="section-label">Photo</div>
+      <div class="photo-row">
+        <img class="photo-prev" id="photo-prev" alt="" style="display:none">
+        <div class="photo-init" id="photo-init"></div>
+        <div class="photo-acts">
+          <button class="btn btn-ghost btn-sm" id="photo-pick" type="button">Choose a photo</button>
+          <button class="btn btn-ghost btn-sm" id="photo-drop" type="button"
+                  style="display:none">Remove</button>
+          <div class="field-hint" id="photo-hint"></div>
+        </div>
+      </div>
+      <input class="file-hidden" id="photo-file" type="file" accept="image/*">
+    </div>
+
+    <div class="field">
+      <div class="section-label">Role</div>
+      <select class="select-input" id="f-role"></select>
+    </div>
+
+    <!-- Hidden entirely for Team Principal and Technical Director: they sit
+         across all three divisions, so asking them to pick one is asking a
+         question with no right answer. -->
+    <div class="field" id="team-field">
+      <div class="section-label">Division</div>
+      <div class="pick-row" id="team-pick"></div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <div class="section-label">Year</div>
+        <select class="select-input" id="f-year"></select>
+      </div>
+      <div class="field">
+        <div class="section-label">Joined</div>
+        <select class="select-input" id="f-joined"></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="section-label">Course</div>
+      <input class="text-input" id="f-course" type="text"
+             placeholder="Mechanical Engineering" maxlength="80">
+    </div>
+
+    <div class="field">
+      <div class="section-label">Ask me about</div>
+      <div class="tag-box" id="tag-box">
+        <input class="tag-entry" id="f-tags" type="text"
+               placeholder="CAN bus" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="section-label">Three prompts</div>
+      <div id="slots"></div>
+    </div>
+
+    <div class="field">
+      <label class="toggle-row">
+        <input class="toggle-box" id="f-public" type="checkbox">
+        <div class="toggle-body">
+          <div class="toggle-name">Show me on the public team page</div>
+          <div class="toggle-sub">Otherwise only the team can see your profile.</div>
+        </div>
+      </label>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="sheet-cancel" type="button">Cancel</button>
+      <button class="btn btn-dark" id="sheet-save" type="button">
+        <span id="save-label">Save</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* Same accent tokens the dashboard uses, so a subteam is the same colour
+   wherever it appears. */
+const ACCENTS = {
+  indigo: ['var(--indigo)', 'var(--indigo-bg)'],
+  purple: ['var(--purple)', 'var(--purple-bg)'],
+  green:  ['var(--green)',  'var(--green-bg)'],
+  amber:  ['var(--amber)',  'var(--amber-bg)'],
+  teal:   ['var(--teal)',   'var(--teal-bg)'],
+  red:    ['var(--red)',    'var(--red-bg)'],
+};
+
+let PEOPLE = [], SUBTEAMS = [], PROMPTS = [], YEARS = [], ROLES = [];
+let LIMITS = { prompts: 3, tags: 8, answer: 280 };
+let ME = null;                       /* my account id */
+let TEAM_FILTER = 'all', TAG_FILTER = null, QUERY = '';
+let DRAFT = null;                    /* the profile being edited */
+
+function subteamOf(id) { return SUBTEAMS.find(s => s.id === id) || null; }
+
+function accentVars(subteamId) {
+  const s = subteamOf(subteamId);
+  const [a, bg] = ACCENTS[(s && s.accent) || 'indigo'] || ACCENTS.indigo;
+  return `--p-accent:${a};--p-accent-bg:${bg}`;
+}
+
+/* A card is "bare" when there is nothing on it but a name — no photo, no
+   prompts, no tags. Worth marking, because it is the thing the September
+   nudge is trying to fix. */
+function isBare(p) {
+  return !p.photo && !p.prompts.length && !p.tags.length && !p.course;
+}
+
+function faceHTML(p, imgClass, initClass) {
+  if (p.photo) {
+    return `<img class="${imgClass}" src="${UCDFS.esc(p.photo)}"
+                 alt="${UCDFS.esc(p.name)}" loading="lazy">`;
+  }
+  return `<div class="${initClass}" style="background:${UCDFS.colour(p.name)}"
+          >${UCDFS.esc(p.initials || UCDFS.initials(p.name))}</div>`;
+}
+
+function metaLine(p) {
+  const s = subteamOf(p.subteam);
+  const bits = [];
+  /* year_label comes from the server so no page has to know that "Alum" reads
+     as "Retired member". */
+  if (p.year_label) bits.push(p.year_label);
+  if (p.course) bits.push(p.course);
+  if (!bits.length && s) bits.push(s.name);
+  if (!bits.length) bits.push('No details yet');
+  return bits.join(' · ');
+}
+
+/* The badge on a card. A Team Principal or Technical Director leads with the
+   role, because "Operations" would be wrong — they sit across all three. */
+function badgeFor(p) {
+  if (p.role_scope === 'team') {
+    return `<span class="p-lead">${UCDFS.esc(p.role_name)}</span>`;
+  }
+  const s = subteamOf(p.subteam);
+  if (!s) return '';
+  const rank = p.role_label === 'captain' ? 'Captain'
+             : p.role_label === 'vice'    ? 'Vice captain' : '';
+  return `<span class="p-team">${UCDFS.esc(rank ? s.name + ' · ' + rank : s.name)}</span>`;
+}
+
+/* ── Filtering ──
+   Everything here is client-side: the whole directory arrives in one request,
+   so a chip is instant and never shows a spinner. */
+function matches(p) {
+  if (TEAM_FILTER !== 'all') {
+    const mine = [p.subteam].concat(p.subteams_extra || []);
+    if (mine.indexOf(TEAM_FILTER) < 0) return false;
+  }
+  if (TAG_FILTER && (p.tags || []).indexOf(TAG_FILTER) < 0) return false;
+  if (QUERY) {
+    const hay = [p.name, p.course, p.year, p.email, (p.tags || []).join(' '),
+                 (p.prompts || []).map(q => q.answer).join(' ')].join(' ').toLowerCase();
+    if (hay.indexOf(QUERY) < 0) return false;
+  }
+  return true;
+}
+
+function renderChips() {
+  const teams = document.getElementById('team-chips');
+  const chip = (id, label, n, accent, active) =>
+    `<button class="chip ${active ? 'active' : ''}" type="button" data-id="${UCDFS.esc(id)}"
+       ${accent ? `style="--chip-accent:${accent}"` : ''}>
+       ${UCDFS.esc(label)} <span class="chip-count">${n}</span></button>`;
+
+  teams.innerHTML =
+    chip('all', 'Everyone', PEOPLE.length, '', TEAM_FILTER === 'all') +
+    SUBTEAMS.map(s => {
+      const n = PEOPLE.filter(p => [p.subteam].concat(p.subteams_extra || [])
+                                     .indexOf(s.id) >= 0).length;
+      return chip(s.id, s.name, n, (ACCENTS[s.accent] || ACCENTS.indigo)[0],
+                  TEAM_FILTER === s.id);
+    }).join('');
+  teams.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+    TEAM_FILTER = b.dataset.id; render();
+  }));
+
+  /* Tag chips are built from what people actually wrote, most-used first —
+     a fixed list would go stale the week someone starts on a new subsystem. */
+  const counts = {};
+  PEOPLE.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+  const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a] ||
+                                                 a.localeCompare(b)).slice(0, 12);
+  const tagsEl = document.getElementById('tag-chips');
+  if (!top.length) { tagsEl.style.display = 'none'; tagsEl.innerHTML = ''; return; }
+  tagsEl.style.display = '';
+  tagsEl.innerHTML = top.map(t =>
+    chip(t, t, counts[t], '', TAG_FILTER === t)).join('');
+  tagsEl.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+    /* Tapping the active tag clears it — the only way out otherwise would be
+       hunting for a "clear" button. */
+    TAG_FILTER = (TAG_FILTER === b.dataset.id) ? null : b.dataset.id;
+    render();
+  }));
+}
+
+function personCard(p) {
+  const q = p.prompts && p.prompts[0];
+  const tags = (p.tags || []).slice(0, 4).map(t =>
+    `<span class="p-tag">${UCDFS.esc(t)}</span>`).join('');
+
+  return `<button class="person ${isBare(p) ? 'bare' : ''} ${p.id === ME ? 'me' : ''}"
+            type="button" data-id="${UCDFS.esc(p.id)}" style="${accentVars(p.subteam)}">
+    <div class="p-top">
+      ${faceHTML(p, 'p-face', 'p-init')}
+      <div class="p-id">
+        <div class="p-name">${UCDFS.esc(p.name)}
+          ${p.id === ME ? '<span class="p-you">You</span>' : ''}
+          ${badgeFor(p)}
+        </div>
+        <div class="p-meta">${UCDFS.esc(metaLine(p))}</div>
+      </div>
+    </div>
+    ${q ? `<div class="p-quote">
+             <div class="p-qlabel">${UCDFS.esc(q.label)}</div>
+             ${UCDFS.esc(q.answer)}
+           </div>`
+        : `<div class="p-empty">${p.id === ME ? 'Your profile is empty — tap to fill it in.'
+                                              : 'Hasn\'t filled this in yet.'}</div>`}
+    ${tags ? `<div class="p-tags">${tags}</div>` : ''}
+  </button>`;
+}
+
+function render() {
+  const shown = PEOPLE.filter(matches);
+  const grid = document.getElementById('grid');
+
+  if (!shown.length) {
+    grid.innerHTML = `
+      <div class="card empty">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-text">
+          Nobody matches that yet.<br>
+          <button class="btn btn-ghost btn-xs" id="clear-filters" type="button"
+                  style="margin:10px auto 0">Clear filters</button>
+        </div>
+      </div>`;
+    const c = document.getElementById('clear-filters');
+    if (c) c.addEventListener('click', () => {
+      TEAM_FILTER = 'all'; TAG_FILTER = null; QUERY = '';
+      document.getElementById('search').value = '';
+      render();
+    });
+  } else {
+    grid.innerHTML = shown.map(personCard).join('');
+    grid.querySelectorAll('.person').forEach(b =>
+      b.addEventListener('click', () => openViewer(b.dataset.id)));
+  }
+
+  renderChips();
+
+  const filled = PEOPLE.filter(p => !isBare(p)).length;
+  document.getElementById('dir-p').textContent =
+    `${PEOPLE.length} ${PEOPLE.length === 1 ? 'person' : 'people'} · ` +
+    `${filled} with a profile filled in`;
+  document.getElementById('foot').textContent =
+    shown.length === PEOPLE.length ? '' : `Showing ${shown.length} of ${PEOPLE.length}`;
+}
+
+/* ── One person ── */
+function openViewer(id) {
+  const p = PEOPLE.find(x => x.id === id);
+  if (!p) return;
+  const s = subteamOf(p.subteam);
+
+  const meta = [];
+  if (p.year_label || p.course) {
+    meta.push([p.year_label, p.course].filter(Boolean).join(' · '));
+  }
+  /* One line for where they sit. A team-wide role has no division to name, so
+     it stands on its own; a division role reads "Powertrain · Captain". */
+  if (p.role_scope === 'team') {
+    meta.push('🏁 ' + p.role_name);
+  } else if (s) {
+    meta.push(s.icon + ' ' + s.name +
+              (p.role_name && p.role_label !== 'member' ? ' · ' + p.role_name : ''));
+  } else if (p.role_name) {
+    meta.push(p.role_name);
+  }
+  if (p.joined_year) meta.push('On the team since ' + p.joined_year);
+
+  document.getElementById('viewer-card').innerHTML = `
+    <div class="sheet-head">
+      <div class="sheet-h">${p.id === ME ? 'Your profile' : 'Profile'}</div>
+      <button class="sheet-x" id="viewer-close" type="button" title="Close">✕</button>
+    </div>
+    <div class="view-top">
+      ${faceHTML(p, 'view-face', 'view-init')}
+      <div>
+        <div class="view-name">${UCDFS.esc(p.name)}</div>
+        <div class="view-meta">${meta.map(UCDFS.esc).join('<br>')}</div>
+      </div>
+    </div>
+    ${(p.tags || []).length ? `<div class="p-tags" style="margin-bottom:16px">
+        ${p.tags.map(t => `<span class="p-tag">${UCDFS.esc(t)}</span>`).join('')}
+      </div>` : ''}
+    ${(p.prompts || []).map(q => `
+      <div class="view-q">
+        <div class="view-qlabel">${UCDFS.esc(q.label)}</div>
+        <div class="view-qtext">${UCDFS.esc(q.answer)}</div>
+      </div>`).join('') ||
+      `<div class="p-empty" style="margin-bottom:14px">No prompts answered yet.</div>`}
+    <a class="view-mail" href="mailto:${UCDFS.esc(p.email)}">${UCDFS.esc(p.email)}</a>
+    ${p.id === ME ? `<div class="sheet-actions">
+        <button class="btn btn-dark btn-full" id="viewer-edit" type="button">Edit</button>
+      </div>` : ''}`;
+
+  document.getElementById('viewer').style.display = 'flex';
+  document.getElementById('viewer-close').addEventListener('click', closeViewer);
+  const ed = document.getElementById('viewer-edit');
+  if (ed) ed.addEventListener('click', () => { closeViewer(); openEditor(); });
+}
+
+function closeViewer() { document.getElementById('viewer').style.display = 'none'; }
+
+/* ── Editing your own ── */
+function openEditor() {
+  const mine = PEOPLE.find(p => p.id === ME);
+  /* Deep-ish copy so Cancel really cancels — the grid must not change until a
+     save actually lands. */
+  DRAFT = JSON.parse(JSON.stringify(mine || {
+    id: ME, name: '', subteam: null, subteams_extra: [], tags: [], prompts: [],
+    year: '', course: '', joined_year: null, role_label: '', is_public: false,
+    photo: null,
+  }));
+  fillEditor();
+  document.getElementById('sheet').style.display = 'flex';
+}
+
+function closeEditor() { document.getElementById('sheet').style.display = 'none'; }
+
+function fillEditor() {
+  /* Photo */
+  const img  = document.getElementById('photo-prev');
+  const init = document.getElementById('photo-init');
+  if (DRAFT.photo) {
+    img.src = DRAFT.photo; img.style.display = '';
+    init.style.display = 'none';
+    document.getElementById('photo-drop').style.display = '';
+    document.getElementById('photo-pick').textContent = 'Change photo';
+  } else {
+    img.style.display = 'none';
+    init.style.display = '';
+    init.style.background = UCDFS.colour(DRAFT.name || '');
+    init.textContent = UCDFS.initials(DRAFT.name || '');
+    document.getElementById('photo-drop').style.display = 'none';
+    document.getElementById('photo-pick').textContent = 'Choose a photo';
+  }
+
+  /* value/label option list, with an em-dash for "not set". */
+  const opts = (list, sel) => ['<option value="">—</option>'].concat(
+    list.map(o => `<option value="${UCDFS.esc(o.value)}"
+      ${String(sel || '') === String(o.value) ? 'selected' : ''}>${UCDFS.esc(o.label)}</option>`)
+    ).join('');
+
+  document.getElementById('f-role').innerHTML = opts(ROLES, DRAFT.role_label);
+  document.getElementById('f-year').innerHTML = opts(YEARS, DRAFT.year);
+
+  const thisYear = new Date().getFullYear();
+  const years = [];
+  for (let y = thisYear + 1; y >= thisYear - 7; y--) years.push({ value: y, label: y });
+  document.getElementById('f-joined').innerHTML = opts(years, DRAFT.joined_year);
+
+  /* Division — hidden for the team-wide roles, which sit across all three. */
+  const role = ROLES.find(r => r.value === DRAFT.role_label);
+  const teamWide = role && role.scope === 'team';
+  document.getElementById('team-field').style.display = teamWide ? 'none' : '';
+
+  const el = document.getElementById('team-pick');
+  const notSure = { id: '', name: 'Not sure yet', icon: '🤷', accent: 'indigo' };
+  el.innerHTML = SUBTEAMS.concat([notSure]).map(s => {
+    const [a, bg] = ACCENTS[s.accent] || ACCENTS.indigo;
+    return `<button class="pick ${(DRAFT.subteam || '') === s.id ? 'on' : ''}"
+              type="button" data-id="${UCDFS.esc(s.id)}"
+              style="--pick-accent:${a};--pick-accent-bg:${bg}">
+              ${s.icon} ${UCDFS.esc(s.name)}</button>`;
+  }).join('');
+  el.querySelectorAll('.pick').forEach(b => b.addEventListener('click', () => {
+    DRAFT.subteam = b.dataset.id || null;
+    fillEditor();
+  }));
+
+  document.getElementById('f-course').value = DRAFT.course || '';
+  document.getElementById('f-public').checked = !!DRAFT.is_public;
+
+  renderTags();
+  renderSlots();
+}
+
+/* ── Tag bubbles ──
+   Type a skill, press Enter, it becomes a bubble. Commas do the same, so
+   pasting a list still works. Backspace on an empty box removes the last one,
+   which is what every tag field anyone has used does. */
+function addTag(raw) {
+  const t = String(raw || '').replace(/,/g, ' ').trim().toLowerCase()
+              .replace(/\s+/g, ' ').slice(0, 28);
+  if (!t) return;
+  DRAFT.tags = DRAFT.tags || [];
+  if (DRAFT.tags.indexOf(t) < 0 && DRAFT.tags.length < (LIMITS.tags || 8)) {
+    DRAFT.tags.push(t);
+  }
+  renderTags();
+}
+
+function renderTags() {
+  const box   = document.getElementById('tag-box');
+  const entry = document.getElementById('f-tags');
+  /* Rebuild the bubbles in front of the input rather than replacing the box —
+     re-creating the input would drop focus on every keystroke. */
+  [...box.querySelectorAll('.tag-bubble')].forEach(n => n.remove());
+
+  (DRAFT.tags || []).forEach((t, i) => {
+    const b = document.createElement('span');
+    b.className = 'tag-bubble';
+    b.textContent = t;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'tag-x';
+    x.textContent = '✕';
+    x.title = 'Remove';
+    x.addEventListener('click', () => {
+      DRAFT.tags.splice(i, 1);
+      renderTags();
+      entry.focus();
+    });
+    b.appendChild(x);
+    box.insertBefore(b, entry);
+  });
+
+  const full = (DRAFT.tags || []).length >= (LIMITS.tags || 8);
+  entry.disabled = full;
+  entry.placeholder = full ? '' : ((DRAFT.tags || []).length ? '' : 'CAN bus');
+}
+
+/* Three prompt slots. A prompt already used in another slot is disabled rather
+   than removed from the list, so the options stay in the same order every time
+   and you can see what you already picked. */
+function renderSlots() {
+  const el = document.getElementById('slots');
+  const chosen = (DRAFT.prompts || []).map(p => p.key);
+
+  let html = '';
+  for (let i = 0; i < LIMITS.prompts; i++) {
+    const cur = (DRAFT.prompts || [])[i] || { key: '', answer: '' };
+    const options = ['<option value="">Pick a prompt…</option>'].concat(
+      PROMPTS.map(p => {
+        const usedElsewhere = chosen.indexOf(p.key) >= 0 && cur.key !== p.key;
+        return `<option value="${UCDFS.esc(p.key)}"
+                  ${cur.key === p.key ? 'selected' : ''}
+                  ${usedElsewhere ? 'disabled' : ''}>${UCDFS.esc(p.label)}</option>`;
+      })).join('');
+
+    html += `<div class="slot">
+      <div class="slot-head">
+        <span class="slot-n">${i + 1}</span>
+        <select class="select-input" data-slot="${i}" data-role="key">${options}</select>
+      </div>
+      <textarea class="area-input" data-slot="${i}" data-role="answer"
+        maxlength="${LIMITS.answer}"
+        placeholder="${cur.key ? 'Your answer…' : 'Pick a prompt first'}"
+        ${cur.key ? '' : 'disabled'}>${UCDFS.esc(cur.answer)}</textarea>
+      <div class="slot-count">${(cur.answer || '').length}/${LIMITS.answer}</div>
+    </div>`;
+  }
+  el.innerHTML = html;
+
+  el.querySelectorAll('[data-role="key"]').forEach(sel =>
+    sel.addEventListener('change', () => {
+      const i = +sel.dataset.slot;
+      DRAFT.prompts = DRAFT.prompts || [];
+      while (DRAFT.prompts.length <= i) DRAFT.prompts.push({ key: '', answer: '' });
+      DRAFT.prompts[i] = { key: sel.value, answer: DRAFT.prompts[i].answer || '' };
+      renderSlots();
+    }));
+
+  el.querySelectorAll('[data-role="answer"]').forEach(area =>
+    area.addEventListener('input', () => {
+      const i = +area.dataset.slot;
+      DRAFT.prompts = DRAFT.prompts || [];
+      while (DRAFT.prompts.length <= i) DRAFT.prompts.push({ key: '', answer: '' });
+      DRAFT.prompts[i].answer = area.value;
+      area.parentElement.querySelector('.slot-count').textContent =
+        area.value.length + '/' + LIMITS.answer;
+    }));
+}
+
+/* ── Photo ──
+   Resized in the browser, not on the server. A 4 MB phone photo per person adds
+   up fast, and this container has no image library — so the canvas that has to
+   draw the preview anyway does the shrinking too. Square-cropped from the
+   centre because every place it is displayed is a circle. */
+const CROP_VIEW = 300;    /* the canvas, in px — matches the stage in CSS */
+const CROP_OUT  = 512;    /* what gets uploaded */
+
+let CROP = null;          /* { img, zoom, x, y, min } while the cropper is open */
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read that image.")); };
+    img.src = url;
+  });
+}
+
+/* Keep the image covering the hole. Panning past the edge would show background
+   inside the circle, which then gets baked into the upload. */
+function clampCrop() {
+  const s = CROP.min * CROP.zoom;
+  const w = CROP.img.width * s, h = CROP.img.height * s;
+  CROP.x = Math.min(0, Math.max(CROP_VIEW - w, CROP.x));
+  CROP.y = Math.min(0, Math.max(CROP_VIEW - h, CROP.y));
+}
+
+function drawCrop() {
+  const c = document.getElementById('crop-canvas');
+  const ctx = c.getContext('2d');
+  const s = CROP.min * CROP.zoom;
+  ctx.clearRect(0, 0, CROP_VIEW, CROP_VIEW);
+  ctx.drawImage(CROP.img, CROP.x, CROP.y,
+                CROP.img.width * s, CROP.img.height * s);
+}
+
+async function onPhotoChosen(file) {
+  if (!file) return;
+  const hint = document.getElementById('photo-hint');
+  hint.textContent = '';
+  let img;
+  try {
+    img = await loadImage(file);
+  } catch (e) {
+    hint.textContent = e.message;
+    return;
+  }
+
+  /* Zoom 1 = the image exactly covers the circle, so there is no starting
+     position that shows empty space. */
+  const min = CROP_VIEW / Math.min(img.width, img.height);
+  CROP = { img, zoom: 1, min,
+           x: (CROP_VIEW - img.width  * min) / 2,
+           y: (CROP_VIEW - img.height * min) / 2 };
+
+  document.getElementById('crop-zoom').value = 1;
+  document.getElementById('cropper').style.display = 'flex';
+  drawCrop();
+}
+
+function closeCropper() {
+  document.getElementById('cropper').style.display = 'none';
+  CROP = null;
+}
+
+/* Re-render the same transform at output size and upload that. Cropping in the
+   browser means the server only ever stores the square you actually chose. */
+async function uploadCrop() {
+  if (!CROP) return;
+  const btn   = document.getElementById('crop-save');
+  const label = document.getElementById('crop-label');
+  btn.disabled = true;
+  label.innerHTML = '<span class="spinner"></span>';
+
+  const f = CROP_OUT / CROP_VIEW;
+  const s = CROP.min * CROP.zoom * f;
+  const out = document.createElement('canvas');
+  out.width = out.height = CROP_OUT;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, CROP_OUT, CROP_OUT);
+  ctx.drawImage(CROP.img, CROP.x * f, CROP.y * f,
+                CROP.img.width * s, CROP.img.height * s);
+
+  const hint = document.getElementById('photo-hint');
+  try {
+    const r = await fetch('/api/profile/photo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: out.toDataURL('image/jpeg', 0.85) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Upload failed');
+    /* Applied straight away rather than on save: the photo is already on the
+       server, so pretending otherwise would be a lie the Cancel button
+       couldn't honour. */
+    DRAFT.photo = j.photo;
+    const mine = PEOPLE.find(p => p.id === ME);
+    if (mine) { mine.photo = j.photo; render(); }
+    /* The server rewrote the profile cookie, so the header pill can pick up the
+       new face without a reload. */
+    UCDFS.refreshUser();
+    UCDFS.renderPill();
+    hint.textContent = '';
+    closeCropper();
+    fillEditor();
+  } catch (e) {
+    hint.textContent = e.message || 'That photo did not upload.';
+    closeCropper();
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Use photo';
+  }
+}
+
+function wireCropper() {
+  const stage = document.getElementById('crop-stage');
+  const zoom  = document.getElementById('crop-zoom');
+
+  zoom.addEventListener('input', () => {
+    if (!CROP) return;
+    /* Zoom about the centre of the hole, so the face you framed stays framed. */
+    const old = CROP.min * CROP.zoom;
+    CROP.zoom = +zoom.value;
+    const now = CROP.min * CROP.zoom;
+    const k = now / old;
+    CROP.x = CROP_VIEW / 2 - (CROP_VIEW / 2 - CROP.x) * k;
+    CROP.y = CROP_VIEW / 2 - (CROP_VIEW / 2 - CROP.y) * k;
+    clampCrop();
+    drawCrop();
+  });
+
+  let dragging = false, lastX = 0, lastY = 0;
+  stage.addEventListener('pointerdown', e => {
+    if (!CROP) return;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!dragging || !CROP) return;
+    /* The canvas is displayed at CSS width, which may differ from its 300px
+       backing store on a narrow phone — scale the drag to match. */
+    const k = CROP_VIEW / (stage.clientWidth || CROP_VIEW);
+    CROP.x += (e.clientX - lastX) * k;
+    CROP.y += (e.clientY - lastY) * k;
+    lastX = e.clientX; lastY = e.clientY;
+    clampCrop();
+    drawCrop();
+  });
+  const stop = e => {
+    dragging = false;
+    try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  stage.addEventListener('pointerup', stop);
+  stage.addEventListener('pointercancel', stop);
+
+  document.getElementById('crop-save').addEventListener('click', uploadCrop);
+  document.getElementById('crop-back').addEventListener('click', closeCropper);
+  document.getElementById('crop-cancel').addEventListener('click', closeCropper);
+}
+
+async function removePhoto() {
+  const hint = document.getElementById('photo-hint');
+  try {
+    const r = await fetch('/api/profile/photo/remove', { method: 'POST' });
+    if (!r.ok) throw new Error('Could not remove it');
+    DRAFT.photo = null;
+    const mine = PEOPLE.find(p => p.id === ME);
+    if (mine) { mine.photo = null; render(); }
+    UCDFS.refreshUser();
+    UCDFS.renderPill();
+    hint.textContent = '';
+    fillEditor();
+  } catch (e) {
+    hint.textContent = e.message;
+  }
+}
+
+/* ── Save ── */
+async function save() {
+  const btn   = document.getElementById('sheet-save');
+  const label = document.getElementById('save-label');
+  btn.disabled = true;
+  label.innerHTML = '<span class="spinner"></span>';
+
+  const roleValue = document.getElementById('f-role').value;
+  const role      = ROLES.find(r => r.value === roleValue);
+  /* Anything still sitting in the tag box counts — nobody should lose a skill
+     because they hit Save instead of Enter. */
+  addTag(document.getElementById('f-tags').value);
+  document.getElementById('f-tags').value = '';
+
+  const body = {
+    subteam:        role && role.scope === 'team' ? null : (DRAFT.subteam || null),
+    year:           document.getElementById('f-year').value,
+    course:         document.getElementById('f-course').value,
+    joined_year:    document.getElementById('f-joined').value || null,
+    role_label:     roleValue,
+    tags:           DRAFT.tags || [],
+    is_public:      document.getElementById('f-public').checked,
+    prompts:        (DRAFT.prompts || []).filter(p => p.key && (p.answer || '').trim()),
+  };
+
+  try {
+    const r = await fetch('/api/profile', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Save failed');
+
+    /* The server rewrote the profile cookie (subteam lives there), so the
+       cached copy in shared.js is now stale. */
+    UCDFS.refreshUser();
+    await load();
+    closeEditor();
+    UCDFS.toast('Profile saved');
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that");
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Save';
+  }
+}
+
+/* ── Boot ── */
+async function load() {
+  const r = await fetch('/api/profiles');
+  if (!r.ok) throw new Error('Could not load the directory');
+  const j = await r.json();
+  PEOPLE   = j.people   || [];
+  SUBTEAMS = j.subteams || [];
+  PROMPTS  = j.prompts  || [];
+  YEARS    = j.years    || [];
+  ROLES    = j.roles    || [];
+  LIMITS   = j.limits   || LIMITS;
+  ME       = j.me;
+  render();
+}
+
+async function boot(user) {
+  UCDFS.renderPill();
+
+  document.getElementById('edit-btn').addEventListener('click', openEditor);
+  document.getElementById('sheet-close').addEventListener('click', closeEditor);
+  document.getElementById('sheet-cancel').addEventListener('click', closeEditor);
+  document.getElementById('sheet-save').addEventListener('click', save);
+  document.getElementById('photo-pick').addEventListener('click',
+    () => document.getElementById('photo-file').click());
+  document.getElementById('photo-drop').addEventListener('click', removePhoto);
+  document.getElementById('photo-file').addEventListener('change', function () {
+    onPhotoChosen(this.files && this.files[0]);
+    this.value = '';        /* so choosing the same file twice still fires */
+  });
+  wireCropper();
+
+  /* Tag box: the whole thing focuses the input, so clicking the padding works
+     the way it looks like it should. */
+  const tagBox   = document.getElementById('tag-box');
+  const tagEntry = document.getElementById('f-tags');
+  tagBox.addEventListener('click', e => {
+    if (e.target === tagBox) tagEntry.focus();
+  });
+  tagEntry.addEventListener('focus', () => tagBox.classList.add('focused'));
+  tagEntry.addEventListener('blur',  () => {
+    tagBox.classList.remove('focused');
+    /* Commit a half-typed tag on the way out rather than silently binning it. */
+    addTag(tagEntry.value);
+    tagEntry.value = '';
+  });
+  tagEntry.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(tagEntry.value);
+      tagEntry.value = '';
+    } else if (e.key === 'Backspace' && !tagEntry.value && (DRAFT.tags || []).length) {
+      DRAFT.tags.pop();
+      renderTags();
+    }
+  });
+
+  document.getElementById('search').addEventListener('input', function () {
+    QUERY = this.value.trim().toLowerCase();
+    render();
+  });
+
+  /* Click the backdrop to dismiss, but not a click that started inside the
+     card — otherwise dragging to select text and releasing outside closes the
+     form and loses the lot. */
+  [['sheet', closeEditor], ['viewer', closeViewer]].forEach(([id, close]) => {
+    const el = document.getElementById(id);
+    el.addEventListener('click', e => { if (e.target === el) close(); });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    /* Topmost first, or Escape would close the editor out from under the
+       cropper sitting on top of it. */
+    if (document.getElementById('cropper').style.display !== 'none') closeCropper();
+    else if (document.getElementById('viewer').style.display !== 'none') closeViewer();
+    else if (document.getElementById('sheet').style.display !== 'none') closeEditor();
+  });
+
+  try {
+    await load();
+  } catch (e) {
+    document.getElementById('dir-p').textContent =
+      'Could not load the directory. Has migration 003 been applied?';
+    return;
+  }
+
+  /* The dashboard's onboarding step sends people here with ?edit=1 — one
+     continuous flow rather than "now go and find the edit button". */
+  if (/[?&]edit=1/.test(window.location.search)) openEditor();
+}
+
+UCDFS.gate(boot);
+</script>
+</body>
+</html>

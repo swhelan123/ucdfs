@@ -281,15 +281,24 @@ table.sched .sw{width:13px;height:13px;border-radius:4px;display:inline-block;ve
 .pin-cap{position:absolute;font-size:8px;font-weight:700;color:#56627e;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;line-height:1.1;}
 
 /* ── Splices (net junctions) ─────────────────────────────────────── */
-.splice{position:absolute;z-index:3;width:20px;height:20px;border-radius:50%;background:#cdd7ea;border:2.5px solid #fff;
+.splice{position:absolute;z-index:7;width:20px;height:20px;border-radius:50%;background:#cdd7ea;border:2.5px solid #fff;
   box-shadow:0 2px 6px rgba(29,43,69,.32);cursor:grab;}
 .splice:active{cursor:grabbing;}
 .splice.sel{box-shadow:0 0 0 3px rgba(74,125,224,.5),0 2px 6px rgba(29,43,69,.32);}
 .splice-hl{box-shadow:0 0 0 3px rgba(74,125,224,.55)!important;}
 .splice .splice-handle{position:absolute;inset:-5px;border-radius:50%;border:2px dashed transparent;cursor:crosshair;}
 .splice:hover .splice-handle{border-color:rgba(74,125,224,.6);}
-.splice .slabel{position:absolute;top:22px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--muted);
+.splice .slabel,.bnode .slabel{position:absolute;top:22px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--muted);
   white-space:nowrap;pointer-events:none;background:rgba(246,248,253,.85);padding:0 3px;border-radius:4px;}
+
+/* Breakout node — a point the bundle passes through or branches at. Square, so
+   it never reads as a splice: nothing is electrically joined here. */
+.bnode{position:absolute;z-index:7;width:16px;height:16px;border-radius:4px;background:#fff;
+  border:2.5px solid #1d2b45;box-shadow:0 2px 6px rgba(29,43,69,.28);cursor:grab;}
+.bnode:active{cursor:grabbing;}
+.bnode.sel{box-shadow:0 0 0 3px rgba(74,125,224,.5),0 2px 6px rgba(29,43,69,.3);}
+/* marks a wire length that came from the route rather than being typed in */
+.drv{color:var(--accent);font-weight:800;cursor:help;}
 
 /* voltage-class tags + DRC states */
 .vtag{font-size:8px;font-weight:800;padding:1px 4px;border-radius:5px;vertical-align:middle;letter-spacing:.3px;}
@@ -456,6 +465,12 @@ table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
       <button id="rep-labels">🏷 Wire labels</button>
       <button id="rep-formboard">📐 Formboard (lay-flat)</button>
       <div class="sep"></div>
+      <button id="topo-derive">🧵 Build topology from wires</button>
+      <button id="topo-route">🔀 Route wires through segments</button>
+      <button id="topo-bundles">📦 Show bundle casings</button>
+      <button id="topo-dims">⊢ Show dimensions</button>
+      <button id="topo-labels">🏷 Show wire labels</button>
+      <div class="sep"></div>
       <button id="tool-ortho">📐 Toggle orthogonal routing</button>
       <button id="tool-snap">▦ Toggle snap-to-grid</button>
       <button id="tool-rev">🕒 Revisions…</button>
@@ -466,6 +481,8 @@ table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
   </div>
   <button class="tbtn" id="btn-board">＋ PCB</button>
   <button class="tbtn" id="btn-splice" title="Add a splice / junction">＋ Splice</button>
+  <button class="tbtn" id="btn-node" title="Add a breakout — a point the bundle passes through or branches at">＋ Breakout</button>
+  <button class="tbtn" id="btn-seg" title="Join the two selected anchors with a bundle segment (shift-drag to select)">＋ Segment</button>
   <button class="tbtn primary" id="btn-add">＋ Connector</button>
   <button class="zbtn" id="zout" title="Zoom out">−</button>
   <span id="zlevel">100%</span>
@@ -969,7 +986,7 @@ function computeNets(){
     const r=root(epKey(w.from));
     const n=byRoot[r]||(byRoot[r]={id:r,eps:[],epSeen:new Set(),wires:[],pins:[],signals:new Set(),current:0,vclass:'',lengthMm:0});
     n.wires.push(w);
-    n.lengthMm+=(w.length||0);
+    n.lengthMm+=wireLenMm(w);
     if(w.signal) n.signals.add(w.signal);
     if(w.current) n.current=Math.max(n.current,+w.current||0);
     if(w.vclass==='HV') n.vclass='HV'; else if(w.vclass==='LV'&&n.vclass!=='HV') n.vclass='LV';
@@ -1134,7 +1151,8 @@ function orthoThrough(pts){   // right-angle segments through each waypoint
 function wirePath(w){
   if(!epExists(w.from)||!epExists(w.to)) return '';
   const A=epExit(w.from), B=epExit(w.to);
-  const pts=wireCtrl(w);
+  const via=routePoints(w);
+  const pts=via?[{x:A.x,y:A.ex},...via,{x:B.x,y:B.ex}]:wireCtrl(w);
   let d=`M${A.x} ${A.y} L${A.x} ${A.ex}`;     // stub out of pin A
   d+=(orthoRouting?orthoThrough(pts):smoothThrough(pts));
   d+=` L${B.x} ${B.y}`;                       // stub into pin B
@@ -1204,11 +1222,496 @@ function removeNearestBend(w,pt){
   pushUndo(); if(best>=0) w.mids.splice(best,1); else w.mids=[];
   updateWire(w); wsSend({type:'wire_update',w}); scheduleSave();
 }
-function redrawWiresFor(id){      // id = connector OR splice id
-  DOC.wires.forEach(w=>{ if(epTouches(w.from,id)||epTouches(w.to,id)) updateWire(w); });
+function redrawWiresFor(id){      // id = connector, splice OR breakout-node id
+  const touched={};
+  (DOC.segments||[]).forEach(s=>{ if(segKey(s.a).slice(1)===id||segKey(s.b).slice(1)===id) touched[s.id]=1; });
+  DOC.wires.forEach(w=>{
+    if(epTouches(w.from,id)||epTouches(w.to,id)||(w.route||[]).some(r=>touched[r])) updateWire(w);
+  });
   repaintPins(id);
+  // Bundles and dimensions are anchored to the same things, so a move that
+  // shifts wires shifts the formboard with them.
+  refreshFormboard();
 }
-function redrawAllWires(){ DOC.wires.forEach(updateWire); }
+function redrawAllWires(){ DOC.wires.forEach(updateWire); refreshFormboard(); }
+
+// ════════════════════════════════════════════════════════════════════
+//  HARNESS TOPOLOGY  (nodes → segments → routed wires)
+// ════════════════════════════════════════════════════════════════════
+// The PHYSICAL harness, as distinct from the electrical one. Wires say what is
+// connected to what. Segments say what physically runs where, and a routed wire
+// travels *through* segments instead of flying point-to-point.
+//
+// This is the difference between a drawing of the design and the design itself.
+// Four things fall out of it that cannot be done without it:
+//
+//   length      a routed wire's length is the sum of its segments, so changing
+//               one branch updates every wire through it. Hand-typed lengths
+//               drift the moment the routing changes, and that is the usual
+//               cause of a wrong cut list. w.lenManual keeps a measured value.
+//   bundles     a segment's diameter comes from the wires actually inside it,
+//               and branches where the topology branches.
+//   dimensions  annotate a segment, which has a real length — rather than
+//               guessing at the midpoint of a bezier.
+//   accessories clips and sleeving attach at a distance along a segment. There
+//               was nowhere to put them before this existed.
+//
+// A wire with no route keeps the old behaviour exactly, so documents saved
+// before any of this load and render unchanged.
+const SVGNS='http://www.w3.org/2000/svg';
+
+function segIsNode(e){ return !!(e&&e.n!=null); }
+function segIsSplice(e){ return !!(e&&e.s!=null); }
+function segKey(e){ return e?(segIsNode(e)?'N'+e.n:segIsSplice(e)?'S'+e.s:'C'+e.c):''; }
+function segEndExists(e){ if(!e) return false;
+  return segIsNode(e)?!!nodemap[e.n]:segIsSplice(e)?!!smap[e.s]:!!cmap[e.c]; }
+function segOk(g){ return !!(g&&segEndExists(g.a)&&segEndExists(g.b)); }
+/**
+ * Where a segment end sits. For a connector this is its body, not a pin — but
+ * pulled back to the edge of the card facing `toward`, so a thick bundle meets
+ * the connector instead of disappearing underneath it.
+ */
+function segPos(e,toward){
+  if(segIsNode(e)){ const n=nodemap[e.n]; return n?{x:n.x,y:n.y}:{x:0,y:0}; }
+  if(segIsSplice(e)){ const s=smap[e.s]; return s?{x:s.x,y:s.y}:{x:0,y:0}; }
+  const c=cmap[e.c]; if(!c) return {x:0,y:0};
+  const b=box(c);
+  if(!toward) return {x:b.cx,y:b.cy};
+  const dx=toward.x-b.cx, dy=toward.y-b.cy;
+  if(!dx&&!dy) return {x:b.cx,y:b.cy};
+  // ray/rectangle intersection — whichever face the ray leaves through first
+  const t=Math.min(dx?(b.w/2)/Math.abs(dx):Infinity, dy?(b.h/2)/Math.abs(dy):Infinity);
+  return {x:b.cx+dx*t, y:b.cy+dy*t};
+}
+/** Both ends of a segment, each trimmed toward the other. */
+function segEnds(s){
+  const ca=segPos(s.a), cb=segPos(s.b);
+  return {A:segPos(s.a,cb), B:segPos(s.b,ca)};
+}
+function segEndLabel(e){
+  if(segIsNode(e)){ const n=nodemap[e.n]; return (n&&n.name)||'breakout'; }
+  if(segIsSplice(e)){ const s=smap[e.s]; return (s&&s.name)||'splice'; }
+  const c=cmap[e.c]; return c?connFullName(c):'?';
+}
+/** Which anchor a WIRE end sits on — its connector body, or the splice itself. */
+function wireAnchorKey(ep){ return epIsSplice(ep)?('S'+ep.s):('C'+ep.c); }
+function wireAnchor(ep){ return epIsSplice(ep)?{s:ep.s}:{c:ep.c}; }
+
+// ── routing ──────────────────────────────────────────────────────────
+/** Adjacency over anchors: key -> [{seg,to}]. */
+function segGraph(){
+  const g={};
+  (DOC.segments||[]).forEach(s=>{
+    if(!segOk(s)) return;
+    const ka=segKey(s.a), kb=segKey(s.b);
+    if(ka===kb) return;
+    (g[ka]=g[ka]||[]).push({seg:s.id,to:kb});
+    (g[kb]=g[kb]||[]).push({seg:s.id,to:ka});
+  });
+  return g;
+}
+/** Fewest-segments path between two anchors → [segId], or null if unreachable. */
+function segRoute(fromKey,toKey,g){
+  g=g||segGraph();
+  if(fromKey===toKey) return [];
+  const prev={}, seen={}; seen[fromKey]=1;
+  let frontier=[fromKey];
+  while(frontier.length){
+    const next=[];
+    for(const k of frontier) for(const e of (g[k]||[])){
+      if(seen[e.to]) continue;
+      seen[e.to]=1; prev[e.to]={from:k,seg:e.seg};
+      if(e.to===toKey){
+        const out=[]; let cur=toKey;
+        while(cur!==fromKey){ const p=prev[cur]; out.unshift(p.seg); cur=p.from; }
+        return out;
+      }
+      next.push(e.to);
+    }
+    frontier=next;
+  }
+  return null;
+}
+/**
+ * Route every wire whose ends are joined by the segment graph. A wire with no
+ * path keeps whatever it had — routing is an aid, never a way to lose data.
+ */
+function autoRouteWires(){
+  const g=segGraph(); let routed=0, unreachable=0;
+  DOC.wires.forEach(w=>{
+    const p=segRoute(wireAnchorKey(w.from),wireAnchorKey(w.to),g);
+    if(p===null||!p.length){ unreachable++; return; }
+    w.route=p; routed++;
+  });
+  return {routed,unreachable};
+}
+/**
+ * First-cut topology from the wires that already exist: one segment per
+ * distinct pair of anchors wires run between, seeded with the longest wire
+ * length on that pair. Gives an existing design a formboard in one action —
+ * the lengths are then corrected on the drawing, where they are visible.
+ */
+function deriveTopology(){
+  const have={};
+  (DOC.segments||[]).forEach(s=>{ if(segOk(s)) have[[segKey(s.a),segKey(s.b)].sort().join('|')]=1; });
+  const pairs={};
+  DOC.wires.forEach(w=>{
+    const ka=wireAnchorKey(w.from), kb=wireAnchorKey(w.to);
+    if(ka===kb) return;
+    const key=[ka,kb].sort().join('|');
+    if(have[key]) return;
+    const p=pairs[key]||(pairs[key]={a:wireAnchor(w.from),b:wireAnchor(w.to),len:0});
+    p.len=Math.max(p.len,+w.length||0);
+  });
+  const made=Object.keys(pairs).map(k=>{
+    const p=pairs[k];
+    const g={id:uid('g_'),a:p.a,b:p.b,len:p.len,name:'',sleeve:'',mids:[]};
+    DOC.segments.push(g); segmap[g.id]=g; return g;
+  });
+  return {created:made.length};
+}
+
+// ── derived quantities ───────────────────────────────────────────────
+function routeLenMm(w){
+  return (w.route||[]).reduce((a,id)=>{ const s=segmap[id]; return a+(s?(+s.len||0):0); },0);
+}
+/** The length to cut to. Derived from the route unless someone measured it. */
+function wireLenMm(w){
+  if(!w) return 0;
+  if(w.lenManual) return +w.length||0;
+  const r=routeLenMm(w);
+  return r>0?r:(+w.length||0);
+}
+function wireIsDerived(w){ return !!(w&&!w.lenManual&&routeLenMm(w)>0); }
+/** The wires physically inside a segment. */
+function segWires(id){ return DOC.wires.filter(w=>(w.route||[]).indexOf(id)>=0); }
+/** Bundle diameter (mm) from the conductors actually in it. Uses the same 0.55
+ *  packing factor as the cable lines in the BOM, so the two agree. */
+function segOD(id){
+  const ws=segWires(id); if(!ws.length) return 0;
+  const area=ws.reduce((a,w)=>a+awgSpec(w.gauge).mm2,0);
+  return 2*Math.sqrt(area/Math.PI)/0.55+0.8;
+}
+/** Drawn casing width in canvas px. Scaled off the AWG widths so the bundle
+ *  reads as "these wires, together" in the same visual language. */
+function segDrawW(id){
+  const ws=segWires(id); if(!ws.length) return 0;
+  const sum=ws.reduce((a,w)=>a+(AWG_W[w.gauge]||2.6),0);
+  return Math.min(38,Math.max(9,sum*0.8+5));
+}
+function segPathD(s){
+  const {A,B}=segEnds(s);
+  const pts=[A,...(s.mids||[]),B];
+  return `M${A.x} ${A.y}`+(orthoRouting?orthoThrough(pts):smoothThrough(pts));
+}
+function segMidpoint(s){
+  const {A,B}=segEnds(s), pts=[A,...(s.mids||[]),B];
+  const i=Math.max(0,Math.floor((pts.length-1)/2));
+  const p=pts[i], q=pts[i+1]||pts[i];
+  const dx=q.x-p.x, dy=q.y-p.y, L=Math.hypot(dx,dy)||1;
+  return {x:(p.x+q.x)/2,y:(p.y+q.y)/2,nx:dy/L,ny:-dx/L};   // normal, for captions
+}
+
+/**
+ * The points a ROUTED wire travels through: the far end of each segment in its
+ * route, in order, walking the chain from the wire's own end. Returns null when
+ * the wire is unrouted or the route no longer chains, in which case the wire
+ * falls back to flying point-to-point exactly as it always did.
+ *
+ * This is what makes a routed wire follow its bundle rather than merely be
+ * associated with one.
+ */
+function routePoints(w){
+  const route=w.route||[];
+  if(!route.length) return null;
+  let cur=wireAnchorKey(w.from);
+  const pts=[];
+  for(const id of route){
+    const s=segmap[id];
+    if(!s||!segOk(s)) return null;
+    const ka=segKey(s.a), kb=segKey(s.b), ends=segEnds(s);
+    let mids=s.mids||[], far;
+    if(ka===cur){ far=ends.B; cur=kb; }
+    else if(kb===cur){ far=ends.A; cur=ka; mids=mids.slice().reverse(); }
+    else return null;                      // the route does not actually chain
+    mids.forEach(p=>pts.push({x:p.x,y:p.y}));
+    pts.push(far);
+  }
+  pts.pop();      // the last anchor IS the wire's own endpoint; its stub lands there
+  return pts;
+}
+
+// ── formboard rendering ──────────────────────────────────────────────
+// Two SVG layers. Wires are appended straight to <svg> as they are created, so
+// the bundle casings are pinned underneath them and the annotations are moved
+// back on top after every refresh.
+const bundleLayer=document.createElementNS(SVGNS,'g'); bundleLayer.setAttribute('id','bundle-layer');
+const annoLayer  =document.createElementNS(SVGNS,'g'); annoLayer.setAttribute('id','anno-layer');
+svg.appendChild(bundleLayer); svg.appendChild(annoLayer);
+
+function clearEl(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+function svgLine(x1,y1,x2,y2,stroke,w){
+  const l=document.createElementNS(SVGNS,'path');
+  l.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)}`);
+  l.setAttribute('stroke',stroke); l.setAttribute('stroke-width',w||1.1);
+  l.setAttribute('fill','none'); l.setAttribute('stroke-linecap','round');
+  return l;
+}
+function svgText(x,y,txt,o){
+  o=o||{};
+  const t=document.createElementNS(SVGNS,'text');
+  t.setAttribute('x',x.toFixed(1)); t.setAttribute('y',y.toFixed(1));
+  t.setAttribute('font-size',o.size||11); t.setAttribute('font-weight',o.weight||600);
+  t.setAttribute('fill',o.fill||'#5b6880'); t.setAttribute('text-anchor',o.anchor||'middle');
+  t.setAttribute('font-family','-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif');
+  t.style.pointerEvents='none'; t.textContent=txt;
+  return t;
+}
+
+function drawBundleCasing(s){
+  if(!segOk(s)) return;
+  const w=segDrawW(s.id); if(!w) return;         // an empty segment draws nothing
+  const casing=document.createElementNS(SVGNS,'path');
+  casing.setAttribute('d',segPathD(s)); casing.setAttribute('fill','none');
+  casing.setAttribute('stroke','#1d2b45'); casing.setAttribute('stroke-width',w);
+  casing.setAttribute('stroke-linecap','round'); casing.setAttribute('stroke-linejoin','round');
+  casing.setAttribute('opacity','0.93');
+  casing.style.cursor='pointer';
+  casing.addEventListener('click',ev=>{ ev.stopPropagation(); openSegEdit(s.id,ev); });
+  bundleLayer.appendChild(casing);
+}
+function drawBundleCaption(s){
+  if(!segOk(s)) return;
+  const w=segDrawW(s.id); if(!w) return;
+  const m=segMidpoint(s), n=segWires(s.id).length, od=segOD(s.id);
+  const cap=(s.name?s.name+' · ':'')+n+(n===1?' core':' cores')+' · ⌀'+od.toFixed(1)+'mm';
+  const co=w/2+9;
+  // annoLayer, not bundleLayer: the wires are drawn between the two, and a
+  // caption underneath them gets crossed out by its own bundle's cores.
+  annoLayer.appendChild(svgText(m.x+m.nx*co,m.y+m.ny*co+3.5,cap,{size:10,weight:700,fill:'#7585a3'}));
+}
+
+/** A dimension in the drafting sense: extension lines off the run, a dimension
+ *  line between them with tick terminators, and the value along it. */
+function drawSegDim(s){
+  if(!segOk(s)||!(+s.len>0)) return;
+  const {A,B}=segEnds(s);
+  const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy);
+  if(L<46) return;                                // too short to annotate legibly
+  const ux=dx/L, uy=dy/L, nx=-uy, ny=ux;          // along, and normal to it
+  const off=Math.max(17,segDrawW(s.id)/2+13);
+  const a={x:A.x+nx*off,y:A.y+ny*off}, b={x:B.x+nx*off,y:B.y+ny*off};
+  const g=document.createElementNS(SVGNS,'g');
+  const BLUE='#2f4bd8', T=5;
+  g.appendChild(svgLine(a.x,a.y,b.x,b.y,BLUE,1.2));                       // dimension line
+  g.appendChild(svgLine(a.x-nx*T,a.y-ny*T,a.x+nx*T,a.y+ny*T,BLUE,1.4));   // terminators
+  g.appendChild(svgLine(b.x-nx*T,b.y-ny*T,b.x+nx*T,b.y+ny*T,BLUE,1.4));
+  g.appendChild(svgLine(A.x+nx*5,A.y+ny*5,a.x,a.y,'#aab6d4',0.8));        // extension lines
+  g.appendChild(svgLine(B.x+nx*5,B.y+ny*5,b.x,b.y,'#aab6d4',0.8));
+  const mx=(a.x+b.x)/2+nx*9, my=(a.y+b.y)/2+ny*9;
+  let ang=Math.atan2(dy,dx)*180/Math.PI;
+  if(ang>90||ang<-90) ang+=180;                   // keep the value upright
+  const t=svgText(mx,my,fmtLen(+s.len),{size:11.5,weight:800,fill:BLUE});
+  t.setAttribute('transform',`rotate(${ang.toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)})`);
+  g.appendChild(t);
+  annoLayer.appendChild(g);
+}
+
+/** A hanging label tag, the way one is printed and wrapped round the wire. */
+function drawWireLabel(w,i){
+  if(!epExists(w.from)||!epExists(w.to)) return;
+  const txt=w.label||('L-'+String(i+1).padStart(2,'0'));
+  const A=epExit(w.from), B=epExit(w.to);
+  const px=A.x+(B.x-A.x)*0.26, py=A.y+(B.y-A.y)*0.26;
+  const ty=py+22, g=document.createElementNS(SVGNS,'g');
+  g.appendChild(svgLine(px,py,px,ty-7,'#aab6d4',0.9));                    // leader
+  const r=document.createElementNS(SVGNS,'rect');
+  r.setAttribute('x',(px-15).toFixed(1)); r.setAttribute('y',(ty-7).toFixed(1));
+  r.setAttribute('width',30); r.setAttribute('height',15); r.setAttribute('rx',4);
+  r.setAttribute('fill','#fff'); r.setAttribute('stroke','#8593b0'); r.setAttribute('stroke-width',1.2);
+  g.appendChild(r);
+  const hole=document.createElementNS(SVGNS,'circle');
+  hole.setAttribute('cx',(px-10).toFixed(1)); hole.setAttribute('cy',(ty+0.5).toFixed(1));
+  hole.setAttribute('r',1.7); hole.setAttribute('fill','#8593b0');
+  g.appendChild(hole);
+  g.appendChild(svgText(px+3,ty+4,txt,{size:9.5,weight:800,fill:'#3b4763'}));
+  annoLayer.appendChild(g);
+}
+
+// ── breakout nodes ───────────────────────────────────────────────────
+// A bare point the bundle passes through or branches at. Deliberately not a
+// splice: nothing is electrically joined here, the run just changes direction
+// or divides. Conflating the two is how you end up with phantom nets.
+function renderNode(n){
+  const el=document.createElement('div');
+  el.className='bnode'; el.dataset.id=n.id;
+  el.style.left=(n.x-8)+'px'; el.style.top=(n.y-8)+'px';
+  el.title='Breakout'+(n.name?(' — '+n.name):'')+' · drag to move · double-click to rename';
+  if(n.name){ const lb=document.createElement('div'); lb.className='slabel'; lb.textContent=n.name; el.appendChild(lb); }
+  el.addEventListener('dblclick',ev=>{ ev.stopPropagation(); openNodeEdit(n.id,el); });
+  attachNodeDrag(n,el);
+  canvas.appendChild(el); nodeEls[n.id]=el;
+}
+function attachNodeDrag(n,el){
+  el.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    e.preventDefault(); e.stopPropagation();
+    pushUndo();
+    const sx=e.clientX, sy=e.clientY, ox=n.x, oy=n.y; let moved=false, lastBc=0;
+    const mv=ev=>{
+      const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
+      if(Math.abs(dx)>2||Math.abs(dy)>2) moved=true;
+      n.x=snap(Math.round(ox+dx)); n.y=snap(Math.round(oy+dy));
+      el.style.left=(n.x-8)+'px'; el.style.top=(n.y-8)+'px';
+      redrawWiresFor(n.id);
+      const now=performance.now();
+      if(now-lastBc>45){ lastBc=now; wsSend({type:'node_move',id:n.id,x:n.x,y:n.y}); }
+    };
+    const up=()=>{
+      window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      if(moved){ wsSend({type:'node_move',id:n.id,x:n.x,y:n.y}); scheduleSave(); }
+    };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+}
+function addNode(){
+  pushUndo();
+  const n={id:uid('n_'),name:'',
+    x:snap(Math.round((scroll.scrollLeft+scroll.clientWidth/2)/scale)),
+    y:snap(Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale))};
+  DOC.nodes.push(n); nodemap[n.id]=n; renderNode(n);
+  wsSend({type:'node_add',n}); scheduleSave(); checkEmpty();
+  setSaveStat('breakout added — drag it, then join it with ＋ Segment');
+}
+function deleteNodeCore(id){
+  DOC.nodes=DOC.nodes.filter(n=>n.id!==id);
+  // A segment cannot outlive an anchor, and a route cannot outlive a segment.
+  const dead=(DOC.segments||[]).filter(s=>segKey(s.a)==='N'+id||segKey(s.b)==='N'+id).map(s=>s.id);
+  DOC.segments=(DOC.segments||[]).filter(s=>dead.indexOf(s.id)<0);
+  dead.forEach(sid=>delete segmap[sid]);
+  DOC.wires.forEach(w=>{ if((w.route||[]).some(r=>dead.indexOf(r)>=0)) w.route=[]; });
+  delete nodemap[id];
+  if(nodeEls[id]){ nodeEls[id].remove(); delete nodeEls[id]; }
+}
+
+// ── segment + node editors ───────────────────────────────────────────
+const gpop=document.createElement('div'); gpop.className='pop'; gpop.id='gpop'; gpop.style.width='262px';
+gpop.innerHTML=`<div class="pttl">Segment</div>
+  <div class="pfld"><label>Length <span id="gpop-unit"></span></label><input type="number" id="gpop-len" min="0" step="1" autocomplete="off"></div>
+  <div class="pfld"><label>Name (optional)</label><input type="text" id="gpop-name" autocomplete="off" placeholder="e.g. Left Sleeve"></div>
+  <div class="pfld"><label>Sleeving / protection</label><input type="text" id="gpop-sleeve" autocomplete="off" placeholder="e.g. 10mm braid"></div>
+  <div class="wpop-eng" id="gpop-info"></div>
+  <div class="pop-actions"><button class="save" id="gpop-save">Done</button><button class="del" id="gpop-del">Delete</button></div>`;
+document.body.appendChild(gpop);
+let gpopId=null;
+function openSegEdit(id,ev){
+  const g=segmap[id]; if(!g) return;
+  deselectAll(); gpopId=id;
+  const U=DOC.unit||'mm';
+  document.getElementById('gpop-unit').textContent='('+U+')';
+  document.getElementById('gpop-len').value=g.len?Math.round((g.len/UNIT_FACTOR[U])*10)/10:'';
+  document.getElementById('gpop-name').value=g.name||'';
+  document.getElementById('gpop-sleeve').value=g.sleeve||'';
+  const ws=segWires(id);
+  document.getElementById('gpop-info').innerHTML=
+    `<div class="eng-row"><span>Runs</span><b>${esc(segEndLabel(g.a))} → ${esc(segEndLabel(g.b))}</b></div>`+
+    `<div class="eng-row"><span>Wires inside</span><b>${ws.length}</b></div>`+
+    `<div class="eng-row"><span>Bundle ⌀</span><b>${segOD(id).toFixed(1)} mm</b></div>`+
+    (ws.length?`<div class="eng-row"><span>Sets length of</span><b>${ws.filter(wireIsDerived).length} wire(s)</b></div>`:'');
+  gpop.style.display='block';
+  const x=(ev&&ev.clientX)||120, y=(ev&&ev.clientY)||120;
+  gpop.style.left=Math.max(8,Math.min(x,window.innerWidth-274))+'px';
+  gpop.style.top=Math.min(y+10,window.innerHeight-300)+'px';
+  setTimeout(()=>document.getElementById('gpop-len').focus(),40);
+}
+function closeGpop(){ gpop.style.display='none'; gpopId=null; }
+function applyGpop(){
+  const g=segmap[gpopId]; if(!g) return closeGpop();
+  pushUndo();
+  const U=DOC.unit||'mm', lv=parseFloat(document.getElementById('gpop-len').value);
+  g.len=isNaN(lv)?0:Math.round(lv*UNIT_FACTOR[U]);
+  g.name=document.getElementById('gpop-name').value.trim();
+  g.sleeve=document.getElementById('gpop-sleeve').value.trim();
+  closeGpop();
+  // Every wire through this segment just changed length.
+  refreshFormboard(); refreshLegend(); refreshSchedule(); refreshDRCIfOpen();
+  wsSend({type:'seg_update',g}); scheduleSave();
+}
+function deleteSegment(id){
+  pushUndo();
+  DOC.segments=(DOC.segments||[]).filter(s=>s.id!==id);
+  delete segmap[id];
+  DOC.wires.forEach(w=>{ if((w.route||[]).indexOf(id)>=0) w.route=[]; });
+  closeGpop(); redrawAllWires(); refreshLegend(); refreshSchedule();
+  wsSend({type:'seg_delete',id}); scheduleSave();
+}
+document.getElementById('gpop-save').addEventListener('click',applyGpop);
+document.getElementById('gpop-del').addEventListener('click',()=>{ if(gpopId) deleteSegment(gpopId); });
+
+const npop=document.createElement('div'); npop.className='pop'; npop.id='npop'; npop.style.width='230px';
+npop.innerHTML=`<div class="pttl">Breakout</div>
+  <div class="pfld"><label>Label (optional)</label><input type="text" id="npop-name" autocomplete="off" placeholder="e.g. B-01"></div>
+  <div class="pop-actions"><button class="save" id="npop-save">Done</button><button class="del" id="npop-del">Delete</button></div>`;
+document.body.appendChild(npop);
+let npopId=null;
+function openNodeEdit(id,anchor){
+  const n=nodemap[id]; if(!n) return;
+  deselectAll(); npopId=id;
+  document.getElementById('npop-name').value=n.name||'';
+  npop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  npop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-242))+'px';
+  npop.style.top=Math.min(r.bottom+8,window.innerHeight-160)+'px';
+  setTimeout(()=>document.getElementById('npop-name').focus(),40);
+}
+function closeNpop(){ npop.style.display='none'; npopId=null; }
+document.getElementById('npop-save').addEventListener('click',()=>{
+  const n=nodemap[npopId]; if(!n) return closeNpop();
+  pushUndo(); n.name=document.getElementById('npop-name').value.trim();
+  const el=nodeEls[n.id];
+  if(el){ const old=el.querySelector('.slabel'); if(old) old.remove();
+    if(n.name){ const lb=document.createElement('div'); lb.className='slabel'; lb.textContent=n.name; el.appendChild(lb); } }
+  closeNpop(); wsSend({type:'node_update',n}); scheduleSave();
+});
+document.getElementById('npop-del').addEventListener('click',()=>{
+  if(!npopId) return; pushUndo(); const id=npopId; closeNpop();
+  deleteNodeCore(id); redrawAllWires(); refreshLegend(); refreshSchedule();
+  wsSend({type:'node_delete',id}); scheduleSave(); checkEmpty();
+});
+function refreshDRCIfOpen(){
+  const p=document.getElementById('drcpanel');
+  if(p&&p.classList.contains('show')) refreshDRC(); else updateDRCBadge();
+}
+
+/** Join the two selected anchors with a segment. Reuses the marquee selection
+ *  rather than inventing another modal drawing mode. */
+function addSegmentFromSelection(){
+  const ids=[...selMulti];
+  if(ids.length!==2){ setSaveStat('shift-drag to select exactly two anchors, then ＋ Segment'); return; }
+  const anchorOf=id=>cmap[id]?{c:id}:(smap[id]?{s:id}:(nodemap[id]?{n:id}:null));
+  const a=anchorOf(ids[0]), b=anchorOf(ids[1]);
+  if(!a||!b) return;
+  const key=[segKey(a),segKey(b)].sort().join('|');
+  if((DOC.segments||[]).some(s=>segOk(s)&&[segKey(s.a),segKey(s.b)].sort().join('|')===key)){
+    setSaveStat('those two are already joined'); return;
+  }
+  pushUndo();
+  const g={id:uid('g_'),a,b,len:0,name:'',sleeve:'',mids:[]};
+  DOC.segments.push(g); segmap[g.id]=g;
+  clearMulti(); refreshFormboard();
+  wsSend({type:'seg_add',g}); scheduleSave();
+  setSaveStat('segment added — click it to set its length');
+}
+
+function refreshFormboard(){
+  if(!DOC.show) DOC.show={bundles:true,dims:true,labels:false};
+  clearEl(bundleLayer); clearEl(annoLayer);
+  const segs=DOC.segments||[];
+  if(DOC.show.bundles){ segs.forEach(drawBundleCasing); segs.forEach(drawBundleCaption); }
+  if(DOC.show.dims)    segs.forEach(drawSegDim);
+  if(DOC.show.labels)  DOC.wires.forEach(drawWireLabel);
+  svg.appendChild(annoLayer);        // annotations always sit above the wires
+}
 
 // hover highlight a single wire (without full selection)
 function hoverWire(id,on){
@@ -1532,6 +2035,7 @@ function applyWpop(){
   const sv=parseFloat(document.getElementById('wpop-svc').value);
   markWpopEdit();
   w.length=isNaN(lv)?0:Math.round(lv*UNIT_FACTOR[U]);
+  w.lenManual=w.length>0;   // a typed length is a measured one and outranks the route
   w.service=isNaN(sv)?0:Math.round(sv*UNIT_FACTOR[U]);
   w.gauge=document.getElementById('wpop-gauge').value;
   const sa=parseFloat(document.getElementById('wpop-stripA').value); w.stripA=isNaN(sa)?null:sa;
@@ -1889,10 +2393,10 @@ function refreshLegend(){
   if(typeof updateDRCBadge==='function') updateDRCBadge();
 }
 // total cut length of a wire incl. service loop, in mm
-function wireCutMm(w){ return (w.length||0)+(w.service||0); }
+function wireCutMm(w){ return wireLenMm(w)+(w.service||0); }
 function wireMassG(w){ return wireCutMm(w)/1000*awgSpec(w.gauge).gpm; }
 // voltage drop along a wire (V) at its (or its net's) current
-function wireVdrop(w,cur){ const I=cur!=null?cur:(+w.current||0); return I*awgSpec(w.gauge).ohm*((w.length||0)/1000); }
+function wireVdrop(w,cur){ const I=cur!=null?cur:(+w.current||0); return I*awgSpec(w.gauge).ohm*(wireLenMm(w)/1000); }
 function refreshSchedule(){
   const body=document.getElementById('sched-body');
   if(!DOC.wires.length){ body.innerHTML='<div class="sched-empty">No wires yet.<br>Drag pin → pin to add one.</div>'; return; }
@@ -1913,7 +2417,7 @@ function refreshSchedule(){
       <td><span class="sw" style="background:${wireColor(w)}"></span></td>
       <td>${esc(w.signal||'—')}${w.vclass?` <span class="vtag ${w.vclass}">${w.vclass}</span>`:''}</td>
       <td>${esc(epShort(w.from))}<br><span style="color:var(--muted)">→ ${esc(epShort(w.to))}</span></td>
-      <td>${w.length?fmtLen(wireCutMm(w)):'—'}</td>
+      <td>${wireLenMm(w)?fmtLen(wireCutMm(w))+(wireIsDerived(w)?' <span class="drv" title="derived from the route">ƒ</span>':''):'—'}</td>
       <td class="${over?'bad':''}">${w.gauge}</td></tr>`;
   });
   let gRows=Object.keys(byG).sort((a,b)=>+a-+b).map(g=>`<div class="row"><span class="nm">${g} AWG</span><span class="vl">${fmtLen(byG[g])}</span></div>`).join('');
@@ -2323,6 +2827,10 @@ function rebuildAll(){
   Object.values(wireEls).forEach(e=>e.g.remove());
   Object.values(boardEls).forEach(e=>e.remove());
   Object.values(spliceEls).forEach(e=>e.remove());
+  Object.values(nodeEls).forEach(e=>e.remove());
+  for(const k in nodeEls) delete nodeEls[k];
+  for(const k in nodemap) delete nodemap[k];
+  for(const k in segmap) delete segmap[k];
   for(const k in connEls) delete connEls[k];
   for(const k in wireEls) delete wireEls[k];
   for(const k in boardEls) delete boardEls[k];
@@ -2332,24 +2840,34 @@ function rebuildAll(){
   for(const k in bmap) delete bmap[k];
   for(const k in smap) delete smap[k];
   if(!DOC.boards) DOC.boards=[]; if(!DOC.splices) DOC.splices=[];
+  if(!DOC.nodes) DOC.nodes=[]; if(!DOC.segments) DOC.segments=[];
   DOC.boards.forEach(b=>{ bmap[b.id]=b; });
   DOC.connectors.forEach(c=>{ cmap[c.id]=c; });
   DOC.splices.forEach(s=>{ smap[s.id]=s; });
+  DOC.nodes.forEach(n=>{ nodemap[n.id]=n; });
   DOC.wires.forEach(w=>{ wmap[w.id]=w; });
   // drop connectors referencing a missing board, and wires whose endpoints vanished
   DOC.connectors.forEach(c=>{ if(c.board&&!bmap[c.board]) c.board=null; });
   DOC.wires=DOC.wires.filter(w=>epExists(w.from)&&epExists(w.to));
+  // Same discipline one level down: a segment whose anchor is gone is dropped,
+  // and a route referencing a dropped segment is cleared rather than left
+  // pointing at nothing — a stale route would silently mis-state wire lengths.
+  DOC.segments=DOC.segments.filter(segOk);
+  DOC.segments.forEach(s=>{ segmap[s.id]=s; });
+  DOC.wires.forEach(w=>{ if((w.route||[]).some(id=>!segmap[id])) w.route=[]; });
   selSplice=null;
   DOC.boards.forEach(renderBoard);
   DOC.connectors.forEach(renderConnector);
   DOC.splices.forEach(renderSplice);
+  DOC.nodes.forEach(renderNode);
   DOC.wires.forEach(renderWire);
   syncPositions();
+  refreshFormboard();
   document.getElementById('unitsel').value=DOC.unit;
   document.getElementById('cc-auto-tog').checked=DOC.autoColors;
   renderRules(); refreshLegend(); refreshSchedule(); checkEmpty(); updateUndoBtns();
 }
-function checkEmpty(){ document.getElementById('empty').style.display=(DOC.connectors.length||(DOC.boards||[]).length||(DOC.splices||[]).length)?'none':'flex'; }
+function checkEmpty(){ document.getElementById('empty').style.display=(DOC.connectors.length||(DOC.boards||[]).length||(DOC.splices||[]).length||(DOC.nodes||[]).length)?'none':'flex'; }
 
 // ── Small utils ──────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -2423,10 +2941,39 @@ function handleWs(m){
       case 'splice_move': applySpliceMove(m.id,m.x,m.y); break;
       case 'splice_update':applySpliceUpdate(m.s); break;
       case 'splice_delete':deleteSplice(m.id); break;
+      case 'node_add':    applyNodeAdd(m.n); break;
+      case 'node_move':   applyNodeMove(m.id,m.x,m.y); break;
+      case 'node_update': applyNodeUpdate(m.n); break;
+      case 'node_delete': applyNodeDelete(m.id); break;
+      case 'seg_add':     applySegAdd(m.g); break;
+      case 'seg_update':  applySegUpdate(m.g); break;
+      case 'seg_delete':  applySegDelete(m.id); break;
       case 'meta':        applyMeta(m); break;
     }
   } finally { applyingRemote=false; }
 }
+// Remote-apply for the topology. Same contract as the others: touch the model
+// and the DOM, never re-broadcast and never trigger a server save.
+function applyNodeAdd(n){ if(!n||nodemap[n.id]) return; DOC.nodes=DOC.nodes||[];
+  DOC.nodes.push(n); nodemap[n.id]=n; renderNode(n); refreshFormboard(); checkEmpty(); localSave(); }
+function applyNodeMove(id,x,y){ const n=nodemap[id]; if(!n) return; n.x=x; n.y=y;
+  const el=nodeEls[id]; if(el){ el.style.left=(x-8)+'px'; el.style.top=(y-8)+'px'; }
+  redrawWiresFor(id); localSave(); }
+function applyNodeUpdate(nn){ const n=nodemap[nn.id]; if(!n){ applyNodeAdd(nn); return; }
+  Object.assign(n,nn);
+  const el=nodeEls[n.id];
+  if(el){ let lb=el.querySelector('.slabel');
+    if(n.name){ if(!lb){ lb=document.createElement('div'); lb.className='slabel'; el.appendChild(lb); } lb.textContent=n.name; }
+    else if(lb) lb.remove(); }
+  localSave(); }
+function applyNodeDelete(id){ deleteNodeCore(id); redrawAllWires(); refreshLegend(); refreshSchedule(); checkEmpty(); localSave(); }
+function applySegAdd(g){ if(!g||segmap[g.id]) return; DOC.segments=DOC.segments||[];
+  DOC.segments.push(g); segmap[g.id]=g; refreshFormboard(); localSave(); }
+function applySegUpdate(ng){ const g=segmap[ng.id]; if(!g){ applySegAdd(ng); return; }
+  Object.assign(g,ng); redrawAllWires(); refreshLegend(); refreshSchedule(); localSave(); }
+function applySegDelete(id){ DOC.segments=(DOC.segments||[]).filter(s=>s.id!==id); delete segmap[id];
+  DOC.wires.forEach(w=>{ if((w.route||[]).indexOf(id)>=0) w.route=[]; });
+  redrawAllWires(); refreshLegend(); refreshSchedule(); localSave(); }
 function applySpliceAdd(s){ if(smap[s.id]) return; DOC.splices.push(s); smap[s.id]=s; renderSplice(s); checkEmpty(); localSave(); }
 function applySpliceMove(id,x,y){ const s=smap[id]; if(!s) return; s.x=x; s.y=y; const el=spliceEls[id]; if(el){ el.style.left=(x-10)+'px'; el.style.top=(y-10)+'px'; } redrawWiresFor(id); localSave(); }
 function applySpliceUpdate(ns){ const s=smap[ns.id]; if(!s){ applySpliceAdd(ns); return; } Object.assign(s,ns);
@@ -2515,7 +3062,7 @@ function runDRC(){
   if(unconnected) issues.push({sev:'info',cat:'Connectivity',msg:`${unconnected} pin${unconnected>1?'s':''} unconnected`});
   DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++){ const ws=pw[c.id+':'+i]||[]; if(ws.length>1) issues.push({sev:'warn',cat:'Connectivity',msg:`${connFullName(c)} pin ${i+1} has ${ws.length} wires — add a splice`,ref:{type:'wire',id:ws[0].id}}); } });
   const seen={}; DOC.wires.forEach(w=>{ const k=[epKey(w.from),epKey(w.to)].sort().join('|'); if(seen[k]) issues.push({sev:'warn',cat:'Connectivity',msg:`Duplicate wire ${epShort(w.from)} ↔ ${epShort(w.to)}`,ref:{type:'wire',id:w.id}}); else seen[k]=1; });
-  DOC.wires.forEach(w=>{ if(!(w.length>0)) issues.push({sev:'info',cat:'Lengths',msg:`${epShort(w.from)}→${epShort(w.to)} has no length`,ref:{type:'wire',id:w.id}}); });
+  DOC.wires.forEach(w=>{ if(!(wireLenMm(w)>0)) issues.push({sev:'info',cat:'Lengths',msg:`${epShort(w.from)}→${epShort(w.to)} has no length`,ref:{type:'wire',id:w.id}}); });
   nets.forEach(n=>{ if(n.signals.size>1) issues.push({sev:'err',cat:'Nets',msg:`Conflicting signals on one net: ${[...n.signals].join(', ')}`,ref:{type:'wire',id:n.wires[0].id}}); });
   nets.forEach(n=>{ if(n.current) n.wires.forEach(w=>{ const sp=awgSpec(w.gauge); if(n.current>sp.amp) issues.push({sev:'err',cat:'Current rating',msg:`${w.gauge} AWG under-sized for ${n.current} A (max ~${sp.amp} A)${n.signal?' · '+n.signal:''}`,ref:{type:'wire',id:w.id}}); });
     if(n.current&&DOC.sysV){ let vd=0; n.wires.forEach(w=>vd+=wireVdrop(w,n.current)); const pct=vd/DOC.sysV*100;
@@ -2773,7 +3320,7 @@ function formboardSVG(){
   const nk={}; nodes.forEach(n=>nk[n.key]=n);
   const epK=ep=>epIsSplice(ep)?('S'+ep.s):('c:'+ep.c);
   const bundles={}; DOC.wires.forEach(w=>{ const a=epK(w.from),b=epK(w.to); if(!nk[a]||!nk[b]) return; const k=[a,b].sort().join('|');
-    (bundles[k]=bundles[k]||{a:nk[a],b:nk[b],n:0,len:0}).n++; bundles[k].len=Math.max(bundles[k].len,w.length||0); });
+    (bundles[k]=bundles[k]||{a:nk[a],b:nk[b],n:0,len:0}).n++; bundles[k].len=Math.max(bundles[k].len,wireLenMm(w)); });
   let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9; nodes.forEach(n=>{ minx=Math.min(minx,n.x);miny=Math.min(miny,n.y);maxx=Math.max(maxx,n.x);maxy=Math.max(maxy,n.y); });
   const W=720,H=Math.max(300,Math.min(900,(maxy-miny||1)/(maxx-minx||1)*W)); const sx=v=>40+(v-minx)/((maxx-minx)||1)*(W-80), sy=v=>40+(v-miny)/((maxy-miny)||1)*(H-80);
   let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="border:1px solid #ccc;background:#fff">`;
@@ -2789,7 +3336,7 @@ function formboardSVG(){
 //  INTERCHANGE EXPORT  (From-To CSV + WireViz YAML)
 // ════════════════════════════════════════════════════════════════════
 function fromToCSV(){ const u=DOC.unit, lines=['From,FromPin,To,ToPin,Signal,Class,Gauge,Colour,Length('+u+')'];
-  DOC.wires.forEach(w=>lines.push([q(epShort(w.from)),epIsSplice(w.from)?'':(w.from.p+1),q(epShort(w.to)),epIsSplice(w.to)?'':(w.to.p+1),q(w.signal),w.vclass||'',w.gauge,wireColor(w),(w.length/UNIT_FACTOR[u]).toFixed(1)].join(',')));
+  DOC.wires.forEach(w=>lines.push([q(epShort(w.from)),epIsSplice(w.from)?'':(w.from.p+1),q(epShort(w.to)),epIsSplice(w.to)?'':(w.to.p+1),q(w.signal),w.vclass||'',w.gauge,wireColor(w),(wireLenMm(w)/UNIT_FACTOR[u]).toFixed(1)].join(',')));
   download('harness-fromto.csv',lines.join('\n'),'text/csv'); }
 const WV_COLORS={'#1d2b45':'BK','#000000':'BK','#e23b3b':'RD','#f5821f':'OG','#f0a818':'YE','#f2c200':'YE','#2fab6e':'GN','#4a7de0':'BU','#7585a3':'GY','#8a64d6':'VT','#9aa7c2':'GY'};
 function wvColor(h){ return WV_COLORS[(h||'').toLowerCase()]||'WH'; }
@@ -2799,7 +3346,7 @@ function wirevizYAML(){
   DOC.connectors.forEach(c=>{ L.push(`  ${wvName({c:c.id,p:0})}:`); L.push(`    pincount: ${c.pins}`); L.push(`    notes: ${JSON.stringify(typeLabel(c.type)+(c.gender?(' '+c.gender):''))}`);
     if(c.pinLabels){ const arr=[]; for(let i=0;i<c.pins;i++) arr.push(JSON.stringify((c.pinLabels[i]||'').toString())); L.push(`    pinlabels: [${arr.join(', ')}]`); } });
   DOC.splices.forEach(s=>{ L.push(`  ${('SPL_'+(s.name||s.id)).replace(/[^A-Za-z0-9_]+/g,'_')}:`); L.push('    style: simple'); L.push('    pincount: 1'); });
-  L.push('cables:'); DOC.wires.forEach((w,i)=>{ L.push(`  W${i+1}:`); L.push('    wirecount: 1'); L.push(`    gauge: ${w.gauge} AWG`); L.push(`    length: ${(w.length/1000).toFixed(3)}`); L.push(`    colors: [${wvColor(wireColor(w))}]`); });
+  L.push('cables:'); DOC.wires.forEach((w,i)=>{ L.push(`  W${i+1}:`); L.push('    wirecount: 1'); L.push(`    gauge: ${w.gauge} AWG`); L.push(`    length: ${(wireLenMm(w)/1000).toFixed(3)}`); L.push(`    colors: [${wvColor(wireColor(w))}]`); });
   L.push('connections:'); DOC.wires.forEach((w,i)=>{ L.push('  -'); L.push(`    - ${wvName(w.from)}: [${epIsSplice(w.from)?1:(w.from.p+1)}]`); L.push(`    - W${i+1}: [1]`); L.push(`    - ${wvName(w.to)}: [${epIsSplice(w.to)?1:(w.to.p+1)}]`); });
   download('harness.yml',L.join('\n'),'text/yaml');
 }
@@ -2850,6 +3397,36 @@ document.getElementById('rep-bom').addEventListener('click',()=>{ expmenu.classL
 document.getElementById('rep-pinout').addEventListener('click',()=>{ expmenu.classList.remove('show'); repPinout(); });
 document.getElementById('rep-labels').addEventListener('click',()=>{ expmenu.classList.remove('show'); repLabels(); });
 document.getElementById('rep-formboard').addEventListener('click',()=>{ expmenu.classList.remove('show'); repFormboard(); });
+// ── topology actions ─────────────────────────────────────────────────
+document.getElementById('btn-node').addEventListener('click',addNode);
+document.getElementById('btn-seg').addEventListener('click',addSegmentFromSelection);
+document.getElementById('topo-derive').addEventListener('click',()=>{
+  expmenu.classList.remove('show');
+  pushUndo();
+  const {created}=deriveTopology();
+  const {routed}=autoRouteWires();
+  redrawAllWires(); refreshLegend(); refreshSchedule(); refreshDRCIfOpen();
+  wsSend({type:'state',doc:DOC}); scheduleSave();
+  setSaveStat(created?`${created} segment${created===1?'':'s'} built · ${routed} wire${routed===1?'':'s'} routed`
+                     :'topology already covers every wire run');
+});
+document.getElementById('topo-route').addEventListener('click',()=>{
+  expmenu.classList.remove('show');
+  pushUndo();
+  const {routed,unreachable}=autoRouteWires();
+  redrawAllWires(); refreshLegend(); refreshSchedule(); refreshDRCIfOpen();
+  wsSend({type:'state',doc:DOC}); scheduleSave();
+  setSaveStat(`${routed} routed`+(unreachable?` · ${unreachable} with no path through the segments`:''));
+});
+function toggleShow(key,label){
+  DOC.show=DOC.show||{}; DOC.show[key]=!DOC.show[key];
+  refreshFormboard(); scheduleSave();
+  setSaveStat(label+(DOC.show[key]?' on':' off'));
+}
+document.getElementById('topo-bundles').addEventListener('click',()=>{ expmenu.classList.remove('show'); toggleShow('bundles','bundle casings'); });
+document.getElementById('topo-dims').addEventListener('click',()=>{ expmenu.classList.remove('show'); toggleShow('dims','dimensions'); });
+document.getElementById('topo-labels').addEventListener('click',()=>{ expmenu.classList.remove('show'); toggleShow('labels','wire labels'); });
+
 document.getElementById('tool-rev').addEventListener('click',()=>{ expmenu.classList.remove('show'); togglePanel('revpanel'); });
 document.getElementById('tool-lib').addEventListener('click',()=>{ expmenu.classList.remove('show'); togglePanel('libpanel'); });
 
@@ -2857,7 +3434,7 @@ document.getElementById('tool-lib').addEventListener('click',()=>{ expmenu.class
 //  MULTI-SELECT (marquee) + ALIGN / DISTRIBUTE
 // ════════════════════════════════════════════════════════════════════
 const selMulti=new Set();
-function markMulti(id,on){ const ce=connEls[id]; if(ce) ce.root.classList.toggle('msel',on); const se=spliceEls[id]; if(se) se.classList.toggle('msel',on); }
+function markMulti(id,on){ const ce=connEls[id]; if(ce) ce.root.classList.toggle('msel',on); const se=spliceEls[id]; if(se) se.classList.toggle('msel',on); const ne=nodeEls[id]; if(ne) ne.classList.toggle('msel',on); }
 function clearMulti(){ selMulti.forEach(id=>markMulti(id,false)); selMulti.clear(); updateAlignBar(); }
 function toggleMulti(id){ if(selMulti.has(id)){ selMulti.delete(id); markMulti(id,false); } else { selMulti.add(id); markMulti(id,true); } updateAlignBar(); }
 function broadcastMoves(ids){ ids.forEach(id=>{ if(cmap[id]) wsSend({type:'conn_move',id,x:cmap[id].x,y:cmap[id].y}); else if(smap[id]) wsSend({type:'splice_move',id,x:smap[id].x,y:smap[id].y}); }); }
@@ -2887,7 +3464,7 @@ function updateAlignBar(){ const n=selMulti.size; alignBar.style.display=n>=2?'f
 let marqueeEl=null, _suppressCanvasClick=false;
 scroll.addEventListener('mousedown',e=>{
   if(!e.shiftKey) return;
-  if(e.target.closest('.conn')||e.target.closest('.splice')||e.target.closest('#legend')||e.target.closest('.panel')||e.target.closest('.pop')||e.target.closest('#alignbar')) return;
+  if(e.target.closest('.conn')||e.target.closest('.splice')||e.target.closest('.bnode')||e.target.closest('#legend')||e.target.closest('.panel')||e.target.closest('.pop')||e.target.closest('#alignbar')) return;
   if(e.target.closest('svg') && e.target.tagName==='path' && e.target.style.pointerEvents==='stroke') return;
   e.preventDefault(); e.stopPropagation();
   const start=canvasPt(e); clearMulti();
@@ -2898,6 +3475,7 @@ scroll.addEventListener('mousedown',e=>{
     selMulti.forEach(id=>markMulti(id,false)); selMulti.clear();
     DOC.connectors.forEach(c=>{ if(boxIntersect(rect,box(c))) selMulti.add(c.id); });
     DOC.splices.forEach(s=>{ if(boxIntersect(rect,{x:s.x-10,y:s.y-10,w:20,h:20})) selMulti.add(s.id); });
+    (DOC.nodes||[]).forEach(n=>{ if(boxIntersect(rect,{x:n.x-8,y:n.y-8,w:16,h:16})) selMulti.add(n.id); });
     selMulti.forEach(id=>markMulti(id,true)); updateAlignBar();
   };
   const up=()=>{ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up); if(marqueeEl){ marqueeEl.remove(); marqueeEl=null; }
@@ -2908,6 +3486,7 @@ function boxIntersect(a,b){ return a.x< b.x+b.w && a.x+a.w> b.x && a.y< b.y+b.h 
 const _msStyle=document.createElement('style'); _msStyle.textContent=
   '.conn.msel{box-shadow:0 0 0 2.5px var(--accent2),0 8px 22px rgba(29,43,69,.18)!important;}'+
   '.splice.msel{box-shadow:0 0 0 3px var(--accent2)!important;}'+
+  '.bnode.msel{box-shadow:0 0 0 3px var(--accent2)!important;}'+
   '#alignbar{position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:320;display:flex;gap:3px;align-items:center;background:#fff;border:1.5px solid var(--card-border);border-radius:11px;box-shadow:0 8px 24px rgba(29,43,69,.2);padding:5px 8px;}'+
   '#alignbar #align-count{font-size:11px;font-weight:700;color:var(--muted);margin-right:6px;white-space:nowrap;}'+
   '#alignbar button{width:28px;height:26px;border:1.5px solid var(--card-border);border-radius:7px;background:#fff;cursor:pointer;font-size:13px;font-weight:700;}'+

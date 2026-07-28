@@ -76,7 +76,7 @@ jobs:
           gh api --silent -X POST "/repos/$REPO/issues/$PR/comments" -f body="$(cat <<EOF
           **Deployed to dev** — \`ucdfs:${{ steps.build.outputs.tag }}\`
 
-          http://192.168.0.166:3980 (on the home network)
+          https://dev.shane-whelan.ie
 
           Running \`${{ github.event.pull_request.head.sha }}\` against the
           **ucdfs-nonprod** database. There is only one dev tier, so this

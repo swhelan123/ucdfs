@@ -83,7 +83,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: staging
-      url: http://192.168.0.166:3981
+      url: https://stage.shane-whelan.ie
     steps:
       - uses: actions/checkout@v4
       - run: ./deploy.sh stage "${{ needs.build.outputs.tag }}"

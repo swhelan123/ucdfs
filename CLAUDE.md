@@ -442,6 +442,34 @@ are the same project — so it cannot overwrite the live manufacturing plan with
 whatever state staging had drifted into. Re-runnable
 (`Prefer: resolution=merge-duplicates`).
 
+## How a change reaches the site
+
+`main` is protected: no direct pushes, no force-push, no deletion, and the
+`test` check must pass before merge. Approvals are deliberately **not** required
+— on a repo this size that would mean nobody can merge anything, since you
+cannot approve your own PR.
+
+```
+branch  →  PR  →  test runs  →  label "deploy: dev" to see it on :3980
+                             →  merge  →  auto-deploys to stage :3981
+                             →  Run workflow  →  prod :3978, after approval
+```
+
+Labelling a PR **`deploy: dev`** builds that branch and puts it on the dev tier,
+then swaps the label for `deployed: dev` so the PR says what is actually live.
+Pushing new commits removes that label again rather than letting it go stale.
+There is one dev container, so a second labelled PR replaces the first.
+
+**There is no `deploy: prod` label, on purpose.** It would put unmerged code on
+the site the team uses daily, and prod would then be running something that is
+not on `main` — after the next merge, nobody could say what is actually live
+without going and looking at the container. The need behind wanting one ("I want
+to see this working on something real before merging") is what the dev label is.
+
+In a genuine emergency the ruleset is at Settings → Rules → *protect main* and
+can be flipped to Disabled in about fifteen seconds. That is deliberately a
+visible, deliberate act rather than a silent admin bypass.
+
 ## Deployment
 
 Built once, promoted — never built twice from the same source and hoped over.

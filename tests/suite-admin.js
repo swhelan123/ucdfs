@@ -293,6 +293,18 @@ const today = new Date().toISOString().slice(0, 10);
     'status ' + backOn.status);
 
   console.log('\nthe safety rails');
+  // Promote the victim to admin FIRST, so demoting the probe below is not
+  // demoting the last admin in the database.
+  //
+  // This used to be implicit: the suite ran against production, which always
+  // contains a real admin, so there was always a second one and the demotion
+  // simply worked. Against a fresh database the probe was the only admin, the
+  // last-admin rail fired, and three checks failed — the app being right and
+  // the test being coupled to ambient production data. Anything a suite needs
+  // it has to create.
+  check('a second admin can be appointed',
+    (await post('/api/admin/role', { id: victim.id, role: 'admin' })).status === 200);
+
   // Losing the capability has to take the elevation with it, or a demoted admin
   // keeps a god_mode flag that silently switches back on the moment somebody
   // re-promotes them.
@@ -309,10 +321,33 @@ const today = new Date().toISOString().slice(0, 10);
     (row[0] || {}).role === 'member' && (row[0] || {}).god_mode === false,
     JSON.stringify(row[0] || {}));
 
-  // The last-admin rail can only fire on a database with exactly one admin, and
-  // this one has a real admin in it. Exercising it would mean demoting a real
-  // person, so it is deliberately left to inspection.
-  console.log('  (last-admin rail needs a single-admin database; not exercised here)');
+  // ── The last admin cannot be demoted ─────────────────────────────────────
+  // Never exercised before, because it can only fire on a database whose only
+  // admin is one the suite is allowed to demote — which production, by
+  // definition, is not. On the non-prod database the victim is now the sole
+  // admin, so the rail is reachable for the first time.
+  //
+  // Still checked against the real count rather than assumed: if this ever runs
+  // somewhere with other admins in it, the rail correctly will not fire, and a
+  // test that asserted otherwise would be lying rather than failing.
+  const admins = await json(await fetch(
+    `${SB}/rest/v1/profiles?role=eq.admin&select=id`,
+    { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } }));
+
+  if (admins.length === 1 && admins[0].id === victim.id) {
+    // The victim has to do this to themselves: they are the only admin left,
+    // and the probe was just demoted out of being able to.
+    const suicide = await post('/api/admin/role', { id: victim.id, role: 'member' }, hdrB);
+    check('the last admin cannot be demoted', suicide.status === 400,
+      'status ' + suicide.status);
+    const still = await json(await fetch(
+      `${SB}/rest/v1/profiles?id=eq.${victim.id}&select=role`,
+      { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } }));
+    check('and is still an admin afterwards', (still[0] || {}).role === 'admin',
+      JSON.stringify(still[0] || {}));
+  } else {
+    console.log(`  (${admins.length} admins in this database — rail not reachable here)`);
+  }
 
   process.exit(summary('admin') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

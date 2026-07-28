@@ -18,8 +18,11 @@
 name: CI
 
 on:
+  # main only. Branch pushes are covered by the pull_request trigger — running
+  # both meant every commit on a PR branch tested twice, and this box has two
+  # cores shared with the live site.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:

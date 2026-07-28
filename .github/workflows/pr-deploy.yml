@@ -1,0 +1,122 @@
+# Deploy a pull request to the dev tier by labelling it.
+#
+#   add "deploy: dev"  →  the PR's branch is built and served on :3980
+#                         against ucdfs-nonprod, then the label is swapped for
+#                         "deployed: dev" so the PR says what is actually live.
+#
+# Why only dev. Labelling a PR "deploy to prod" would put unmerged code on the
+# site the team uses daily, and prod would then be running something that is not
+# on main — so after the next merge nobody can say what is actually live without
+# checking the container. The need behind wanting it ("I want to see this working
+# on something real before I merge") is what this workflow is for.
+#
+# There is ONE dev container, so two PRs labelled at once means the second
+# replaces the first. That is called out in the comment rather than prevented:
+# a queue would be more machinery than a team this size needs, and the label on
+# the losing PR going stale is the visible symptom.
+name: PR deploy
+
+on:
+  pull_request:
+    types: [labeled, synchronize, closed]
+
+concurrency:
+  # Deploys are not cancelled halfway. A cancelled `docker compose up` can leave
+  # the tier down, and the whole point of dev is that it is there when you look.
+  group: dev-tier
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Quoted as a whole: the label name contains ": ", which YAML would
+    # otherwise read as a nested mapping and refuse to parse the file at all.
+    if: "github.event.action == 'labeled' && github.event.label.name == 'deploy: dev'"
+    runs-on: [self-hosted, ucdfs]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # The PR head, not the merge commit. We are deploying the branch as it is,
+      # which is what someone clicking through dev expects to be looking at.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Take the trigger label off
+        # First thing, so a re-label always re-runs. Leaving it on means the
+        # second click does nothing and looks like the workflow is broken.
+        run: |
+          gh pr edit "$PR" --remove-label "deploy: dev" || true
+
+      - id: build
+        run: |
+          TAG="pr${PR}-$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ./deploy.sh build "$TAG"
+
+      - name: Deploy to dev
+        run: ./deploy.sh dev "${{ steps.build.outputs.tag }}"
+
+      - name: Say so on the PR
+        run: |
+          gh pr edit "$PR" --remove-label "deploy failed" || true
+          gh pr edit "$PR" --add-label "deployed: dev"
+          gh pr comment "$PR" --body "$(cat <<EOF
+          **Deployed to dev** — \`ucdfs:${{ steps.build.outputs.tag }}\`
+
+          http://192.168.0.166:3980 (on the home network)
+
+          Running \`${{ github.event.pull_request.head.sha }}\` against the
+          **ucdfs-nonprod** database. There is only one dev tier, so this
+          replaced whatever was on it before.
+          EOF
+          )"
+
+      - name: Report a failure on the PR
+        if: failure()
+        run: |
+          gh pr edit "$PR" --remove-label "deployed: dev" || true
+          gh pr edit "$PR" --add-label "deploy failed" || true
+          gh pr comment "$PR" --body "**Dev deploy failed.** See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Dev is still on whatever it was running before."
+
+  # New commits invalidate the label. Without this the PR keeps claiming code is
+  # on dev that was replaced two pushes ago, which is worse than saying nothing.
+  stale:
+    if: github.event.action == 'synchronize'
+    runs-on: [self-hosted, ucdfs]
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Drop the deployed label
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --remove-label "deployed: dev" || true
+
+  # Free the tier when the PR goes away — but only if dev is actually running
+  # this PR's image. Someone else's preview should survive your merge.
+  teardown:
+    if: github.event.action == 'closed'
+    runs-on: [self-hosted, ucdfs]
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Stop dev if it belongs to this PR
+        run: |
+          running="$(docker inspect -f '{{.Config.Image}}' ucdfs-dev 2>/dev/null || true)"
+          case "$running" in
+            ucdfs:pr${{ github.event.pull_request.number }}-*)
+              echo "dev is on $running — stopping it"
+              docker rm -f ucdfs-dev || true ;;
+            *)
+              echo "dev is on '${running:-nothing}', not this PR — leaving it alone" ;;
+          esac
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --remove-label "deployed: dev" || true

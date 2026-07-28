@@ -39,6 +39,12 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number }}
+      # Labels go through the REST issues API, never `gh pr edit`. That command
+      # resolves the PR over GraphQL and asks for projectCards, which GitHub has
+      # deprecated — it returns an error and exits 1 even though the label
+      # change itself would have been fine. It cost a green deploy being
+      # reported as a failure.
+      REPO: ${{ github.repository }}
     steps:
       # The PR head, not the merge commit. We are deploying the branch as it is,
       # which is what someone clicking through dev expects to be looking at.
@@ -50,7 +56,7 @@ jobs:
         # First thing, so a re-label always re-runs. Leaving it on means the
         # second click does nothing and looks like the workflow is broken.
         run: |
-          gh pr edit "$PR" --remove-label "deploy: dev" || true
+          gh api --silent -X DELETE "/repos/$REPO/issues/$PR/labels/deploy%3A%20dev" || true
 
       - id: build
         run: |
@@ -63,9 +69,11 @@ jobs:
 
       - name: Say so on the PR
         run: |
-          gh pr edit "$PR" --remove-label "deploy failed" || true
-          gh pr edit "$PR" --add-label "deployed: dev"
-          gh pr comment "$PR" --body "$(cat <<EOF
+          gh api --silent -X DELETE "/repos/$REPO/issues/$PR/labels/deploy%20failed" || true
+          gh api --silent -X POST "/repos/$REPO/issues/$PR/labels" -f "labels[]=deployed: dev"
+          # REST for the same reason as the labels: `gh pr comment` resolves the
+          # PR over GraphQL and trips the same deprecated projectCards field.
+          gh api --silent -X POST "/repos/$REPO/issues/$PR/comments" -f body="$(cat <<EOF
           **Deployed to dev** — \`ucdfs:${{ steps.build.outputs.tag }}\`
 
           http://192.168.0.166:3980 (on the home network)
@@ -79,9 +87,10 @@ jobs:
       - name: Report a failure on the PR
         if: failure()
         run: |
-          gh pr edit "$PR" --remove-label "deployed: dev" || true
-          gh pr edit "$PR" --add-label "deploy failed" || true
-          gh pr comment "$PR" --body "**Dev deploy failed.** See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Dev is still on whatever it was running before."
+          gh api --silent -X DELETE "/repos/$REPO/issues/$PR/labels/deployed%3A%20dev" || true
+          gh api --silent -X POST "/repos/$REPO/issues/$PR/labels" -f "labels[]=deploy failed" || true
+          gh api --silent -X POST "/repos/$REPO/issues/$PR/comments" \
+            -f body="**Dev deploy failed.** See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Dev is still on whatever it was running before." || true
 
   # New commits invalidate the label. Without this the PR keeps claiming code is
   # on dev that was replaced two pushes ago, which is worse than saying nothing.
@@ -95,8 +104,7 @@ jobs:
     steps:
       - name: Drop the deployed label
         run: |
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" --remove-label "deployed: dev" || true
+          gh api --silent -X DELETE "/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deployed%3A%20dev" || true
 
   # Free the tier when the PR goes away — but only if dev is actually running
   # this PR's image. Someone else's preview should survive your merge.
@@ -118,5 +126,4 @@ jobs:
             *)
               echo "dev is on '${running:-nothing}', not this PR — leaving it alone" ;;
           esac
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" --remove-label "deployed: dev" || true
+          gh api --silent -X DELETE "/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deployed%3A%20dev" || true

@@ -1811,8 +1811,19 @@ function tourRender(){
   document.getElementById('tour-title').textContent=s.t;
   document.getElementById('tour-text').textContent=s.p;
   document.getElementById('tour-art').innerHTML=s.art+'<small>'+s.sub+'</small>';
-  document.getElementById('tour-dots').innerHTML=
-    TOUR.map((_,i)=>'<div class="tour-dot'+(i===tourAt?' on':'')+'"></div>').join('');
+  // Built as elements rather than by splicing an expression into a class
+  // attribute. suite-static reads those attributes with a regex to check every
+  // class is defined somewhere, and an expression inside one parses as two
+  // nonsense class names — so the check fails on markup that is perfectly fine.
+  // Cheaper to write it this way than to teach the checker to read JavaScript.
+  const dots=document.getElementById('tour-dots');
+  dots.innerHTML='';
+  TOUR.forEach((_,i)=>{
+    const dot=document.createElement('div');
+    dot.className='tour-dot';
+    if(i===tourAt) dot.classList.add('on');
+    dots.appendChild(dot);
+  });
   document.getElementById('tour-back').style.visibility=tourAt?'':'hidden';
   document.getElementById('tour-next').textContent=tourAt===TOUR.length-1?'Got it':'Next';
 }

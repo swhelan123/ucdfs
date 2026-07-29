@@ -48,7 +48,10 @@ const PAGES = [
   console.log('\ndashboard content');
   {
     const { w, d, errors } = await open('/', { setCookies, failOnPrompt: true });
-    const cards = d.querySelectorAll('#applet-grid .applet');
+    // Both blocks: the dashboard lays cards out in groups now (Tools, then Last
+    // season), so counting one container would miss the archived ones and read
+    // as cards having gone missing from the page.
+    const cards = d.querySelectorAll('#applet-grid .applet, #applet-groups .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);
     // The grid is filtered by the subteam chips now. A fresh test account has no
     // subteam, so it must land on All and show everything — a default that hid

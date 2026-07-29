@@ -30,8 +30,13 @@ const today = new Date().toISOString().slice(0, 10);
 (async () => {
   const a = await signUp('Admin', 'Probe');
   const b = await signUp('Admin', 'Victim');
+  // A third account that exists only to be erased, so account deletion can be
+  // tested end to end without taking the victim out from under the checks that
+  // come after it.
+  const c = await signUp('Admin', 'Doomed');
   const hdrA = { Cookie: a.setCookies.map(c => c.split(';')[0]).join('; ') };
   const hdrB = { Cookie: b.setCookies.map(c => c.split(';')[0]).join('; ') };
+  const hdrC = { Cookie: c.setCookies.map(x => x.split(';')[0]).join('; ') };
   const post = (path, body, hdr = hdrA) => fetch(BASE + path, {
     method: 'POST', headers: { ...hdr, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -43,6 +48,10 @@ const today = new Date().toISOString().slice(0, 10);
     ['the people list',     '/api/admin/people',     null],
     ['handing out roles',   '/api/admin/role',       { id: 'x', role: 'admin' }],
     ['switching god mode',  '/api/admin/god-mode',   { on: true }],
+    ['deleting an account', '/api/admin/user/delete',
+      { id: 'x', confirm_email: 'x@ucdconnect.ie' }],
+    ['deleting a feed line','/api/admin/activity/delete',
+      { source: 'activity_log', id: 1 }],
   ]) {
     const r = body === null && path.startsWith('/api')
       ? await fetch(BASE + path, { headers: hdrA })
@@ -204,6 +213,19 @@ const today = new Date().toISOString().slice(0, 10);
     (await post('/api/log', { first_name: 'Admin', last_name: 'Victim',
       date: today, status: 'arriving', arrival_time: '10:00' })).status === 403);
 
+  // Deleting is the most destructive thing on the site, so it asks for the
+  // override as well as the role — the same rule as every other cross-user
+  // write. An admin reading the people list with the switch off cannot erase
+  // anybody by mis-clicking.
+  const doomedRow = (await json(await fetch(BASE + '/api/admin/people', { headers: hdrA })))
+    .people.find(x => /Doomed/.test(x.name)) || {};
+  check('admin alone cannot delete an account',
+    (await post('/api/admin/user/delete',
+      { id: doomedRow.id, confirm_email: c.email })).status === 403);
+  check('admin alone cannot delete a feed line',
+    (await post('/api/admin/activity/delete',
+      { source: 'activity_log', id: 1 })).status === 403);
+
   const on = await post('/api/admin/god-mode', { on: true });
   check('god mode switches on', on.status === 200, 'status ' + on.status);
   check('switching it on rewrites the cookie so the banner appears',
@@ -217,6 +239,24 @@ const today = new Date().toISOString().slice(0, 10);
     applets.map(x => x.id).join(' '));
   check('and can open the page',
     (await fetch(BASE + '/admin', { headers: hdrA, redirect: 'manual' })).status === 200);
+
+  // The page as rendered, not just the API. Note the profile cookie still says
+  // "member" — the delete buttons appear because the *people list* says the
+  // override is on, which is the database row. Reading elevation from the
+  // cookie here would draw them for a forged one.
+  {
+    const { w: aw, d: ad } = await open('/admin', { setCookies: a.setCookies });
+    const rows = [...ad.querySelectorAll('.who')];
+    const rowFor = (re) => rows.find(r => re.test(r.textContent)) || null;
+    const doomedRow2 = rowFor(/Doomed/), meRow = rowFor(/You/);
+    check('an elevated admin gets a delete button on someone else',
+      !!(doomedRow2 && doomedRow2.querySelector('.who-del')),
+      `${rows.length} rows drawn`);
+    check('and never one on themselves',
+      !!meRow && !meRow.querySelector('.who-del'),
+      meRow ? 'button drawn on own row' : 'own row not found');
+    aw.close();
+  }
 
   // God mode over everything: writing a row that is not yours.
   const godWrite = await post('/api/log', {
@@ -265,6 +305,87 @@ const today = new Date().toISOString().slice(0, 10);
     (await fetch(BASE + '/api/admin/people', { headers: hdrB })).status === 403);
   check('a made-up role is refused',
     (await post('/api/admin/role', { id: victim.id, role: 'superuser' })).status === 400);
+
+  console.log('\nerasing an account');
+  /* The wrong-email signup: a duplicate nothing can merge, that demoting does
+     not hide. Every rail is checked against the server — the page simply not
+     drawing a button is what "hiding a control is not a permission" is about. */
+  const doomed = ((await json(await fetch(BASE + '/api/admin/people', { headers: hdrA })))
+    .people || []).find(x => /Doomed/.test(x.name)) || {};
+  const probeId = ((people.people || []).find(x => x.is_me) || {}).id;
+
+  check('a mistyped confirmation email is refused',
+    (await post('/api/admin/user/delete',
+      { id: doomed.id, confirm_email: 'not.them@ucdconnect.ie' })).status === 400);
+  // Deleting yourself erases the account holding the session making the
+  // request, and if you were the last admin nobody could reach /admin again.
+  check('and you cannot delete yourself',
+    (await post('/api/admin/user/delete',
+      { id: probeId, confirm_email: a.email })).status === 400);
+
+  // An admin has to be demoted first. Deleting one outright is a keystroke away
+  // from locking the team out, and the demotion path already refuses to remove
+  // the last admin — this keeps deletion behind that same rail rather than
+  // giving it a second, weaker one of its own.
+  await post('/api/admin/role', { id: doomed.id, role: 'admin' });
+  check('an admin account cannot be deleted outright',
+    (await post('/api/admin/user/delete',
+      { id: doomed.id, confirm_email: c.email })).status === 400);
+  await post('/api/admin/role', { id: doomed.id, role: 'member' });
+
+  const erased = await post('/api/admin/user/delete',
+    { id: doomed.id, confirm_email: c.email.toUpperCase() });   // matched case-folded
+  check('the override can delete an account', erased.status === 200,
+    'status ' + erased.status + ' ' + JSON.stringify(await json(erased)));
+
+  check('and it leaves the people list',
+    !(((await json(await fetch(BASE + '/api/admin/people', { headers: hdrA }))).people || [])
+      .some(x => x.id === doomed.id)));
+
+  const ghost = await json(await fetch(
+    `${SB}/rest/v1/profiles?id=eq.${doomed.id}&select=id`,
+    { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } }));
+  check('the profile row cascaded away with the login', ghost.length === 0,
+    JSON.stringify(ghost));
+
+  // The login itself, not just the profile. Leaving the auth user behind would
+  // let them sign in again, and auth_login() re-creates a missing profile from
+  // the token's metadata — the account would come back from the dead.
+  const authGone = await fetch(`${SB}/auth/v1/admin/users/${doomed.id}`,
+    { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } });
+  check('and the sign-in is gone from GoTrue', authGone.status === 404,
+    'status ' + authGone.status);
+
+  // Their live session dies with them rather than lasting out the token cache,
+  // which would keep serving pages to a deleted account for up to a minute.
+  const zombie = await fetch(BASE + '/api/me', { headers: hdrC });
+  check('their existing session stops working immediately', zombie.status === 401,
+    'status ' + zombie.status);
+
+  console.log('\ntidying the feed');
+  const dash = await json(await fetch(BASE + '/api/dashboard', { headers: hdrA }));
+  const line = (dash.activity || [])
+    .find(i => i.source === 'activity_log' && /Doomed/.test(i.subject || ''));
+  check('the deletion is recorded in the feed', !!line,
+    JSON.stringify((dash.activity || []).slice(0, 3)));
+
+  if (line) {
+    check('an elevated admin can delete a feed entry',
+      (await post('/api/admin/activity/delete',
+        { source: line.source, id: line.id })).status === 200);
+    const after2 = await json(await fetch(BASE + '/api/dashboard', { headers: hdrA }));
+    check('and it is gone from the feed',
+      !(after2.activity || []).some(i => i.source === line.source && i.id === line.id),
+      JSON.stringify((after2.activity || []).slice(0, 3)));
+  }
+
+  // The source name reaches supabase.table(), so anything not on the list has
+  // to be refused before it gets there — not merely fail to match a row.
+  check('an unknown feed source is refused',
+    (await post('/api/admin/activity/delete', { source: 'profiles', id: 1 })).status === 400);
+  check('and a non-numeric id is refused',
+    (await post('/api/admin/activity/delete',
+      { source: 'activity_log', id: 'all' })).status === 400);
 
   console.log('\nswitching off, and back on');
   // Removing somebody's photo is the moderation case and takes the same path.

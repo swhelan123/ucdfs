@@ -74,6 +74,16 @@
   background: var(--ucd-navy); color: var(--ucd-gold);
 }
 
+/* Deliberately quiet until you hover it. It sits beside a dropdown people use
+   often, and the thing it does cannot be undone from inside the site. */
+.who-del {
+  flex-shrink: 0; padding: 8px 11px; font: inherit; font-size: 0.78rem;
+  border: 2px solid var(--border); border-radius: 11px; cursor: pointer;
+  background: var(--card); color: var(--muted);
+}
+.who-del:hover { border-color: #c0392b; color: #c0392b; }
+.who-del:disabled { opacity: 0.5; cursor: default; }
+
 .note {
   font-size: 0.76rem; color: var(--muted); line-height: 1.6;
   margin-top: 18px; padding: 14px 16px;
@@ -125,6 +135,12 @@
       <b>member</b> — the default. <b>committee</b> — Competition Hub admin
       actions: roster, shop runs, marking things bought.
       <b>admin</b> — can open this page and switch on admin override.
+      <br><br>
+      <b>Delete</b> removes an account for good — sign-in, profile, photo and
+      prompts — for the wrong-email signup that can't be merged. It appears with
+      admin override on, never for yourself, and never for another admin: demote
+      them first. Attendance and activity history stay behind, under the name
+      that was typed; tidy those on the attendance page and the dashboard feed.
     </div>
   </div>
 </div>
@@ -167,6 +183,21 @@ async function toggleGod() {
   }
 }
 
+/* Elevated right now? Read from the people list, which is the database row,
+   rather than from UCDFS.user() — the cookie is display data and is stale for a
+   whole page load after a change lands elsewhere. */
+function elevated() {
+  const me = PEOPLE.find(p => p.id === ME);
+  return !!(me && me.god_mode);
+}
+
+/* Drawing the button is not the permission — the server refuses all three of
+   these cases too (see /api/admin/user/delete). This just avoids offering
+   somebody a control that can only ever answer "no". */
+function mayDelete(p) {
+  return elevated() && !p.is_me && p.role !== 'admin';
+}
+
 function renderPeople() {
   document.getElementById('people').innerHTML = PEOPLE.map(p => `
     <div class="who">
@@ -182,10 +213,46 @@ function renderPeople() {
         ${ROLES.map(r => `<option value="${UCDFS.esc(r)}"
            ${r === p.role ? 'selected' : ''}>${UCDFS.esc(r)}</option>`).join('')}
       </select>
+      ${mayDelete(p) ? `<button class="who-del" type="button"
+         data-id="${UCDFS.esc(p.id)}"
+         title="Delete this account permanently">Delete</button>` : ''}
     </div>`).join('');
 
   document.querySelectorAll('.who-role').forEach(sel =>
     sel.addEventListener('change', () => setRole(sel, sel.dataset.id, sel.value)));
+  document.querySelectorAll('.who-del').forEach(btn =>
+    btn.addEventListener('click', () => deleteUser(btn, btn.dataset.id)));
+}
+
+async function deleteUser(btn, id) {
+  const who = PEOPLE.find(p => p.id === id);
+  if (!who) return;
+
+  /* Typing the address is the confirmation, not an OK button. The reason this
+     control exists is a wrong email address, so the address is exactly the
+     thing worth reading twice — and the server checks it again, which is what
+     actually stops a stale id from deleting the wrong person. */
+  const typed = prompt(
+    `Delete ${who.name} permanently?\n\n` +
+    'This removes their sign-in, profile, photo and prompts, and cannot be ' +
+    'undone. Attendance and activity history stay, under the name they typed.\n\n' +
+    'Type their email address to confirm:', '');
+  if (typed === null) return;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/user/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, confirm_email: (typed || '').trim() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(`${who.name} deleted`);
+    await load();
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't delete that account");
+  }
 }
 
 async function setRole(sel, id, role) {

@@ -22,7 +22,7 @@
  * Note that its profile cookie still says "member" throughout — the checks
  * passing anyway is the proof that authorization comes from the database.
  */
-const { BASE, check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 
 const json = async (r) => { try { return await r.json(); } catch (e) { return {}; } };
 const today = new Date().toISOString().slice(0, 10);
@@ -126,8 +126,14 @@ const today = new Date().toISOString().slice(0, 10);
   {
     const { w, d } = await open('/', { setCookies: a.setCookies, failOnPrompt: true });
     check('a member never sees it', !d.getElementById('ucdfs-override-bar'));
+    // Both halves matter. "No card called Admin" is satisfied by a grid with
+    // nothing in it, which is what an undrawn dashboard looks like — so the
+    // cards have to be there before their absence means anything.
+    await waitFor(() => w.eval('TILES_LOADED') === true);
+    const memberCards = [...d.querySelectorAll('#applet-grid .applet, #applet-groups .applet')];
     check('and gets no admin card',
-      ![...d.querySelectorAll('#applet-grid .applet')].some(c => /Admin/.test(c.textContent)),
+      memberCards.length > 0 && !memberCards.some(c => /Admin/.test(c.textContent)),
+      `${memberCards.length} cards: ` +
       [...d.querySelectorAll('.applet-name')].map(e => e.textContent.trim()).join(' | '));
     w.close();
   }

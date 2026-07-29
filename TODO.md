@@ -312,6 +312,23 @@ Still to do, roughly in order:
 
 ---
 
+### `/api/dashboard` is a dozen round trips  🐌
+Not urgent, but worth knowing about. Every tile does its own Supabase queries,
+sequentially, and the endpoint now waits on roughly a dozen before it answers.
+Independence is deliberate — one failing table nulls one tile instead of blanking
+the page — but the calls are independent too, and nothing makes them wait for
+each other.
+
+This surfaced as a *test* failure rather than a complaint: `suite-pages` asserted
+on the dashboard after a fixed 1.75s and started reading an undrawn page on a
+busy runner. The suite waits for the page's own signal now (`waitFor` in
+`tests/lib.js`), so it is honest either way — but the endpoint is genuinely slow
+on a cold connection and the fix is small: gather the tiles concurrently
+(`asyncio.to_thread` per tile, or one `Promise.all`-shaped batch) and keep the
+per-tile isolation. Worth doing before the feed or the tiles grow again.
+
+---
+
 ### Teams notifications  🔔
 *Highest value per line of code on this list.*
 

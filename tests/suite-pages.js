@@ -5,7 +5,7 @@
  * "plans launcher" broke — the element went, its event wiring did not, and the
  * page threw on load.
  */
-const { BASE, check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 
 const PAGES = [
   { path: '/',           name: 'dashboard'  },
@@ -48,6 +48,17 @@ const PAGES = [
   console.log('\ndashboard content');
   {
     const { w, d, errors } = await open('/', { setCookies, failOnPrompt: true });
+
+    // Wait for the page's own "the data landed and I have painted" flag before
+    // asserting anything about what it drew. TILES_LOADED is set immediately
+    // after boot()'s four API calls resolve, so it is the honest signal; open()'s
+    // settle() gives up after 1.75s, which is less than /api/dashboard's own
+    // round trips need on a busy runner, and every check below then reads an
+    // undrawn page and reports "0 cards". Read through eval because a top-level
+    // `let` is not a property of window.
+    const drawn = await waitFor(() => w.eval('TILES_LOADED') === true);
+    check('the dashboard finishes drawing', drawn, 'TILES_LOADED still false');
+
     // Both blocks: the dashboard lays cards out in groups now (Tools, then Last
     // season), so counting one container would miss the archived ones and read
     // as cards having gone missing from the page.
@@ -73,7 +84,10 @@ const PAGES = [
     // at all — if reveal() stops being called, or is renamed, or an early
     // return skips it, every check above still passes against a DOM nobody can
     // see. This is the one that would notice.
-    check('the page is revealed once drawn', d.body.classList.contains('ready'),
+    // reveal() also fires on a 2.5s safety timer, so waiting for TILES_LOADED
+    // above does not guarantee it has run yet — wait for the class itself.
+    check('the page is revealed once drawn',
+      await waitFor(() => d.body.classList.contains('ready'), 4000),
       `body class="${d.body.className}"`);
     // No tile may still be showing its placeholder by the time it is visible —
     // the "…" in every card was half of what the flash actually looked like.

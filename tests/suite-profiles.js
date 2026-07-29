@@ -17,7 +17,7 @@
  * applied yet the suite says so loudly and skips those checks, rather than
  * reporting a schema gap as a code failure.
  */
-const { BASE, check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 
 /* A real 1×1 PNG. Used to prove the upload path accepts a genuine image and
    the sniffer is reading bytes rather than the declared content type. */
@@ -410,6 +410,11 @@ const STARTED = Date.now() - 1000;
   }
   {
     const { w, d, errors } = await open('/', { setCookies: cookiesA, failOnPrompt: true });
+    // Wait for the dashboard to have actually drawn before counting anything on
+    // it — open()'s settle() window is shorter than /api/dashboard needs on a
+    // busy runner, and every count below then reads zero. See waitFor in lib.js.
+    check('the dashboard finishes drawing',
+      await waitFor(() => w.eval('TILES_LOADED') === true), 'TILES_LOADED still false');
     const chips = [...d.querySelectorAll('#subteam-chips .chip')];
     check('dashboard has a chip per subteam plus All', chips.length === 4,
       `${chips.length} chips`);

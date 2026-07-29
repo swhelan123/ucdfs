@@ -78,8 +78,59 @@ the dashboard to add a tool.**
 - `requires_role`: the permission field. `_may_open()` enforces it on both the
   page route and `/api/applets`, so a gated entry can never be visible on the
   dashboard but closed on click. Omitting it means everyone.
+- `plan`: for entries backed by `pt.html` — which build plan the card opens.
+  See "Build plans" below. Route and plan must agree: `pt.html` reads the plan
+  id back out of its own URL.
 
-Current ids: `attendance`, `profiles`, `pt`, `harness`, `comp`, `mech`, `admin`.
+Current ids: `attendance`, `profiles`, `pt`, `pt-2627`, `harness`, `comp`,
+`mech`, `admin`.
+
+## Build plans
+
+`pt.html` is one canvas serving many plans. `PLANS` in `main.py` holds a plan's
+id and name **and nothing else** — sections, tasks, dependencies and tick state
+are all rows. **Adding a plan is one `PLANS` entry plus one `APPLETS` entry
+routed as `/plan/<id>`**; whoever owns it then draws its sections from the
+canvas. `/pt` is the legacy alias for plan `pt`, kept because saved bookmarks
+and pre-multi-plan clients omit the plan entirely and must keep meaning the
+25/26 plan.
+
+- Every `pt_*` table carries a `plan_id` (`migrations/005`), default `'pt'`.
+  Composite PKs — node ids are only unique within a plan.
+- `PLANS` is also the whitelist. An unknown plan id is a 400 by construction on
+  every endpoint, never a silent write to a plan no page can show.
+- The live-collab WebSocket is one room per plan, scoped by the `join`
+  message — never relay across plans or a drag on one plan moves phantoms on
+  every other.
+- `DASHBOARD_PLAN` in `main.py` picks which plan the dashboard tile counts.
+  Point it at the new plan at season rollover, or an empty next-season plan
+  drags the live build's percentage to nonsense.
+- The feed credits a tick to the applet that opens its plan
+  (`APPLET_BY_PLAN`), so lines carry the right badge after plans multiply.
+
+### Sections are data, not code
+
+`pt_sections` (`migrations/006`) holds label, position and size. They were
+`cols`/`rows` definitions in `PLANS` for exactly one release; moving them into
+the table is what makes "Mech want their own flowchart" a thing Mech can do
+instead of a deploy. 006 seeds the legacy plan's seven boxes at the geometry
+the old hardcoded layout computed — those numbers are derived in a comment
+there, not eyeballed, because getting them wrong scatters the 25/26 tasks
+outside their boxes.
+
+- **Section ids are permanent; labels are free.** A task stores its section id,
+  so ids are minted server-side (`sec_…`) and never taken from the client.
+- **Deleting a section that still holds tasks is refused**
+  (`/pt/api/sections/delete`). Cascading would leave tasks pointing at a box
+  that no longer exists — invisible on the canvas, still in the graph, still
+  counted by the dashboard tile, and nothing in the app puts them back.
+- `/pt/api/sections` **updates**, it does not upsert. An id that does not exist
+  has to be a no-op, or a stale client invents boxes nobody can find.
+- **Moving a section moves its tasks.** They hold absolute canvas coordinates,
+  not offsets within a box, so the drag carries them and persists the lot
+  through `/pt/api/nodes/move-bulk`. Skip that and the box walks off alone.
+- The canvas has no fixed size: `recomputeCanvas()` derives it from where the
+  sections actually are, after every move, resize, add and delete.
 
 ## Auth and data access
 

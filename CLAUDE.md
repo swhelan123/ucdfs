@@ -34,9 +34,10 @@ static/
   attendance.html     card-based applet
   comp.html           card-based applet
   profiles.html       card-based applet — the team directory
+  flowcharts.html     card-based applet — the chart picker, at /flowcharts
   admin.html          card-based applet — roles, god mode, deleting accounts
                       (requires_role: admin)
-  pt.html             full-screen canvas tool
+  pt.html             full-screen canvas tool — draws any one chart, at /plan/<id>
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
 tests/                see tests/README.md
@@ -78,45 +79,96 @@ the dashboard to add a tool.**
 - `requires_role`: the permission field. `_may_open()` enforces it on both the
   page route and `/api/applets`, so a gated entry can never be visible on the
   dashboard but closed on click. Omitting it means everyone.
-- `plan`: for entries backed by `pt.html` — which build plan the card opens.
-  See "Build plans" below. Route and plan must agree: `pt.html` reads the plan
-  id back out of its own URL.
+- `plan`: for a card that opens one specific chart — which chart. Only last
+  season's plans use it now; the feed reads it to badge their ticks.
+- `group`: which dashboard block the card sits in. Ids come from
+  `APPLET_GROUPS`; omitting it means the main `tools` grid. See "Dashboard
+  layout" below.
 
-Current ids: `attendance`, `profiles`, `pt`, `pt-2627`, `harness`, `comp`,
-`mech`, `admin`.
+Current ids: `attendance`, `profiles`, `flowcharts`, `harness`, `comp`,
+`admin`, and under `archive`: `pt`, `mech`.
 
-## Build plans
+## Dashboard layout
 
-`pt.html` is one canvas serving many plans. `PLANS` in `main.py` holds a plan's
-id and name **and nothing else** — sections, tasks, dependencies and tick state
-are all rows. **Adding a plan is one `PLANS` entry plus one `APPLETS` entry
-routed as `/plan/<id>`**; whoever owns it then draws its sections from the
-canvas. `/pt` is the legacy alias for plan `pt`, kept because saved bookmarks
-and pre-multi-plan clients omit the plan entirely and must keep meaning the
-25/26 plan.
+`APPLET_GROUPS` in `main.py` is the list of blocks and their headings, sent to
+the dashboard with the cards. Cards carry a `group`; a card without one lands in
+`tools`, so an entry that forgets to say goes where people are already looking
+rather than into an archive nobody scrolls to.
 
+A block with nothing in it **renders nothing, heading included** — a heading over
+empty space reads as a page that failed to load, and the subteam filter can
+easily empty a block. `tests/suite-pages.js` covers the dashboard drawing clean;
+the grouping logic is `render()` in `dashboard.html`.
+
+`UCDFS.applets()` and `UCDFS.appletGroups()` share one cached `/api/applets`
+response, so asking for both is still a single request.
+
+## Flowcharts
+
+`pt.html` is one canvas and it draws whichever chart its URL names. **There is no
+registry of charts** — they are rows in `plans` (`migrations/007`), made and named
+from `/flowcharts`, which is the picker. Making a chart is something the team
+does at runtime; it needs no code change, no migration and no deploy. That is the
+whole point of 005 → 006 → 007, and it is how Mech get a real build plan.
+
+- `/flowcharts` lists them, `/plan/<id>` opens one. `/pt` is the legacy alias for
+  chart `pt`, kept because bookmarks and pre-multi-plan clients omit the chart
+  entirely and must keep meaning the 25/26 plan.
 - Every `pt_*` table carries a `plan_id` (`migrations/005`), default `'pt'`.
-  Composite PKs — node ids are only unique within a plan.
-- `PLANS` is also the whitelist. An unknown plan id is a 400 by construction on
-  every endpoint, never a silent write to a plan no page can show.
-- The live-collab WebSocket is one room per plan, scoped by the `join`
-  message — never relay across plans or a drag on one plan moves phantoms on
-  every other.
-- `DASHBOARD_PLAN` in `main.py` picks which plan the dashboard tile counts.
-  Point it at the new plan at season rollover, or an empty next-season plan
-  drags the live build's percentage to nonsense.
-- The feed credits a tick to the applet that opens its plan
-  (`APPLET_BY_PLAN`), so lines carry the right badge after plans multiply.
+  Composite PKs — node ids are only unique within a chart.
+- **The whitelist moved, it did not go.** A chart id reaches `supabase.table()`
+  filters, so `_plan_or_400()` checks it against the `plans` table on every
+  plan-scoped write and refuses an id that names nothing. Deliberately uncached:
+  a stale whitelist presents as "the chart I just made does not exist".
+- **Ids are minted server-side** (`chart_…`, like `sec_…` and `cust_…`) so a
+  caller cannot name a row into existence by asking for it.
+- Chart CRUD is **not role-gated**, on purpose. A chart is shared work like a
+  task or a section, and adding and editing those is already open to any member;
+  gating charts alone would put the friction on exactly the person we want
+  drawing one. The rails are structural instead — see below. Contrast
+  `/api/admin/*`, which is gated because it acts on *someone else's* data.
+- **Archiving is the reversible action; deleting is refused unless the chart is
+  empty.** There is no undo in this app, so the only chart `/api/plans/delete`
+  will destroy is one with nothing in it. It also makes the caller echo the
+  name back, the same rail as deleting an account, so a stale list cannot take
+  out a chart someone has since renamed. `pt_done_log` survives a delete — it
+  records what happened, not what exists.
+- That endpoint **never deletes from `pt_nodes` or `pt_sections`**, and must not
+  start: cascading them would make the emptiness check decoration and turn one
+  click into a lost season. It checks emptiness **twice**, before and after
+  sweeping the satellite tables, because there is no transaction across those
+  calls — a task added mid-sweep would otherwise end up in a chart that no
+  longer exists, which the whitelist then makes permanently unreachable.
+- Because a chart can be deleted, `/plan/<id>` **404s** on an unknown id rather
+  than serving a canvas that 400s on its first request. `PAGE_PREFIXES` covers
+  `/plan/` so a signed-out bookmark redirects to sign-in instead of answering
+  with JSON.
+- The live-collab WebSocket is one room per chart, and the room name in the
+  `join` message is checked the same way — never relay across charts.
+- `DASHBOARD_PLAN` in `main.py` picks which chart the dashboard's build tile
+  counts. Point it at the new one at season rollover.
+- The feed badges a tick with the card that opens its chart when one exists
+  (`APPLET_BY_PLAN`) and with `flowcharts` otherwise.
+
+### First-run tour
+
+`pt.html` shows a five-step tour the first time and never again, with a `?` in
+the header to bring it back — a tutorial you can only ever see once is one people
+dismiss by accident and then cannot find. "Seen" is a versioned localStorage key:
+it is a per-browser preference, not identity, so it needs no column and no round
+trip, and the worst failure is showing somebody the tour twice. Its CSS lives in
+`pt.html` for the same reason `shared.js` carries its own — this page does not
+load `shared.css`.
 
 ### Sections are data, not code
 
 `pt_sections` (`migrations/006`) holds label, position and size. They were
-`cols`/`rows` definitions in `PLANS` for exactly one release; moving them into
-the table is what makes "Mech want their own flowchart" a thing Mech can do
-instead of a deploy. 006 seeds the legacy plan's seven boxes at the geometry
-the old hardcoded layout computed — those numbers are derived in a comment
-there, not eyeballed, because getting them wrong scatters the 25/26 tasks
-outside their boxes.
+`cols`/`rows` definitions in code for exactly one release; moving them into the
+table is what makes "Mech want their own flowchart" a thing Mech can do instead
+of a deploy. 006 seeds the legacy plan's seven boxes at the geometry the old
+hardcoded layout computed — those numbers are derived in a comment there, not
+eyeballed, because getting them wrong scatters the 25/26 tasks outside their
+boxes.
 
 - **Section ids are permanent; labels are free.** A task stores its section id,
   so ids are minted server-side (`sec_…`) and never taken from the client.
@@ -519,17 +571,30 @@ It exists because 001–004 covered five tables and the database had seventeen:
 schema was not in git, so no second environment could be built and losing the
 project meant losing the design.
 
-From here: schema changes are new numbered files (`005_…`) applied to non-prod
-first, then to prod. Never edit `000_baseline.sql` — it is a snapshot of a
-moment, not a living document.
+From here: schema changes are new numbered files applied to non-prod first, then
+to prod. Never edit `000_baseline.sql` — it is a snapshot of a moment, not a
+living document.
+
+**Apply a migration before deploying the code that needs it**, to each database
+in turn. The flowchart work is the worked example: 005 adds `plan_id`, 006 turns
+sections into rows, 007 turns charts into rows, and each one is filtered or read
+unconditionally by the code that follows it — so non-prod gets the SQL, then CI
+runs, then prod gets the SQL, then prod gets the image. The other order 500s
+every chart endpoint.
 
 ### Seeding non-prod
 
-`scripts/seed-nonprod.sh` copies the reference data down from production: the PT
-plan graph, the competition schedule, the harness document, `comp_meta`. It
-copies **nothing that is about a person** — no profiles, attendance, roster,
-requests, `pt_done_log` or `activity_log`, all of which carry names, and no
-photos, which are files on disk in a per-tier directory for exactly this reason.
+`scripts/seed-nonprod.sh` copies the reference data down from production: the
+charts and their graphs, the competition schedule, the harness document,
+`comp_meta`. It copies **nothing that is about a person** — no profiles,
+attendance, roster, requests, `pt_done_log` or `activity_log`, all of which carry
+names, and no photos, which are files on disk in a per-tier directory for exactly
+this reason. `plans.created_by` is stripped on the way for the same reason: the
+chart is reference data, the name of whoever made it is not.
+
+`plans` is copied **first**, for the same reason sections come before nodes — a
+chart's rows are unreachable until the chart itself exists, since
+`_plan_or_400()` reads that table.
 
 The rule is not "is it sensitive" but "is it about a person", and there is no
 flag that relaxes it. It reads from a `UCDFS_ENV=prod` file and writes only to a

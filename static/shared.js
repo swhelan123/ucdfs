@@ -264,15 +264,29 @@
 
   // ── Applet registry ──────────────────────────────────────────────────────
 
-  /** Cached fetch of /api/applets — the server is the single source of truth. */
-  function applets() {
+  /**
+   * Cached fetch of /api/applets — the server is the single source of truth.
+   *
+   * The cache holds the whole payload so the dashboard's layout groups arrive
+   * on the same request as the cards. applets() still resolves to just the
+   * array, which is what every caller wants.
+   */
+  function appletsPayload() {
     if (!appletsPromise) {
       appletsPromise = fetch('/api/applets')
         .then(function (r) { return r.json(); })
-        .then(function (j) { return j.applets || []; })
-        .catch(function () { appletsPromise = null; return []; });
+        .catch(function () { appletsPromise = null; return {}; });
     }
     return appletsPromise;
+  }
+
+  function applets() {
+    return appletsPayload().then(function (j) { return (j && j.applets) || []; });
+  }
+
+  /** The dashboard's blocks, in order. Empty means "one grid, no headings". */
+  function appletGroups() {
+    return appletsPayload().then(function (j) { return (j && j.groups) || []; });
   }
 
   // ── Runtime styles ───────────────────────────────────────────────────────
@@ -553,6 +567,7 @@
     requireName: requireName,
     renderPill: renderPill,
     applets: applets,
+    appletGroups: appletGroups,
     onboard: onboard,
     godBar: godBar,
     photos: photos,

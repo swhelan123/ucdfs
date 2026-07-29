@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Flowcharts</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Flowcharts-only styles. Tokens, header, buttons, toast, spinner and empty
+   states all come from shared.css. */
+:root { --page-max: 900px; }
+
+.chart-list { display: flex; flex-direction: column; gap: 12px; }
+
+.chart {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+  padding: 16px 18px; box-shadow: var(--shadow-sm);
+  text-decoration: none; color: inherit; position: relative;
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.chart:hover { border-color: var(--indigo-light); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.chart.is-archived { opacity: .72; }
+.chart.is-archived:hover { opacity: 1; }
+
+.chart-icon {
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.35rem; background: var(--indigo-bg);
+}
+.chart-body { flex: 1; min-width: 0; }
+.chart-name { font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+.chart-blurb { font-size: .8rem; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.chart-stat  { font-size: .76rem; font-weight: 700; color: var(--indigo); margin-top: 6px; }
+.chart-stat .bar {
+  display: inline-block; vertical-align: middle; width: 68px; height: 5px;
+  border-radius: 3px; background: var(--border); margin-left: 8px; overflow: hidden;
+}
+.chart-stat .bar i { display: block; height: 100%; background: var(--indigo); border-radius: 3px; }
+
+/* The menu button sits inside the card, so it has to stop the click that would
+   otherwise follow the link the whole card is. */
+.chart-menu {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px;
+  border: 1.5px solid var(--border); background: var(--card);
+  font-size: 1rem; line-height: 1; cursor: pointer; color: var(--muted);
+}
+.chart-menu:hover { border-color: var(--indigo-light); color: var(--ink); }
+
+.tag-arch {
+  font-size: .62rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .06em; padding: 2px 7px; border-radius: 999px;
+  background: var(--border); color: var(--muted);
+}
+
+/* ── New / edit chart form ── */
+.chart-form {
+  background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+  padding: 18px; box-shadow: var(--shadow-sm); margin-bottom: 18px;
+}
+.chart-form .row { display: flex; gap: 10px; align-items: flex-start; }
+.chart-form .icon-field { width: 62px; flex-shrink: 0; }
+.chart-form .icon-field .text-input { text-align: center; font-size: 1.15rem; }
+.chart-form .grow { flex: 1; min-width: 0; }
+.chart-form label {
+  display: block; font-size: .68rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); margin-bottom: 5px;
+}
+.chart-form .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.chart-form .hint { font-size: .74rem; color: var(--muted); margin-top: 10px; }
+
+/* ── Menu sheet ── */
+.sheet-bg {
+  position: fixed; inset: 0; background: rgba(15,23,42,.42);
+  display: none; align-items: center; justify-content: center; z-index: 300; padding: 18px;
+}
+.sheet-bg.show { display: flex; }
+.sheet {
+  background: var(--card); border-radius: 20px; padding: 20px;
+  width: 100%; max-width: 340px; box-shadow: 0 20px 50px rgba(15,23,42,.3);
+}
+.sheet h3 { font-size: 1rem; font-weight: 800; margin-bottom: 4px; }
+.sheet .sub { font-size: .78rem; color: var(--muted); margin-bottom: 14px; }
+.sheet .stack { display: flex; flex-direction: column; gap: 8px; }
+.danger { background: #fee2e2; color: #991b1b; }
+.danger:hover { background: #fecaca; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo">🗺️</div>
+      <div class="header-text">
+        <div class="header-title">Flowcharts</div>
+        <div class="header-sub" id="header-sub">Build plans and dependency charts</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="section-row">
+      <div class="section-label">Charts</div>
+      <button class="btn btn-sm btn-dark" id="new-btn" type="button">＋ New chart</button>
+    </div>
+
+    <div class="chart-form" id="form" style="display:none">
+      <div class="row">
+        <div class="icon-field">
+          <label for="f-icon">Icon</label>
+          <input class="text-input" type="text" id="f-icon" maxlength="4" value="🗺️" autocomplete="off">
+        </div>
+        <div class="grow">
+          <label for="f-name">Name</label>
+          <input class="text-input" type="text" id="f-name" placeholder="e.g. Chassis Build 26/27"
+                 maxlength="80" autocomplete="off">
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <label for="f-blurb">Description <span style="text-transform:none;font-weight:400">(optional)</span></label>
+        <input class="text-input" type="text" id="f-blurb" maxlength="160"
+               placeholder="What this chart is for" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button class="btn btn-sm btn-ghost" id="f-cancel" type="button">Cancel</button>
+        <button class="btn btn-sm btn-dark" id="f-save" type="button">Create chart</button>
+      </div>
+      <div class="hint">A new chart starts empty. You add its sections and tasks on the canvas.</div>
+    </div>
+
+    <div class="chart-list" id="live-list"></div>
+    <div class="empty" id="empty" style="display:none">
+      <div class="empty-icon">🗺️</div>
+      <div class="empty-text">No charts yet. Make one to start laying out a build plan.</div>
+    </div>
+
+    <div id="arch-wrap" style="display:none">
+      <div class="section-label" style="margin-top:26px">Last season</div>
+      <div class="chart-list" id="arch-list"></div>
+    </div>
+
+    <div class="foot">UCD Formula Student · <span id="foot-count"></span></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="sheet-bg">
+  <div class="sheet">
+    <h3 id="sheet-title">Chart</h3>
+    <div class="sub" id="sheet-sub"></div>
+    <div class="stack">
+      <button class="btn btn-full btn-ghost" id="sheet-open" type="button">Open</button>
+      <button class="btn btn-full btn-ghost" id="sheet-rename" type="button">Rename</button>
+      <button class="btn btn-full btn-ghost" id="sheet-archive" type="button">Archive</button>
+      <button class="btn btn-full danger" id="sheet-delete" type="button">Delete</button>
+      <button class="btn btn-full btn-ghost" id="sheet-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+let CHARTS = [];
+/* null while the form is creating, a chart id while it is renaming. One form,
+   two jobs — the same trick the section editor on the canvas uses. */
+let editingId = null;
+let sheetId   = null;
+
+const el = id => document.getElementById(id);
+
+function chartCard(c) {
+  const pct = c.tasks ? Math.round(100 * c.done / c.tasks) : 0;
+  const stat = c.tasks
+    ? `${pct}% of ${c.tasks} task${c.tasks === 1 ? '' : 's'}
+       <span class="bar"><i style="width:${pct}%"></i></span>`
+    : 'empty — nothing added yet';
+  return `
+    <div class="chart ${c.archived ? 'is-archived' : ''}">
+      <div class="chart-icon">${UCDFS.esc(c.icon || '🗺️')}</div>
+      <div class="chart-body">
+        <div class="chart-name">${UCDFS.esc(c.name)}
+          ${c.archived ? '<span class="tag-arch">Archived</span>' : ''}</div>
+        ${c.blurb ? `<div class="chart-blurb">${UCDFS.esc(c.blurb)}</div>` : ''}
+        <div class="chart-stat">${stat}</div>
+      </div>
+      <button class="chart-menu" type="button" data-id="${UCDFS.esc(c.id)}"
+              title="Rename, archive or delete" aria-label="Chart options">⋯</button>
+    </div>`;
+}
+
+/* The card is a link and the menu button is inside it, so the whole row is
+   wired here rather than wrapping it in an <a> the button would have to fight. */
+function wireList(container) {
+  container.querySelectorAll('.chart').forEach(row => {
+    const btn = row.querySelector('.chart-menu');
+    const id  = btn.dataset.id;
+    row.addEventListener('click', ev => {
+      if (ev.target.closest('.chart-menu')) return;
+      window.location.href = '/plan/' + encodeURIComponent(id);
+    });
+    row.style.cursor = 'pointer';
+    btn.addEventListener('click', ev => { ev.stopPropagation(); openSheet(id); });
+  });
+}
+
+function render() {
+  const live = CHARTS.filter(c => !c.archived);
+  const arch = CHARTS.filter(c => c.archived);
+
+  el('live-list').innerHTML = live.map(chartCard).join('');
+  el('arch-list').innerHTML = arch.map(chartCard).join('');
+  wireList(el('live-list'));
+  wireList(el('arch-list'));
+
+  el('empty').style.display     = live.length ? 'none' : '';
+  el('arch-wrap').style.display = arch.length ? '' : 'none';
+  el('foot-count').textContent  =
+    live.length + (live.length === 1 ? ' chart' : ' charts');
+}
+
+async function load() {
+  try {
+    const d = await (await fetch('/api/plans')).json();
+    CHARTS = d.plans || [];
+  } catch (e) { CHARTS = []; }
+  render();
+}
+
+/* ── The one form, for both creating and renaming ── */
+function openForm(id) {
+  editingId = id || null;
+  const c = id ? CHARTS.find(x => x.id === id) : null;
+  el('f-name').value  = c ? c.name : '';
+  el('f-icon').value  = c ? (c.icon || '🗺️') : '🗺️';
+  el('f-blurb').value = c ? (c.blurb || '') : '';
+  el('f-save').textContent = c ? 'Save changes' : 'Create chart';
+  el('form').style.display = '';
+  el('f-name').focus();
+}
+function closeForm() { el('form').style.display = 'none'; editingId = null; }
+
+async function saveForm() {
+  const name  = el('f-name').value.trim();
+  const icon  = el('f-icon').value.trim() || '🗺️';
+  const blurb = el('f-blurb').value.trim();
+  if (!name) { el('f-name').focus(); return; }
+
+  el('f-save').disabled = true;
+  try {
+    const creating = !editingId;
+    const r = await fetch(creating ? '/api/plans' : '/api/plans/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creating ? { name, icon, blurb }
+                                    : { id: editingId, name, icon, blurb }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'That did not work');
+    closeForm();
+    await load();
+    UCDFS.toast(creating ? 'Chart created' : 'Chart updated');
+    /* Straight into a brand-new chart: it is empty, and the next thing anyone
+       wants is to start drawing it. */
+    if (creating && j.plan) window.location.href = '/plan/' + encodeURIComponent(j.plan.id);
+  } catch (e) {
+    UCDFS.toast(e.message || 'That did not work');
+  } finally {
+    el('f-save').disabled = false;
+  }
+}
+
+/* ── Per-chart menu ── */
+function openSheet(id) {
+  const c = CHARTS.find(x => x.id === id);
+  if (!c) return;
+  sheetId = id;
+  el('sheet-title').textContent = c.name;
+  el('sheet-sub').textContent = c.tasks
+    ? `${c.tasks} task${c.tasks === 1 ? '' : 's'}${c.archived ? ' · archived' : ''}`
+    : 'Empty' + (c.archived ? ' · archived' : '');
+  el('sheet-archive').textContent = c.archived ? 'Un-archive' : 'Archive';
+  /* Deleting is only offered for a chart with nothing in it. The server refuses
+     it either way, but a button that always fails is worse than no button. */
+  el('sheet-delete').style.display = c.tasks ? 'none' : '';
+  el('sheet-bg').classList.add('show');
+}
+function closeSheet() { el('sheet-bg').classList.remove('show'); sheetId = null; }
+
+async function setArchived(id, archived) {
+  try {
+    const r = await fetch('/api/plans/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, archived }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Failed');
+    await load();
+    UCDFS.toast(archived ? 'Chart archived' : 'Chart restored');
+  } catch (e) { UCDFS.toast(e.message || 'Failed'); }
+}
+
+async function removeChart(id) {
+  const c = CHARTS.find(x => x.id === id);
+  if (!c) return;
+  if (!confirm(`Delete "${c.name}"? It is empty, so nothing is lost — but this cannot be undone.`)) return;
+  try {
+    const r = await fetch('/api/plans/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      /* The name goes back with the id on purpose: it is the same rail as
+         deleting an account, so a stale list cannot delete the wrong chart. */
+      body: JSON.stringify({ id, name: c.name }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'Failed');
+    await load();
+    UCDFS.toast('Chart deleted');
+  } catch (e) { UCDFS.toast(e.message || 'Failed'); }
+}
+
+el('new-btn').addEventListener('click', () => openForm(null));
+el('f-cancel').addEventListener('click', closeForm);
+el('f-save').addEventListener('click', saveForm);
+el('f-name').addEventListener('keydown', e => { if (e.key === 'Enter') saveForm(); });
+
+el('sheet-close').addEventListener('click', closeSheet);
+el('sheet-bg').addEventListener('click', e => { if (e.target === el('sheet-bg')) closeSheet(); });
+el('sheet-open').addEventListener('click', () => {
+  if (sheetId) window.location.href = '/plan/' + encodeURIComponent(sheetId);
+});
+el('sheet-rename').addEventListener('click', () => {
+  const id = sheetId; closeSheet(); if (id) openForm(id);
+});
+el('sheet-archive').addEventListener('click', () => {
+  const id = sheetId; if (!id) return;
+  const c = CHARTS.find(x => x.id === id);
+  closeSheet(); setArchived(id, !(c && c.archived));
+});
+el('sheet-delete').addEventListener('click', () => {
+  const id = sheetId; closeSheet(); if (id) removeChart(id);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (el('sheet-bg').classList.contains('show')) closeSheet();
+  else if (el('form').style.display !== 'none') closeForm();
+});
+
+UCDFS.gate(() => { UCDFS.renderPill(); load(); });
+</script>
+</body>
+</html>

@@ -11,10 +11,12 @@ const PAGES = [
   { path: '/',           name: 'dashboard'  },
   { path: '/attendance', name: 'attendance' },
   { path: '/comp',       name: 'comp'       },
+  { path: '/flowcharts', name: 'flowcharts' },
   { path: '/pt',         name: 'pt'         },
-  // Same file as /pt, different plan — catches the canvas failing to build
-  // itself from a plan whose sections arrive from the registry, not the DB.
-  { path: '/plan/pt-2627', name: 'pt-2627'  },
+  // The dynamic chart route, which is how every chart but the legacy one is
+  // reached. Aimed at 'pt' on purpose: charts are rows now, and the only one
+  // that cannot be deleted from the picker is a non-empty one.
+  { path: '/plan/pt',   name: 'plan/pt'     },
   { path: '/harness',    name: 'harness'    },
   { path: '/profiles',   name: 'profiles'   },
 ];

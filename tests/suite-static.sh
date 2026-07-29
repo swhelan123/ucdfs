@@ -13,7 +13,7 @@ ck "main.py parses" \
 ck "shared.js parses" \
    "$(node -e "new (require('vm').Script)(require('fs').readFileSync('$ROOT/static/shared.js','utf8'));console.log('ok')" 2>/dev/null)" "ok"
 
-for f in dashboard login attendance comp pt harness profiles admin; do
+for f in dashboard login attendance comp pt harness profiles admin flowcharts; do
   ck "$f.html inline scripts parse" \
      "$(node -e "
        const fs=require('fs'),vm=require('vm');
@@ -33,7 +33,7 @@ const shared=fs.readFileSync('$ROOT/static/shared.css','utf8');
 const defsIn=t=>new Set([...t.matchAll(/\.([A-Za-z][\w-]*)/g)].map(m=>m[1]));
 const sharedDefs=defsIn(shared);
 let bad=[];
-for(const p of ['dashboard','login','attendance','comp','pt','harness','profiles','admin']){
+for(const p of ['dashboard','login','attendance','comp','pt','harness','profiles','admin','flowcharts']){
   const s=fs.readFileSync('$ROOT/static/'+p+'.html','utf8');
   const defs=new Set([...defsIn(s), ...(s.includes('/static/shared.css')?sharedDefs:[])]);
   const used=new Set();

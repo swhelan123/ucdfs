@@ -169,26 +169,23 @@ async def api_subteams():
 #
 # subteams and requires_role are not the same kind of thing and must never be
 # conflated: one is what you'd rather see first, the other is what you may open.
-# ── Build plans ───────────────────────────────────────────────────────────────
-# One canvas (pt.html), many plans. This dict says which plans exist and what
-# they are called, and nothing else: the sections, tasks, dependencies and tick
-# state are all rows in the database, drawn and rearranged from the canvas
-# itself. Adding a plan is one entry here plus one applet entry below — no
-# migration, no new page, and no code change to lay it out.
+# ── Flowcharts ────────────────────────────────────────────────────────────────
+# There is no registry of charts. They are rows in `plans` (migrations/007), made
+# and named from /flowcharts, and pt.html draws whichever one its URL names. That
+# was the whole point of 005 → 006 → 007: a subteam that wants a build plan makes
+# one, instead of asking for a deploy.
 #
-# It is also the whitelist. An unknown plan id is a 400 by construction, never
-# "whatever the client sent", because the id reaches supabase.table() filters.
-#
-# Sections used to live here as cols/rows definitions. They are data now
-# (migrations/006) — a subteam that wants their own flowchart should not need
-# a deploy to draw one.
-PLANS = {
-    "pt":      {"name": "PT Manufacturing Plan"},
-    "pt-2627": {"name": "PT Plan 26/27"},
-}
+# The safety property the old PLANS dict provided is kept, only moved. A plan id
+# reaches supabase.table() filters, so it is still checked before use — against
+# this table now. Ids are minted here (`chart_…`), never accepted from a caller,
+# so nobody can name a row into existence by asking for it.
+LEGACY_PLAN = "pt"      # what an omitted plan means; see _plan_or_400
+MAX_LIVE_PLANS = 60     # a bound on a create button, not a considered limit
 
-# The dashboard's build-plan tile follows one plan: the season currently being
-# built. Point it at the new plan when the season rolls over.
+# The dashboard's build-plan tile follows one chart: whichever the team is
+# actually building right now. Point it at the new one at season rollover. A
+# chart that has since been deleted just nulls the tile rather than 500ing the
+# whole dashboard, which is what _tile() is for.
 DASHBOARD_PLAN = "pt"
 
 
@@ -216,34 +213,17 @@ APPLETS = [
         "subteams": ["all"],
     },
     {
-        "id":     "pt",
-        "name":   "PT Manufacturing Plan",
-        "icon":   "🏎️",
-        "route":  "/pt",
-        "file":   "pt.html",
-        "blurb":  "Powertrain build tasks, dependencies and progress",
+        "id":     "flowcharts",
+        "name":   "Flowcharts",
+        "icon":   "🗺️",
+        "route":  "/flowcharts",
+        "file":   "flowcharts.html",
+        "blurb":  "Build plans and dependency charts — pick one or start a new one",
         "accent": "teal",
         "status": "live",
-        "subteams": ["pt"],
-        # Which build plan this card opens. pt.html reads the plan id back out
-        # of its own URL (/pt is the legacy alias for plan "pt"; everything
-        # newer routes as /plan/<id>), so route and plan must agree.
-        "plan":   "pt",
-    },
-    {
-        "id":     "pt-2627",
-        "name":   "PT Plan 26/27",
-        "icon":   "🏎️",
-        "route":  "/plan/pt-2627",
-        "file":   "pt.html",
-        "blurb":  "Powertrain build plan for the 26/27 season",
-        "accent": "teal",
-        # "soon" renders a non-clickable placeholder card, but the route is
-        # registered and works — flip to "live" once the plan has sections and
-        # tasks on it worth sending people to.
-        "status": "soon",
-        "subteams": ["pt"],
-        "plan":   "pt-2627",
+        # Tagged for everyone, not just Powertrain. It used to be the PT plan
+        # and nothing else; now it is the tool any subteam draws a plan in.
+        "subteams": ["all"],
     },
     {
         "id":     "harness",
@@ -281,37 +261,88 @@ APPLETS = [
         # /api/applets omits it rather than showing a tile that 403s.
         "requires_role": "admin",
     },
+    # ── Last season ───────────────────────────────────────────────────────
+    # Both 25/26 build plans. They are finished, not broken, and people still
+    # look things up in them — so they move to their own block at the foot of
+    # the dashboard rather than being deleted or left competing for attention
+    # with what is being built now.
+    {
+        "id":     "pt",
+        "name":   "PT Manufacturing Plan",
+        "icon":   "🏎️",
+        # No "file": the page is served by the /plan/{plan_id} route, which is
+        # the only way in now that charts are rows rather than registry entries.
+        "route":  "/plan/pt",
+        "blurb":  "Last season's powertrain build — 25/26",
+        "accent": "teal",
+        "status": "quiet",
+        "subteams": ["pt"],
+        "group":  "archive",
+        # Which chart this card opens, so the feed can badge its ticks.
+        "plan":   "pt",
+    },
     {
         "id":     "mech",
         "name":   "Mech Manufacturing Plan",
         "icon":   "⚙️",
         "route":  "https://www.canva.com/design/DAHFgTx32zs/IXAWyUJbm15DIqgdsbRkTg/edit",
-        "blurb":  "Chassis and mechanical build plan (Canva)",
+        "blurb":  "Last season's chassis build — 25/26, on Canva",
         "accent": "green",
-        "status": "live",
+        "status": "quiet",
         "external": True,
         "subteams": ["mech"],
+        "group":  "archive",
     },
 ]
 
 APPLETS_BY_ID = {a["id"]: a for a in APPLETS}
 
-# plan id → the applet that opens it, so a feed line from any plan can carry
-# the right applet id for its icon.
+# plan id → the applet that opens it, so a feed line from a charted plan can
+# carry that card's icon. Anything else badges as the flowcharts tool, which is
+# where it was drawn — see _pt_activity.
 APPLET_BY_PLAN = {a["plan"]: a["id"] for a in APPLETS if a.get("plan")}
+
+# Dashboard blocks, in order, with the heading each one gets. An entry with no
+# "group" is a tool; the dashboard renders a block only if something is in it,
+# so retiring the last archived card removes the heading with it rather than
+# leaving "Last season" over an empty space.
+APPLET_GROUPS = [
+    {"id": "tools",   "label": "Tools"},
+    {"id": "archive", "label": "Last season"},
+]
+
+
+def _plan_row(pid: str) -> Optional[dict]:
+    """One chart, or None. The whitelist lookup — see _plan_or_400."""
+    if not pid:
+        return None
+    try:
+        r = supabase.table("plans").select("*").eq("id", pid).limit(1).execute()
+        return (r.data or [None])[0]
+    except Exception as e:
+        # 007 unapplied, or the database is down. Either way the honest answer
+        # is "cannot say", and the caller turns that into a 400 rather than
+        # letting an unchecked id reach a table filter.
+        logger.error(f"[_plan_row] {e}")
+        return None
 
 
 def _plan_or_400(value) -> str:
-    """Resolve a request's plan id against the PLANS whitelist.
+    """Resolve a request's chart id, or refuse.
 
-    Missing means the legacy plan — every pre-multi-plan client (and curl
+    Missing means the legacy chart — every pre-multi-plan client (and curl
     muscle memory) says nothing and must keep meaning "pt". Unknown is a hard
-    400: the id is only ever used as a filter value, but accepting it would
-    write rows no page can ever show.
+    400: the id is only ever used as a filter value, but accepting one that
+    names no chart would write rows no page can ever show.
+
+    This reads the database on every plan-scoped write, which is one indexed
+    primary-key lookup. Deliberately not cached: a stale whitelist is a bug
+    that presents as "the chart I just made does not exist", and the traffic
+    here is a handful of people dragging boxes around.
     """
-    pid = (value or "pt").strip()
-    if pid not in PLANS:
-        raise HTTPException(400, "unknown plan")
+    pid = (value or LEGACY_PLAN).strip()
+    if not _plan_row(pid):
+        raise HTTPException(400, "unknown chart")
     return pid
 
 
@@ -344,6 +375,27 @@ for _applet in APPLETS:
         )
 
 
+# The one way into a chart. Charts are rows, so there is no registry entry to
+# generate a route from — this is a single dynamic route serving the same canvas
+# for every chart.
+@app.get("/plan/{plan_id}")
+async def plan_page(plan_id: str):
+    if not _plan_row(plan_id):
+        # A 404 rather than the canvas: a chart that has been deleted, or a
+        # database that has not had 007 applied yet, should say so here instead
+        # of loading an editor that 400s on its first request.
+        raise HTTPException(404, "No such chart")
+    return FileResponse("static/pt.html")
+
+
+# The address the legacy chart was bookmarked at, before charts had ids worth
+# putting in a URL. It delegates rather than serving the file itself, so the two
+# cannot drift into answering differently for the same missing chart.
+@app.get("/pt")
+async def pt_page_legacy():
+    return await plan_page(LEGACY_PLAN)
+
+
 @app.get("/api/applets")
 async def api_applets(request: Request):
     """What the dashboard renders. Public fields only — no file paths.
@@ -352,10 +404,16 @@ async def api_applets(request: Request):
     only to refuse you is worse than no tile.
     """
     profile = getattr(request.state, "profile", None)
-    return {"applets": [
-        {k: v for k, v in a.items() if k != "file"}
-        for a in APPLETS if _may_open(a, profile)
-    ]}
+    return {
+        "applets": [
+            # "group" rides along so the dashboard can lay out its blocks
+            # without knowing which cards belong where — same rule as always:
+            # adding a card is an entry here, never an edit to the dashboard.
+            {k: v for k, v in a.items() if k != "file"}
+            for a in APPLETS if _may_open(a, profile)
+        ],
+        "groups": APPLET_GROUPS,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -673,9 +731,19 @@ PUBLIC_EXACT = {
     "/api/auth/check", "/api/me", "/api/auth/config",
 }
 PUBLIC_PREFIXES = ("/static/",)
-PAGE_ROUTES = {"/"} | {
+# "/" is the dashboard and "/pt" is the legacy chart alias. Both are listed by
+# hand because neither is generated from APPLETS: the dashboard is not an applet,
+# and the `pt` card deliberately has no "file" — it points at /plan/pt, which the
+# dynamic chart route serves. Miss one and that page answers a signed-out browser
+# with JSON instead of sending it to sign in.
+PAGE_ROUTES = {"/", "/pt"} | {
     a["route"] for a in APPLETS if a.get("file") and not a.get("external")
 }
+# Charts are rows, so their pages cannot be enumerated up front the way applet
+# routes can. Anything under here is a page: signed out it redirects to the
+# sign-in screen and comes back, rather than answering a bookmarked chart URL
+# with a bare 401 the browser renders as JSON.
+PAGE_PREFIXES = ("/plan/",)
 
 
 @app.middleware("http")
@@ -690,7 +758,7 @@ async def auth_middleware(request: Request, call_next):
     request.state.profile = profile
 
     if profile is None:
-        if path in PAGE_ROUTES:
+        if path in PAGE_ROUTES or path.startswith(PAGE_PREFIXES):
             # Send them to the sign-in screen and back again afterwards.
             return RedirectResponse(f"/login?next={quote(path, safe='')}", status_code=302)
         return JSONResponse({"detail": "Not signed in"}, status_code=401)
@@ -1871,10 +1939,184 @@ async def index():
     return FileResponse("static/dashboard.html")
 
 
+# ── Charts ────────────────────────────────────────────────────────────────────
+# What /flowcharts lists, and how a chart is made, renamed, archived or removed.
+#
+# None of this is role-gated, on purpose. A chart is a shared artifact like a
+# task or a section, and every one of those is already something any member can
+# add and edit — gating charts alone would be inconsistent, and the friction
+# lands on exactly the person we want drawing one. The rails here are structural
+# instead: ids are minted server-side, archiving is reversible, and deleting is
+# refused unless the chart is empty. Compare the /api/admin/* endpoints, which
+# are gated because they act on *someone else's* data rather than shared work.
+def _chart_actor(request: Request) -> str:
+    """Who to credit a chart action to, as a display name.
+
+    Same shape the rest of the feed uses (_public_profile's "name"), so a chart
+    line reads like every other line rather than showing an email address.
+    """
+    profile = getattr(request.state, "profile", None) or {}
+    return _public_profile(profile).get("name") or "Someone"
+
+
+def _plan_counts() -> dict:
+    """Task and tick counts per chart, for the picker's subtitles.
+
+    Two queries for every chart rather than two per chart — the whole point is
+    that this page stays cheap as the number of charts grows.
+    """
+    counts: dict = {}
+    try:
+        for r in (supabase.table("pt_nodes").select("plan_id").execute().data or []):
+            c = counts.setdefault(r["plan_id"], {"tasks": 0, "done": 0})
+            c["tasks"] += 1
+        for r in (supabase.table("pt_done").select("plan_id").execute().data or []):
+            c = counts.setdefault(r["plan_id"], {"tasks": 0, "done": 0})
+            c["done"] += 1
+    except Exception as e:
+        logger.error(f"[_plan_counts] {e}")
+    return counts
+
+
+@app.get("/api/plans")
+async def api_plans():
+    try:
+        rows = supabase.table("plans").select("*") \
+            .order("archived").order("created_at").execute().data or []
+    except Exception as e:
+        # 007 unapplied. An empty list draws the picker's "no charts yet" state,
+        # which beats a stack trace on the page that lists everything.
+        logger.error(f"[api_plans] {e}")
+        rows = []
+    counts = _plan_counts()
+    return {"plans": [{
+        **r,
+        "tasks": counts.get(r["id"], {}).get("tasks", 0),
+        "done":  counts.get(r["id"], {}).get("done", 0),
+    } for r in rows]}
+
+
+@app.post("/api/plans")
+async def api_plans_create(request: Request):
+    b = await request.json()
+    name = (b.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    if len(name) > 80:
+        raise HTTPException(400, "that name is too long")
+
+    live = supabase.table("plans").select("id").eq("archived", False).execute().data or []
+    if len(live) >= MAX_LIVE_PLANS:
+        raise HTTPException(400, "Too many charts — archive some first")
+
+    row = {
+        "id":         "chart_" + uuid.uuid4().hex[:8],
+        "name":       name,
+        "icon":       (b.get("icon") or "🗺️").strip()[:8] or "🗺️",
+        "blurb":      (b.get("blurb") or "").strip()[:160] or None,
+        "archived":   False,
+        "created_by": _chart_actor(request),
+    }
+    supabase.table("plans").insert(row).execute()
+    log_activity("flowcharts", row["created_by"], "created the chart", name)
+    return {"plan": {**row, "tasks": 0, "done": 0}}
+
+
+@app.post("/api/plans/update")
+async def api_plans_update(request: Request):
+    """Rename, re-icon, or archive/unarchive one chart."""
+    b   = await request.json()
+    pid = _plan_or_400(b.get("id"))
+    row = _plan_row(pid) or {}
+
+    patch: dict = {}
+    name = (b.get("name") or "").strip()
+    if name:
+        if len(name) > 80:
+            raise HTTPException(400, "that name is too long")
+        patch["name"] = name
+    if b.get("icon") is not None:
+        patch["icon"] = (b.get("icon") or "").strip()[:8] or "🗺️"
+    if b.get("blurb") is not None:
+        patch["blurb"] = (b.get("blurb") or "").strip()[:160] or None
+    if b.get("archived") is not None:
+        patch["archived"] = bool(b.get("archived"))
+    if not patch:
+        raise HTTPException(400, "nothing to update")
+
+    supabase.table("plans").update(patch).eq("id", pid).execute()
+
+    who = _chart_actor(request)
+    was = row.get("name") or pid
+    if "archived" in patch:
+        log_activity("flowcharts", who,
+                     "archived the chart" if patch["archived"] else "un-archived the chart",
+                     patch.get("name") or was)
+    elif "name" in patch and patch["name"] != was:
+        log_activity("flowcharts", who, "renamed a chart to", patch["name"])
+    return {"ok": True}
+
+
+@app.post("/api/plans/delete")
+async def api_plans_delete(request: Request):
+    """Delete an empty chart.
+
+    Refused while it holds anything at all. There is no undo in this app and no
+    backup a member can reach, so the only chart it will destroy is one with
+    nothing in it — a mistyped name, a duplicate. For a chart with real work on
+    it, archiving is the answer, and it is one click away in the same menu.
+    """
+    b   = await request.json()
+    pid = _plan_or_400(b.get("id"))
+    row = _plan_row(pid) or {}
+
+    # Echo the name back, the same rail as deleting an account: a stale id from
+    # a list rendered a minute ago cannot take out a chart someone has since
+    # renamed or replaced.
+    if (b.get("name") or "").strip() != (row.get("name") or ""):
+        raise HTTPException(400, "Chart name does not match — reload and try again")
+
+    def _is_empty() -> bool:
+        for table, field in (("pt_nodes", "id"), ("pt_sections", "sec")):
+            if supabase.table(table).select(field) \
+                    .eq("plan_id", pid).limit(1).execute().data:
+                return False
+        return True
+
+    if not _is_empty():
+        raise HTTPException(400, "This chart isn't empty — archive it instead")
+
+    # pt_nodes and pt_sections are never deleted from here, and that is the
+    # point: this endpoint removes a chart that holds nothing, so if there were
+    # rows in either it has no business running at all. Cascading them would
+    # turn the check above into decoration and make a one-click way to destroy
+    # a season's work.
+    #
+    # Everything below is keyed to a node id, so with no nodes there is nothing
+    # meaningful in any of it — these deletes only sweep up rows a previous
+    # delete could have stranded. The tick log is deliberately left alone, like
+    # attendance rows and feed lines: it records what happened, not what exists.
+    for table in ("pt_done", "pt_progress", "pt_details", "pt_edges"):
+        supabase.table(table).delete().eq("plan_id", pid).execute()
+
+    # Checked again immediately before the chart itself goes. There is no
+    # transaction across these calls, so somebody adding a task during the sweep
+    # above would otherwise leave it in a chart that no longer exists — and the
+    # whitelist then makes it unreachable, so it could never be found or tidied.
+    # Losing the race costs a few stray satellite rows; the task survives.
+    if not _is_empty():
+        raise HTTPException(400, "This chart isn't empty — archive it instead")
+    supabase.table("plans").delete().eq("id", pid).execute()
+
+    log_activity("flowcharts", _chart_actor(request),
+                 "deleted the empty chart", row.get("name") or pid)
+    return {"ok": True}
+
+
 # ── PT: single state endpoint (nodes, edges, done, details, sections) ──────────
-# All /pt/api/* endpoints serve every build plan, not just the original PT one:
+# All /pt/api/* endpoints serve every chart, not just the original PT one:
 # GET takes ?plan=, POSTs take "plan" in the body, and omitting it means the
-# legacy plan so pre-multi-plan saves and clients keep working unchanged.
+# legacy chart so pre-multi-plan saves and clients keep working unchanged.
 @app.get("/pt/api/state")
 async def pt_state(plan: Optional[str] = None):
     pid = _plan_or_400(plan)
@@ -1886,14 +2128,15 @@ async def pt_state(plan: Optional[str] = None):
     sections    = supabase.table("pt_sections").select("*").eq("plan_id", pid).execute()
     done_log    = supabase.table("pt_done_log").select("node_id,done,user_name,created_at") \
                       .eq("plan_id", pid).order("created_at").execute()
-    # The header icon comes from the applet card that opens this plan, so the
-    # two can never disagree.
-    applet = APPLETS_BY_ID.get(APPLET_BY_PLAN.get(pid, ""), {})
+    # The chart's own row supplies its name and icon. _plan_or_400 already
+    # proved it exists, so this is the same lookup rather than a second risk.
+    row = _plan_row(pid) or {"id": pid, "name": "Chart"}
     return {
         # Name and icon only — the canvas draws itself from "sections" below,
         # which is data, so the page needs no second request and no idea which
-        # plan it is looking at beyond the id it asked for.
-        "plan":        {"id": pid, "icon": applet.get("icon"), **PLANS[pid]},
+        # chart it is looking at beyond the id it asked for.
+        "plan":        {"id": pid, "name": row.get("name") or pid,
+                        "icon": row.get("icon"), "archived": bool(row.get("archived"))},
         "nodes":       nodes.data or [],
         "edges":       edges.data or [],
         "done":        [r["node_id"] for r in (done.data or [])],
@@ -2221,10 +2464,15 @@ async def pt_ws(ws: WebSocket):
             data = await ws.receive_json()
             t = data.get("type")
             if t == "join":
-                plan = data.get("plan")
+                # The room name is checked against the charts that exist, same
+                # as every HTTP write. Unchecked, a client could name any room
+                # and be relayed the edits of whoever else guessed that name —
+                # and an unknown room is a typo, so it falls back to the legacy
+                # chart rather than closing the socket mid-session.
+                plan = (data.get("plan") or "").strip()
                 pt_clients[ws] = {
                     "id": data.get("id"), "name": data.get("name"), "color": data.get("color"),
-                    "plan": plan if plan in PLANS else "pt",
+                    "plan": plan if _plan_row(plan) else LEGACY_PLAN,
                 }
                 await _pt_presence(pt_clients[ws]["plan"])
             elif pt_clients.get(ws):
@@ -2775,9 +3023,21 @@ def _attendance_tile() -> dict:
     }
 
 
+def _flowcharts_tile() -> dict:
+    """How many charts are on the go — the card is a door to a list, not to one
+    chart, so the useful number is the size of the list."""
+    rows = supabase.table("plans").select("id,archived").execute().data or []
+    live = len([r for r in rows if not r.get("archived")])
+    if not rows:
+        return {"charts": 0, "detail": "no charts yet"}
+    return {"charts": live,
+            "detail": f"{live} chart{'' if live == 1 else 's'}" if live
+                      else "all archived"}
+
+
 def _pt_tile() -> dict:
-    # One plan's numbers, not all plans mashed together — an empty next-season
-    # plan would otherwise drag the live build's percentage down to nonsense.
+    # One chart's numbers, not all charts mashed together — an empty
+    # next-season plan would otherwise drag the live build's figure to nonsense.
     nodes = supabase.table("pt_nodes").select("id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
     done  = supabase.table("pt_done").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
     prog  = supabase.table("pt_progress").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
@@ -2891,10 +3151,10 @@ def _pt_activity(limit: int) -> list:
         # page — and nothing but an elevated admin can act on them.
         "id":         r.get("id"),
         "source":     "pt_done_log",
-        # Credited to the applet that opens the plan, so the line carries the
-        # right badge. A plan whose applet entry has since been removed still
-        # renders, just under the generic "pt" badge.
-        "applet":     APPLET_BY_PLAN.get(r.get("plan_id"), "pt"),
+        # Credited to the card that opens this chart when one exists (last
+        # season's plans have their own), and otherwise to the flowcharts tool,
+        # which is where the chart was drawn.
+        "applet":     APPLET_BY_PLAN.get(r.get("plan_id"), "flowcharts"),
         "actor":      r.get("user_name") or "Someone",
         "verb":       "ticked off" if r.get("done") else "un-ticked",
         # Falls back to the raw id for a node that has since been deleted.
@@ -2934,6 +3194,7 @@ async def api_dashboard():
         "activity":  _tile(_activity) or [],
         "tiles": {
             "attendance": _tile(_attendance_tile),
+            "flowcharts": _tile(_flowcharts_tile),
             "pt":         _tile(_pt_tile),
             "harness":    _tile(_harness_tile),
             "comp":       _tile(_comp_tile),

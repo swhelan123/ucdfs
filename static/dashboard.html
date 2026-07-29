@@ -258,6 +258,10 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
     <div class="chips" id="subteam-chips"></div>
     <div class="applet-grid" id="applet-grid"></div>
 
+    <!-- Further blocks (currently just "Last season") are rendered here from
+         the groups /api/applets sends, so adding one stays a registry change. -->
+    <div id="applet-groups"></div>
+
     <div class="section-label">Recent activity</div>
     <div class="card feed" id="feed"></div>
 
@@ -337,9 +341,12 @@ function appletCard(a, tile) {
 
 /* Which applets the dashboard API reports on — drives the "…" placeholder so
    cards without a tile don't sit there looking like they failed to load. */
-const HAS_TILE = { attendance: 1, pt: 1, harness: 1, comp: 1 };
+const HAS_TILE = { attendance: 1, flowcharts: 1, pt: 1, harness: 1, comp: 1 };
 
 let APPLETS  = [];
+/* Dashboard blocks, in order, from /api/applets. Empty is fine — render() then
+   draws the Tools grid and nothing else. */
+let GROUPS   = [];
 let TILES    = {};
 /* Set once /api/dashboard has settled, successfully or not. It is the
    difference between "no number yet" and "no number", which is the difference
@@ -534,10 +541,38 @@ async function deleteFeedItem(btn, item) {
   }
 }
 
+/* Which block a card belongs to.
+
+   No "group" means the main Tools grid — and so does a group nobody declared.
+   Same rule as the subteam filter: an entry that forgets to tag itself, or
+   names a block that does not exist, must stay visible rather than quietly
+   vanishing. Rendering it nowhere would be a card that exists on the server and
+   cannot be found on the page. */
+function appletGroup(a) {
+  const g = a.group || 'tools';
+  return GROUPS.some(x => x.id === g) ? g : 'tools';
+}
+
 function render() {
   const shown = APPLETS.filter(a => visibleUnder(a, FILTER));
-  document.getElementById('applet-grid').innerHTML =
-    shown.map(a => appletCard(a, TILES[a.id])).join('');
+  document.getElementById('applet-grid').innerHTML = shown
+    .filter(a => appletGroup(a) === 'tools')
+    .map(a => appletCard(a, TILES[a.id])).join('');
+
+  /* Every block after Tools — its own heading and grid, and rendered only if
+     the filter left anything in it. A heading over an empty space reads as a
+     page that failed to load. */
+  document.getElementById('applet-groups').innerHTML = GROUPS
+    .filter(g => g.id !== 'tools')
+    .map(g => {
+      const cards = shown.filter(a => appletGroup(a) === g.id);
+      if (!cards.length) return '';
+      return `<div class="section-label" style="margin-top:26px">${UCDFS.esc(g.label)}</div>
+              <div class="applet-grid">
+                ${cards.map(a => appletCard(a, TILES[a.id])).join('')}
+              </div>`;
+    }).join('');
+
   renderChips();
 
   /* The count is of everything, not of what the filter is showing — it is a
@@ -634,12 +669,15 @@ async function draw(user) {
      Each request swallows its own failure. A dashboard that cannot reach the
      feed should still draw its tools, which is the same rule /api/dashboard
      already follows server-side when one table is unhappy. */
-  const [applets, subteams, data] = await Promise.all([
+  const [applets, groups, subteams, data] = await Promise.all([
     UCDFS.applets().catch(() => []),
+    /* Same cached request as the line above, not a second round trip. */
+    UCDFS.appletGroups().catch(() => []),
     fetch('/api/subteams').then(r => r.json()).then(j => j.subteams || []).catch(() => []),
     fetch('/api/dashboard').then(r => r.json()).catch(() => ({})),
   ]);
   APPLETS  = applets;
+  GROUPS   = groups;
   SUBTEAMS = subteams;
   TILES    = data.tiles || {};
   TILES_LOADED = true;   // settled — see the placeholder rule in appletCard()

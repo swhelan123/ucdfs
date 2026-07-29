@@ -170,42 +170,21 @@ async def api_subteams():
 # subteams and requires_role are not the same kind of thing and must never be
 # conflated: one is what you'd rather see first, the other is what you may open.
 # ── Build plans ───────────────────────────────────────────────────────────────
-# One canvas (pt.html), many plans. Which plans exist — and their section
-# layouts — lives here, same philosophy as APPLETS: adding a plan is one entry
-# here plus one applet entry below, no migration and no new page. The database
-# (migrations/005) holds each plan's nodes, edges and tick state, keyed by
-# plan_id; sections' *sizes* are DB overrides but their existence is this dict,
-# which is also the whitelist — an unknown plan id is a 400 by construction,
-# never "whatever the client sent".
+# One canvas (pt.html), many plans. This dict says which plans exist and what
+# they are called, and nothing else: the sections, tasks, dependencies and tick
+# state are all rows in the database, drawn and rearranged from the canvas
+# itself. Adding a plan is one entry here plus one applet entry below — no
+# migration, no new page, and no code change to lay it out.
 #
-# Section geometry: cols × rows sets each box's size; boxes are laid out left
-# to right in list order, bottoms aligned. Renaming a section id orphans that
-# section's nodes (they are stored with the sec id), so treat ids as permanent
-# and labels as free.
+# It is also the whitelist. An unknown plan id is a 400 by construction, never
+# "whatever the client sent", because the id reaches supabase.table() filters.
+#
+# Sections used to live here as cols/rows definitions. They are data now
+# (migrations/006) — a subteam that wants their own flowchart should not need
+# a deploy to draw one.
 PLANS = {
-    "pt": {
-        "name": "PT Manufacturing Plan",
-        "sections": [
-            {"id": "lv",   "label": "Low Voltage Wiring", "cols": 3, "rows": 10},
-            {"id": "tdp",  "label": "3D Prints",          "cols": 4, "rows": 3},
-            {"id": "tsac", "label": "TSAC Assembly",      "cols": 5, "rows": 8},
-            {"id": "cc",   "label": "Charging Cart",      "cols": 3, "rows": 4},
-            {"id": "bp",   "label": "Back Packaging",     "cols": 6, "rows": 5},
-            {"id": "sw",   "label": "Software",           "cols": 4, "rows": 3},
-            {"id": "hv",   "label": "HV Wiring",          "cols": 5, "rows": 5},
-        ],
-    },
-    # 26/27 starter. Sections are placeholders until the season plan is real —
-    # edit labels freely, but see the note above before touching ids.
-    "pt-2627": {
-        "name": "PT Plan 26/27",
-        "sections": [
-            {"id": "design", "label": "Design & Order", "cols": 4, "rows": 6},
-            {"id": "mfg",    "label": "Manufacture",    "cols": 4, "rows": 6},
-            {"id": "asm",    "label": "Assemble",       "cols": 4, "rows": 6},
-            {"id": "test",   "label": "Test",           "cols": 3, "rows": 4},
-        ],
-    },
+    "pt":      {"name": "PT Manufacturing Plan"},
+    "pt-2627": {"name": "PT Plan 26/27"},
 }
 
 # The dashboard's build-plan tile follows one plan: the season currently being
@@ -260,8 +239,8 @@ APPLETS = [
         "blurb":  "Powertrain build plan for the 26/27 season",
         "accent": "teal",
         # "soon" renders a non-clickable placeholder card, but the route is
-        # registered and works — flip to "live" once the sections in PLANS
-        # stop being placeholders.
+        # registered and works — flip to "live" once the plan has sections and
+        # tasks on it worth sending people to.
         "status": "soon",
         "subteams": ["pt"],
         "plan":   "pt-2627",
@@ -1911,8 +1890,9 @@ async def pt_state(plan: Optional[str] = None):
     # two can never disagree.
     applet = APPLETS_BY_ID.get(APPLET_BY_PLAN.get(pid, ""), {})
     return {
-        # The plan's structure rides with its data so pt.html needs no second
-        # request — and no hardcoded section list — to draw any plan.
+        # Name and icon only — the canvas draws itself from "sections" below,
+        # which is data, so the page needs no second request and no idea which
+        # plan it is looking at beyond the id it asked for.
         "plan":        {"id": pid, "icon": applet.get("icon"), **PLANS[pid]},
         "nodes":       nodes.data or [],
         "edges":       edges.data or [],
@@ -2011,6 +1991,31 @@ async def pt_nodes_move(request: Request):
     return {"ok": True}
 
 
+@app.post("/pt/api/nodes/move-bulk")
+async def pt_nodes_move_bulk(request: Request):
+    """Move many nodes at once — what dragging a whole section does.
+
+    Tasks hold absolute canvas coordinates, not an offset within their box, so
+    moving a section has to carry its contents or they stay behind on the
+    canvas while their box walks off. One request rather than one per task:
+    a big section is thirty of them, and half-applied is worse than either.
+    """
+    b = await request.json()
+    pid   = _plan_or_400(b.get("plan"))
+    moves = b.get("moves") or []
+    if not isinstance(moves, list):
+        raise HTTPException(400, "moves must be a list")
+    if len(moves) > 500:
+        raise HTTPException(400, "too many moves")
+    for m in moves:
+        node_id = (str(m.get("id") or "")).strip()
+        if not node_id:
+            continue
+        supabase.table("pt_nodes").update({"x": m.get("x"), "y": m.get("y")}) \
+            .eq("plan_id", pid).eq("id", node_id).execute()
+    return {"ok": True, "moved": len(moves)}
+
+
 @app.post("/pt/api/nodes/rename")
 async def pt_nodes_rename(request: Request):
     b = await request.json()
@@ -2089,16 +2094,93 @@ async def pt_details_set(request: Request):
 
 
 # ── PT sections ────────────────────────────────────────────────────────────────
+# Sections are rows, not registry entries (migrations/006): a plan starts empty
+# and whoever owns it draws its own boxes. Ids are generated here rather than
+# taken from the client — a node remembers which section it is in by that id,
+# so a client-chosen id could collide with a section that already owns tasks.
+SECTION_DEFAULT_W = 498.0
+SECTION_DEFAULT_H = 523.0
+SECTION_MIN_W     = 200.0
+SECTION_MIN_H     = 150.0
+
+
+def _float_or(value, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+@app.post("/pt/api/sections/add")
+async def pt_sections_add(request: Request):
+    b = await request.json()
+    pid   = _plan_or_400(b.get("plan"))
+    label = (b.get("label") or "").strip()
+    if not label:
+        raise HTTPException(400, "label required")
+    row = {
+        "plan_id": pid,
+        "sec":     "sec_" + uuid.uuid4().hex[:8],
+        "label":   label,
+        "x":       _float_or(b.get("x"), 48.0),
+        "y":       _float_or(b.get("y"), 543.0),
+        "w":       max(SECTION_MIN_W, _float_or(b.get("w"), SECTION_DEFAULT_W)),
+        "h":       max(SECTION_MIN_H, _float_or(b.get("h"), SECTION_DEFAULT_H)),
+    }
+    supabase.table("pt_sections").insert(row).execute()
+    return {"section": row}
+
+
 @app.post("/pt/api/sections")
 async def pt_sections_set(request: Request):
+    """Move, resize or rename one existing section.
+
+    An update rather than an upsert: the only ids that may exist are ones
+    /pt/api/sections/add minted, so a stale or invented id has to be a no-op
+    instead of quietly creating a box nothing can find its way back to.
+    """
     b = await request.json()
     pid = _plan_or_400(b.get("plan"))
     sec = (b.get("sec") or "").strip()
     if not sec:
         raise HTTPException(400, "sec required")
-    supabase.table("pt_sections").upsert(
-        {"plan_id": pid, "sec": sec, "w": b.get("w"), "h": b.get("h")}
-    ).execute()
+
+    patch: dict = {}
+    for field, floor in (("x", None), ("y", None),
+                         ("w", SECTION_MIN_W), ("h", SECTION_MIN_H)):
+        if b.get(field) is not None:
+            value = _float_or(b.get(field), 0.0)
+            patch[field] = max(floor, value) if floor is not None else value
+    label = (b.get("label") or "").strip()
+    if label:
+        patch["label"] = label
+    if not patch:
+        raise HTTPException(400, "nothing to update")
+
+    supabase.table("pt_sections").update(patch) \
+        .eq("plan_id", pid).eq("sec", sec).execute()
+    return {"ok": True}
+
+
+@app.post("/pt/api/sections/delete")
+async def pt_sections_delete(request: Request):
+    """Remove an empty section.
+
+    Refused while it still holds tasks. Deleting the box would leave them
+    pointing at a section that no longer exists — invisible, but still in the
+    graph and still counted by the dashboard tile. Emptying it first is a
+    deliberate act; cascading the delete would not be.
+    """
+    b = await request.json()
+    pid = _plan_or_400(b.get("plan"))
+    sec = (b.get("sec") or "").strip()
+    if not sec:
+        raise HTTPException(400, "sec required")
+    held = supabase.table("pt_nodes").select("id") \
+        .eq("plan_id", pid).eq("sec", sec).limit(1).execute().data or []
+    if held:
+        raise HTTPException(400, "Move or delete this section's tasks first")
+    supabase.table("pt_sections").delete().eq("plan_id", pid).eq("sec", sec).execute()
     return {"ok": True}
 
 

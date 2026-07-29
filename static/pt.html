@@ -140,6 +140,23 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
   transition:transform .12s,box-shadow .12s;
 }
 .addbtn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(74,125,224,.45);}
+.addbtn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none;}
+.addbtn-ghost{background:#eef2fb;color:var(--ink);}
+.addbtn-ghost:hover{box-shadow:0 4px 12px rgba(29,43,69,.16);}
+/* Sections are draggable by their label; the box itself still pans the canvas. */
+.sec-label{cursor:grab;user-select:none;}
+.sec-label:active{cursor:grabbing;}
+#pt-empty{
+  position:fixed;inset:52px 0 0 0;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;z-index:5;
+}
+#pt-empty .inner{
+  background:#fff;border:1.5px solid var(--card-border);border-radius:16px;
+  padding:22px 26px;text-align:center;box-shadow:0 10px 30px rgba(29,43,69,.10);
+  max-width:340px;
+}
+#pt-empty h4{font-size:14px;font-weight:800;color:var(--ink);margin-bottom:6px;}
+#pt-empty p{font-size:12px;color:var(--muted);line-height:1.5;}
 .nd.custom{cursor:grab;}
 .nd.custom:active{cursor:grabbing;}
 .nd .delbtn{
@@ -179,18 +196,20 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 .edgepop-actions button{padding:7px 13px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;}
 #edgepop-del{background:var(--gate);color:#fff;}
 #edgepop-cancel{background:#eef2fb;color:var(--ink);}
-/* rename popover */
-#renpop{
+/* rename popover — shared with the section editor, same shape and behaviour */
+#renpop,#secpop{
   position:fixed;z-index:400;background:#fff;border:1.5px solid var(--card-border);
   border-radius:13px;box-shadow:0 12px 32px rgba(29,43,69,.28);padding:13px;width:260px;
 }
-#renpop .renpop-ttl{font-size:12px;font-weight:800;color:var(--ink);margin-bottom:8px;}
-#renpop input{
+#renpop .renpop-ttl,#secpop .renpop-ttl{font-size:12px;font-weight:800;color:var(--ink);margin-bottom:8px;}
+#renpop input,#secpop input{
   width:100%;padding:8px 10px;border:1.5px solid var(--card-border);border-radius:9px;
   font-family:inherit;font-size:13px;outline:none;
 }
-#renpop input:focus{border-color:var(--mfg);box-shadow:0 0 0 3px rgba(74,125,224,.12);}
-#renpop .renpop-hint{font-size:10.5px;color:var(--muted);margin-top:6px;}
+#renpop input:focus,#secpop input:focus{border-color:var(--mfg);box-shadow:0 0 0 3px rgba(74,125,224,.12);}
+#renpop .renpop-hint,#secpop .renpop-hint{font-size:10.5px;color:var(--muted);margin-top:6px;}
+#secpop-del{background:var(--gate);color:#fff;margin-right:auto;}
+.sec-name{pointer-events:none;}
 .renpop-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px;}
 .renpop-actions button{padding:7px 14px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;}
 #renpop-save{background:var(--mfg);color:#fff;}
@@ -313,6 +332,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
   <span class="sub">Progress flows upward · Hover or click a task to trace its dependency chain · Drag to pan</span>
   <div class="spacer"></div>
   <div id="presence"></div>
+  <button class="addbtn addbtn-ghost" id="addsecbtn">＋ Section</button>
   <button class="addbtn" id="addbtn">＋ Add Task</button>
   <button class="zbtn" id="zout" title="Zoom out">−</button>
   <span id="zlevel">100%</span>
@@ -369,6 +389,15 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
   <div class="lr"><div class="ldash"></div>Cross-section dep.</div>
 </div>
 
+<div id="pt-empty" style="display:none">
+  <div class="inner">
+    <h4>Nothing here yet</h4>
+    <p>Add a section to start laying this plan out. Sections are the labelled
+       boxes tasks live in — drag one by its name to move it, or by its
+       top-right corner to resize.</p>
+  </div>
+</div>
+
 <div id="pt-loading"><div class="spinner"></div></div>
 <div id="scroll"><div id="zoomwrap"><div id="canvas"><svg id="svg-layer"></svg></div></div></div>
 
@@ -380,15 +409,21 @@ const CW=150, CH=95, NW=128, NH=48, GW=46, GH=26, SP=24, SG=52, SBOT=1066;
 // ── PLAN & SECTIONS ───────────────────────────────────────────────────
 // One page, many plans. Which plan this tab shows comes from its own URL —
 // /pt is the legacy alias for the original PT plan, everything newer routes
-// as /plan/<id> — and the section list arrives with /pt/api/state, because
-// the PLANS registry in main.py is the single source of truth for structure.
-// Everything below (SDEFS, S, canvas size) is populated by initPlan() before
-// the first node renders; nothing plan-shaped is hardcoded here any more.
+// as /plan/<id>.
+//
+// Sections are rows in the database, not constants: they arrive with
+// /pt/api/state and are made, moved, resized and removed from this canvas.
+// Nothing about a plan's shape is hardcoded here, which is what lets a subteam
+// draw their own flowchart without a deploy. Everything below is filled in by
+// buildSections() before the first task renders.
 const PLAN=(location.pathname.match(/^\/plan\/([\w-]+)/)||[])[1]||'pt';
 
-const SDEFS=[];          // section defs in layout order, built by initPlan()
-const S={};              // section id → def
-let CWIDTH=0, CHEIGHT=0; // canvas size, derived from the sections
+const SDEFS=[];          // section defs, in the order they arrived
+const S={};              // section id → def {id,lbl,x,y,w,h}
+let CWIDTH=0, CHEIGHT=0; // canvas size, derived from where the sections are
+const SEC_MIN_W=200, SEC_MIN_H=150;   // mirrors the floors in main.py
+const SEC_NEW_W=498, SEC_NEW_H=523;   // a new box: 3 columns by 5 rows
+const CANVAS_PAD=48;
 
 const TC={m:'var(--mfg)',a:'var(--asm)',c:'var(--done)',ms:'var(--ms)'};
 
@@ -475,44 +510,161 @@ defs.innerHTML=`
 svg.appendChild(defs);
 
 // ── SECTION BOXES ─────────────────────────────────────────────────────
+// Sections are data. Everything here works off the rows /pt/api/state sends
+// and writes changes straight back, so what one person drags is what everyone
+// else loads. Nothing assumes a fixed number of boxes, or any at all.
 const secEls={};
-// Runs once, from loadState, with the plan meta the state endpoint returned.
-// Geometry: cols × rows sizes each box, boxes flow left to right in registry
-// order with bottoms aligned — the same layout the old hardcoded list produced.
+
 function initPlan(meta){
   document.title=meta.name;
   document.querySelector('#hdr .ttl').textContent=(meta.icon||'🏎')+' '+meta.name;
-  let cx0=48;
-  (meta.sections||[]).forEach(sd=>{
-    const s={id:sd.id, lbl:sd.label, cols:sd.cols, rows:sd.rows};
-    s.w=s.cols*CW+2*SP; s.h=s.rows*CH+2*SP;
-    s.x=cx0; s.y=SBOT-s.h; s.bottom=s.y+s.h;
-    S[s.id]=s; SDEFS.push(s); cx0+=s.w+SG;
-  });
-  CWIDTH=cx0-SG+48; CHEIGHT=SBOT+90;
+}
+
+// The canvas is whatever contains the sections, plus a margin — recomputed
+// after every move, resize, add and delete rather than fixed up front.
+function recomputeCanvas(){
+  let right=0, bottom=0;
+  SDEFS.forEach(s=>{ right=Math.max(right,s.x+s.w); bottom=Math.max(bottom,s.y+s.h); });
+  CWIDTH  = Math.max(right+CANVAS_PAD, 900);
+  CHEIGHT = Math.max(bottom+90, 620);
   canvas.style.width=CWIDTH+'px'; canvas.style.height=CHEIGHT+'px';
   svg.setAttribute('width',CWIDTH);
   svg.setAttribute('height',CHEIGHT);
   svg.setAttribute('viewBox',`0 0 ${CWIDTH} ${CHEIGHT}`);
   snapV.style.height=(CHEIGHT+1200)+'px';
   snapH.style.width=CWIDTH+'px';
+}
+
+function placeSection(s){
+  const el=secEls[s.id]; if(!el) return;
+  Object.assign(el.style,{left:s.x+'px',top:s.y+'px',width:s.w+'px',height:s.h+'px'});
+}
+
+function addSection(row){
+  // Rows arrive from the server and from other people's browsers. A malformed
+  // one would sit in S with an undefined id and turn every later width and
+  // height calculation into NaN, so it stops here.
+  if(!row||!row.sec) return null;
+  const id=row.sec;
+  if(S[id]) return S[id];              // a broadcast can arrive twice
+  const s={
+    id, lbl:row.label||id,
+    x:+row.x||0, y:+row.y||0,
+    w:Math.max(SEC_MIN_W, +row.w||SEC_NEW_W),
+    h:Math.max(SEC_MIN_H, +row.h||SEC_NEW_H),
+  };
+  S[id]=s; SDEFS.push(s);
+
+  const d=document.createElement('div');
+  d.className='sec-box'; d.dataset.sec=id;
+  const l=document.createElement('div');
+  l.className='sec-label';
+  l.innerHTML='<span class="dot"></span><span class="sec-name"></span>';
+  l.querySelector('.sec-name').textContent=s.lbl;
+  l.title='Drag to move · double-click to rename';
+  d.appendChild(l);
+  const rz=document.createElement('div');
+  rz.className='sec-resize'; rz.title='Drag to resize';
+  d.appendChild(rz);
+  canvas.appendChild(d); secEls[id]=d;
+
+  placeSection(s);
+  attachSecResize(s,rz,d);
+  attachSecMove(s,l);
+  l.addEventListener('dblclick',ev=>{ ev.stopPropagation(); ev.preventDefault(); openSecEdit(s.id,l); });
+
+  refreshSecOptions(); recomputeCanvas(); updateEmptyState();
+  return s;
+}
+
+function dropSection(id){
+  const el=secEls[id]; if(el) el.remove();
+  delete secEls[id]; delete S[id];
+  const i=SDEFS.findIndex(s=>s.id===id);
+  if(i>=0) SDEFS.splice(i,1);
+  refreshSecOptions(); recomputeCanvas(); relayout(); updateEmptyState();
+}
+
+function labelSection(id,label){
+  const s=S[id]; if(!s) return;
+  s.lbl=label;
+  const el=secEls[id];
+  if(el) el.querySelector('.sec-name').textContent=label;
+  refreshSecOptions();
+}
+
+// The Add Task modal's section picker is rebuilt from the live list, so it can
+// never offer a box that has gone or miss one that just arrived.
+function refreshSecOptions(){
+  const keep=mSec.value;
+  mSec.innerHTML='';
   SDEFS.forEach(s=>{
-    const d=document.createElement('div');
-    d.className='sec-box'; d.dataset.sec=s.id;
-    Object.assign(d.style,{left:s.x+'px',top:s.y+'px',width:s.w+'px',height:s.h+'px'});
-    const l=document.createElement('div');
-    l.className='sec-label';
-    l.innerHTML='<span class="dot"></span>'+s.lbl;
-    d.appendChild(l);
-    const rz=document.createElement('div');
-    rz.className='sec-resize'; rz.title='Drag to resize';
-    d.appendChild(rz);
-    canvas.appendChild(d); secEls[s.id]=d;
-    attachSecResize(s,rz,d);
     const o=document.createElement('option');
     o.value=s.id; o.textContent=s.lbl; mSec.appendChild(o);
   });
+  if(keep&&S[keep]) mSec.value=keep;
+  const none=!SDEFS.length;
+  addTaskBtn.disabled=none;
+  addTaskBtn.title=none?'Add a section first — tasks live inside one':'';
+}
+
+// A plan with no sections is a blank grey page that looks broken. Say what to
+// do instead.
+function updateEmptyState(){
+  document.getElementById('pt-empty').style.display=SDEFS.length?'none':'';
+}
+
+function buildSections(rows){
+  (rows||[]).forEach(addSection);
+  recomputeCanvas();
   applyTransform();
+  updateEmptyState();
+}
+
+// Where a new box goes: to the right of everything already there, standing on
+// the same baseline, so a plan built one section at a time reads left to right.
+// SBOT is only the baseline for the very first box on an empty plan — once
+// there are others, theirs wins, or a new box lands adrift of a layout someone
+// has already dragged somewhere else.
+function nextSectionSpot(){
+  if(!SDEFS.length) return {x:CANVAS_PAD, y:SBOT-SEC_NEW_H};
+  let right=0, base=0;
+  SDEFS.forEach(s=>{ right=Math.max(right,s.x+s.w); base=Math.max(base,s.y+s.h); });
+  return {x:right+SG, y:base-SEC_NEW_H};
+}
+
+async function createSection(label){
+  const spot=nextSectionSpot();
+  try{
+    const r=await fetch('/pt/api/sections/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plan:PLAN,label,x:spot.x,y:spot.y,w:SEC_NEW_W,h:SEC_NEW_H})});
+    if(!r.ok) throw new Error();
+    const d=await r.json();
+    addSection(d.section);
+    relayout();
+    wsSend({type:'section_add',row:d.section});
+  }catch(e){ alert('Could not add that section, try again'); }
+}
+
+async function deleteSection(id){
+  const s=S[id]; if(!s) return;
+  if(NODES.some(n=>n.sec===id)){
+    alert('Move or delete this section’s tasks first.');
+    return;
+  }
+  if(!confirm('Delete the "'+s.lbl+'" section?')) return;
+  try{
+    const r=await fetch('/pt/api/sections/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plan:PLAN,sec:id})});
+    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail||'');
+    dropSection(id);
+    wsSend({type:'section_del',sec:id});
+  }catch(e){ alert(e.message||'Could not delete that section'); }
+}
+
+function saveSectionGeom(s){
+  fetch('/pt/api/sections',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({plan:PLAN,sec:s.id,x:s.x,y:s.y,w:s.w,h:s.h})}).catch(()=>{});
 }
 
 // ── NODE ANCHORS ──────────────────────────────────────────────────────
@@ -526,15 +678,20 @@ function aBot(id){
 }
 
 // ── EDGE DRAWING ──────────────────────────────────────────────────────
+// Cross-section edges run along a lane above the boxes. Only the legacy plan's
+// built-in edges are ever is_cross, so this used to be "above the Software
+// box"; with sections free to move it is above whichever is highest.
+function crossRouteY(){
+  let top=null;
+  SDEFS.forEach(s=>{ if(top===null||s.y<top) top=s.y; });
+  return (top===null?0:top)-18;
+}
 function edgeD(f,t,cross){
   const s=aTop(f), e=aBot(t);
   if(cross){
     const sx=PM[f].cx+38, sy=aBot(f).y;
     const ex=e.x, ey=e.y;
-    // Cross-section edges route above the legacy plan's Software box; only
-    // built-in 25/26 edges are ever is_cross, so any section is a safe
-    // fallback on plans that have no "sw".
-    const routeY=(S.sw||SDEFS[0]).y-18, r=16;
+    const routeY=crossRouteY(), r=16;
     return `M${sx} ${sy}
        L${sx} ${routeY-r} Q${sx} ${routeY} ${sx+r} ${routeY}
        L${ex-r} ${routeY} Q${ex} ${routeY} ${ex} ${routeY+r}
@@ -552,7 +709,7 @@ function drawEdge(f,t,cross){
     path.setAttribute('marker-end','url(#arx)');
     path.setAttribute('opacity','.9');
     const s=aTop(f), e=aBot(t);
-    const sx=PM[f].cx+38, ex=e.x, routeY=(S.sw||SDEFS[0]).y-18;
+    const sx=PM[f].cx+38, ex=e.x, routeY=crossRouteY();
     const txt=document.createElementNS('http://www.w3.org/2000/svg','text');
     txt.setAttribute('x',(sx+ex)/2); txt.setAttribute('y',routeY-8);
     txt.setAttribute('text-anchor','middle');
@@ -754,11 +911,12 @@ window.addEventListener('mousemove',e=>{
 });
 window.addEventListener('mouseup',()=>{ panning=false; scroll.classList.remove('panning'); });
 
-// ── SECTION RESIZE ────────────────────────────────────────────────────
-const sizeOverrides={};
+// ── SECTION MOVE & RESIZE ─────────────────────────────────────────────
+// A box can now sit anywhere, including above the origin, so the canvas is
+// shifted down by however far the highest one sticks out rather than clipping.
 function contentTop(){
   let m=0;
-  SDEFS.forEach(s=>{ const o=sizeOverrides[s.id]; const top=o?(s.bottom-o.h):s.y; if(top<m) m=top; });
+  SDEFS.forEach(s=>{ if(s.y<m) m=s.y; });
   return m;
 }
 function relayout(){
@@ -766,31 +924,79 @@ function relayout(){
   vShift = mt<0 ? (-mt+24) : 0;
   applyTransform();
 }
-function applySectionSize(secId,w,h){
-  const s=S[secId], el=secEls[secId]; if(!el) return;
-  const W=Math.max(s.w,w||0), H=Math.max(s.h,h||0);
-  el.style.width=W+'px'; el.style.height=H+'px';
-  el.style.left=s.x+'px'; el.style.top=(s.bottom-H)+'px';
-  sizeOverrides[secId]={w:W,h:H};
-  relayout();
+
+// Apply geometry from any source — a local drag, or someone else's. Bottom
+// stays put while resizing (the handle is at the top-right), which is how this
+// canvas has always grown a box.
+function applySecGeom(secId,g){
+  const s=S[secId]; if(!s) return;
+  if(g.w!=null) s.w=Math.max(SEC_MIN_W,g.w);
+  if(g.h!=null) s.h=Math.max(SEC_MIN_H,g.h);
+  if(g.x!=null) s.x=g.x;
+  if(g.y!=null) s.y=g.y;
+  placeSection(s); recomputeCanvas(); relayout();
 }
+
 function attachSecResize(s,handle,box){
   handle.addEventListener('mousedown',e=>{
     e.preventDefault(); e.stopPropagation();
-    const sx=e.clientX, sy=e.clientY, startW=box.offsetWidth, startH=box.offsetHeight;
+    const sx=e.clientX, sy=e.clientY;
+    const startW=s.w, startH=s.h, bottom=s.y+s.h;
     let lastBc=0;
     const mv=ev=>{
       const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
-      applySectionSize(s.id, startW+dx, startH-dy);
+      const W=Math.max(SEC_MIN_W,startW+dx), H=Math.max(SEC_MIN_H,startH-dy);
+      applySecGeom(s.id,{w:W,h:H,y:bottom-H});
       const now=performance.now();
-      if(now-lastBc>50){ lastBc=now; const o=sizeOverrides[s.id]; wsSend({type:'section',sec:s.id,w:o.w,h:o.h}); }
+      if(now-lastBc>50){ lastBc=now; wsSend({type:'section',sec:s.id,x:s.x,y:s.y,w:s.w,h:s.h}); }
     };
     const up=()=>{
       window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
-      const o=sizeOverrides[s.id]||{w:s.w,h:s.h};
-      wsSend({type:'section',sec:s.id,w:o.w,h:o.h});
-      fetch('/pt/api/sections',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({plan:PLAN,sec:s.id,w:o.w,h:o.h})});
+      wsSend({type:'section',sec:s.id,x:s.x,y:s.y,w:s.w,h:s.h});
+      saveSectionGeom(s);
+    };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+}
+
+// Dragging the label moves the box *and* its tasks. Tasks hold absolute canvas
+// coordinates, so without this they would stay behind while their box walks
+// off — see /pt/api/nodes/move-bulk.
+function attachSecMove(s,handle){
+  handle.addEventListener('mousedown',e=>{
+    if(e.detail>1) return;                // let dblclick open the editor
+    e.preventDefault(); e.stopPropagation();
+    const sx=e.clientX, sy=e.clientY, ox=s.x, oy=s.y;
+    const members=NODES.filter(n=>n.sec===s.id)
+      .map(n=>({id:n.id, x0:PM[n.id].cx, y0:PM[n.id].cy}));
+    let moved=false, lastBc=0;
+    const mv=ev=>{
+      const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
+      if(Math.abs(dx)>2||Math.abs(dy)>2) moved=true;
+      applySecGeom(s.id,{x:Math.max(0,ox+dx), y:oy+dy});
+      // Read the delta back off the box rather than using dx/dy: the clamp at
+      // x=0 means the box may have moved less than the pointer did, and the
+      // tasks have to move exactly as far as the box or they drift out of it.
+      const rdx=s.x-ox, rdy=s.y-oy;
+      members.forEach(m=>applyMove(m.id, m.x0+rdx, m.y0+rdy));
+      const now=performance.now();
+      if(now-lastBc>50){
+        lastBc=now;
+        wsSend({type:'section',sec:s.id,x:s.x,y:s.y,w:s.w,h:s.h});
+        members.forEach(m=>wsSend({type:'node_move',id:m.id,x:PM[m.id].cx,y:PM[m.id].cy}));
+      }
+    };
+    const up=()=>{
+      window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      if(!moved) return;
+      wsSend({type:'section',sec:s.id,x:s.x,y:s.y,w:s.w,h:s.h});
+      saveSectionGeom(s);
+      if(members.length){
+        const moves=members.map(m=>({id:m.id,x:PM[m.id].cx,y:PM[m.id].cy}));
+        moves.forEach(m=>wsSend({type:'node_move',id:m.id,x:m.x,y:m.y}));
+        fetch('/pt/api/nodes/move-bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({plan:PLAN,moves})}).catch(()=>{});
+      }
     };
     window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
   });
@@ -934,6 +1140,7 @@ function applyMove(id,x,y){
 const modal=document.getElementById('modal');
 const mName=document.getElementById('m-name');
 const mSec=document.getElementById('m-sec');
+const addTaskBtn=document.getElementById('addbtn');
 const mType=document.getElementById('m-type');
 const depSearch=document.getElementById('m-depsearch');
 const depChips=document.getElementById('m-depchips');
@@ -1003,7 +1210,10 @@ async function submitTask(){
   }catch(e){ alert('Could not add task, try again'); }
 }
 
-document.getElementById('addbtn').addEventListener('click',openModal);
+addTaskBtn.addEventListener('click',openModal);
+document.getElementById('addsecbtn').addEventListener('click',ev=>{
+  ev.stopPropagation(); openSecEdit(null, ev.currentTarget);
+});
 document.getElementById('m-cancel').addEventListener('click',closeModal);
 document.getElementById('m-save').addEventListener('click',submitTask);
 modal.addEventListener('mousedown',e=>{ if(e.target===modal) closeModal(); });
@@ -1162,6 +1372,59 @@ function attachRename(n,el){
     openRename(n.id,el);
   });
 }
+
+// ── SECTION EDITOR ────────────────────────────────────────────────────
+// One popover for both jobs: "＋ Section" in the header opens it empty,
+// double-clicking a section's name opens it on that section. Delete only
+// appears for an existing one, and the server refuses it while tasks remain.
+const secPop=document.createElement('div'); secPop.id='secpop'; secPop.style.display='none';
+secPop.innerHTML='<div class="renpop-ttl" id="secpop-ttl"></div>'+
+  '<input id="secpop-in" type="text" autocomplete="off" placeholder="e.g. Suspension">'+
+  '<div class="renpop-hint">Drag the name to move the box, its top-right corner to resize.</div>'+
+  '<div class="renpop-actions">'+
+    '<button id="secpop-del">Delete</button>'+
+    '<button id="secpop-cancel">Cancel</button>'+
+    '<button id="secpop-save">Save</button>'+
+  '</div>';
+document.body.appendChild(secPop);
+let secEditId=null;
+function openSecEdit(id,anchor){
+  secEditId=id;
+  const inp=document.getElementById('secpop-in');
+  inp.value=id&&S[id]?S[id].lbl:'';
+  document.getElementById('secpop-ttl').textContent=id?'Edit section':'New section';
+  document.getElementById('secpop-del').style.display=id?'':'none';
+  secPop.style.display='block';
+  const r=anchor.getBoundingClientRect();
+  secPop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-276))+'px';
+  secPop.style.top=Math.min(r.bottom+8,window.innerHeight-190)+'px';
+  setTimeout(()=>{ inp.focus(); inp.select(); },40);
+}
+function closeSecEdit(){ secPop.style.display='none'; secEditId=null; }
+async function saveSecEdit(){
+  const label=document.getElementById('secpop-in').value.trim();
+  if(!label){ document.getElementById('secpop-in').focus(); return; }
+  const id=secEditId;
+  closeSecEdit();
+  if(!id){ await createSection(label); return; }
+  if(S[id]&&S[id].lbl===label) return;
+  labelSection(id,label);
+  wsSend({type:'section_label',sec:id,label});
+  fetch('/pt/api/sections',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({plan:PLAN,sec:id,label})}).catch(()=>{});
+}
+document.getElementById('secpop-save').addEventListener('click',saveSecEdit);
+document.getElementById('secpop-cancel').addEventListener('click',closeSecEdit);
+document.getElementById('secpop-del').addEventListener('click',()=>{
+  const id=secEditId; closeSecEdit(); if(id) deleteSection(id);
+});
+document.getElementById('secpop-in').addEventListener('keydown',e=>{
+  if(e.key==='Enter') saveSecEdit();
+  if(e.key==='Escape') closeSecEdit();
+});
+document.addEventListener('mousedown',e=>{
+  if(secPop.style.display!=='none' && !secPop.contains(e.target)) closeSecEdit();
+});
 
 // ── EDGE EDITING ──────────────────────────────────────────────────────
 let linking=null, linkTempPath=null, linkTarget=null;
@@ -1356,7 +1619,10 @@ function handleWs(m){
   }
   else if(m.type==='node_move') applyMove(m.id,m.x,m.y);
   else if(m.type==='node_delete') removeCustomLocal(m.id);
-  else if(m.type==='section') applySectionSize(m.sec,m.w,m.h);
+  else if(m.type==='section') applySecGeom(m.sec,{x:m.x,y:m.y,w:m.w,h:m.h});
+  else if(m.type==='section_add'){ if(m.row){ addSection(m.row); relayout(); } }
+  else if(m.type==='section_del') dropSection(m.sec);
+  else if(m.type==='section_label') labelSection(m.sec,m.label);
   else if(m.type==='details'){ if(m.text) detailsMap[m.id]=m.text; else delete detailsMap[m.id]; applyDetail(m.id); }
   else if(m.type==='edge_add') addEdgeLocal(m.f,m.t);
   else if(m.type==='edge_remove') removeEdgeLocal(m.f,m.t);
@@ -1392,9 +1658,10 @@ async function loadState(){
   const r=await fetch('/pt/api/state?plan='+encodeURIComponent(PLAN));
   const d=await r.json();
 
-  // Sections before nodes: every node renders relative to its section box,
-  // and the canvas has no size at all until initPlan has run.
-  initPlan(d.plan||{name:document.title,sections:[]});
+  // Sections before tasks: a task renders relative to its box, and the canvas
+  // has no size at all until the sections it has to contain are known.
+  initPlan(d.plan||{name:document.title});
+  buildSections(d.sections);
 
   // Populate NM and PM from all nodes
   (d.nodes||[]).forEach(row=>{
@@ -1408,12 +1675,11 @@ async function loadState(){
     PM[row.id]={cx:row.x, cy:row.y};
   });
 
-  // Apply completions, details, section sizes before rendering
+  // Apply completions and details before rendering
   (d.done||[]).forEach(id=>doneSet.add(id));
   (d.in_progress||[]).forEach(id=>progressSet.add(id));
   (d.done_log||[]).forEach(e=>pushLog(e.node_id, e.done, e.user_name, e.created_at));
   Object.assign(detailsMap, d.details||{});
-  (d.sections||[]).forEach(x=>{ if(S[x.sec]) applySectionSize(x.sec,x.w,x.h); });
 
   // Render all nodes (no dep edges here — those come from d.edges)
   Object.values(NM).forEach(n=>renderNode(n, false));

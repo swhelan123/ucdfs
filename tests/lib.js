@@ -96,6 +96,30 @@ async function settle(d, ms = 1500) {
 }
 
 /**
+ * Poll until a condition holds, or give up. Returns whether it held.
+ *
+ * For anything that waits on a network round trip, use this rather than
+ * settle()'s fixed window. The dashboard is the cautionary tale: it draws after
+ * four API calls, one of which fans out into a dozen Supabase queries, and
+ * settle() returns after 1.75s — shorter than the page's own 2.5s reveal
+ * fallback. So the suite asserted on a page that had not finished drawing and
+ * failed with "0 cards", intermittently, on a runner slightly slower than the
+ * last one. A fixed sleep in a test is a deadline the code has to beat, and it
+ * gets tighter every time the app grows a query.
+ *
+ * The predicate throwing counts as "not yet" — an element the page has not
+ * created is the ordinary case while waiting for it.
+ */
+async function waitFor(predicate, ms = 8000, step = 50) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { if (predicate()) return true; } catch (e) { /* not yet */ }
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, step));
+  }
+}
+
+/**
  * Click the submit button and wait for the request to finish.
  *
  * Note: dispatching a synthetic Event('submit') does not reliably run listeners
@@ -128,4 +152,4 @@ async function signUp(first = 'Test', last = 'Bot') {
   return { email, setCookies };
 }
 
-module.exports = { BASE, check, summary, open, submit, settle, signUp };
+module.exports = { BASE, check, summary, open, submit, settle, signUp, waitFor };

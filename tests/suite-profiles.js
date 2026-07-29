@@ -17,7 +17,7 @@
  * applied yet the suite says so loudly and skips those checks, rather than
  * reporting a schema gap as a code failure.
  */
-const { BASE, check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 
 /* A real 1×1 PNG. Used to prove the upload path accepts a genuine image and
    the sniffer is reading bytes rather than the declared content type. */
@@ -410,6 +410,11 @@ const STARTED = Date.now() - 1000;
   }
   {
     const { w, d, errors } = await open('/', { setCookies: cookiesA, failOnPrompt: true });
+    // Wait for the dashboard to have actually drawn before counting anything on
+    // it — open()'s settle() window is shorter than /api/dashboard needs on a
+    // busy runner, and every count below then reads zero. See waitFor in lib.js.
+    check('the dashboard finishes drawing',
+      await waitFor(() => w.eval('TILES_LOADED') === true), 'TILES_LOADED still false');
     const chips = [...d.querySelectorAll('#subteam-chips .chip')];
     check('dashboard has a chip per subteam plus All', chips.length === 4,
       `${chips.length} chips`);
@@ -422,14 +427,21 @@ const STARTED = Date.now() - 1000;
       !!expectTeam && activeChip.trim().startsWith(expectTeam),
       `${activeChip.trim()} — expected ${expectTeam}`);
 
+    // Every card on the page, across both blocks — the dashboard groups them
+    // now (Tools, then Last season), and "filter, never hide" is a claim about
+    // the page, not about one container. Counting only #applet-grid would call
+    // the archived cards missing.
+    const shownCards = () =>
+      [...d.querySelectorAll('#applet-grid .applet, #applet-groups .applet')];
+
     // Note this is not the full grid: the filter has already defaulted to
     // Powertrain, which is the point of the check above.
-    const onLoad = d.querySelectorAll('#applet-grid .applet').length;
+    const onLoad = shownCards().length;
     check('the default filter is already narrowing', onLoad < applets.length && onLoad > 0,
       `${onLoad} of ${applets.length} on load`);
 
     chips.find(c => c.dataset.filter === 'ops').click();
-    const opsCards = [...d.querySelectorAll('#applet-grid .applet')];
+    const opsCards = shownCards();
     check('a chip narrows the grid', opsCards.length < applets.length && opsCards.length > 0,
       `${applets.length} → ${opsCards.length}`);
     // The load-bearing half of "filter, never hide": shared tools survive every
@@ -442,8 +454,8 @@ const STARTED = Date.now() - 1000;
     // Nothing on this page can be made permanently unreachable by a chip.
     chips.find(c => c.dataset.filter === 'all').click();
     check('clearing the filter brings everything back',
-      d.querySelectorAll('#applet-grid .applet').length === applets.length,
-      `${d.querySelectorAll('#applet-grid .applet').length} of ${applets.length}`);
+      shownCards().length === applets.length,
+      `${shownCards().length} of ${applets.length}`);
 
     // The overlay is built by shared.js only when it is needed, so "not asked"
     // now means the element was never created rather than created and hidden.

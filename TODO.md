@@ -257,29 +257,37 @@ out of things they need at 2am before a deadline.
 
 ---
 
-### Build Plans  🔧  *(generalise the PT plan)*
-The replacement for the Notion tracker, built from the thing that already works.
+### Flowcharts  🗺️  *(done — was "generalise the PT plan")*
+The replacement for the Notion tracker, built from the thing that already worked.
 
-**The multi-plan core is done** (`migrations/005` + the `PLANS` registry in
-`main.py`): every `pt_*` table carries a `plan_id`, one canvas serves any
-registered plan at `/plan/<id>`, and `/pt` stays the legacy alias so nothing
-saved before the change moved.
+Landed in three steps, each one moving a layer out of code and into the database:
 
-**Sections are data too** (`migrations/006`). They spent one release as
-`cols`/`rows` in the registry, which meant a new plan's layout was still a code
-change — the exact thing that stops a subteam building their own. Now they are
-rows with a label, a position and a size, made and moved from the canvas:
-`＋ Section` in the header, drag the name to move it (tasks come with it),
-drag the top-right corner to resize, double-click the name to rename or delete.
-A plan therefore starts genuinely empty, and `pt-2627` is a blank canvas
-waiting for whoever is running 26/27.
+- **`migrations/005` — data belongs to a plan.** Every `pt_*` table carries a
+  `plan_id`; one canvas serves any plan at `/plan/<id>`; `/pt` stays the legacy
+  alias so nothing saved before the change moved.
+- **`migrations/006` — sections are rows.** They spent one release as
+  `cols`/`rows` definitions in code, which meant a new plan's *layout* was still
+  a deploy. Now: `＋ Section`, drag the name to move it (tasks come with it),
+  drag the top-right corner to resize, double-click to rename or delete.
+- **`migrations/007` — charts are rows.** The last hardcoded thing was the list
+  of plans itself. `/flowcharts` is the picker: every chart, task counts,
+  `＋ New chart`, and rename / archive / delete per chart. Archiving is the
+  reversible action; deleting only works on an empty chart.
+
+**So the answer to "can Mech just make their own?" is yes, with no code at all.**
+That was the whole objective and it is met. The Canva link stays on the dashboard
+under *Last season* as a record of 25/26; when Mech want a real one they press
+the button.
+
+The dashboard now groups its cards (`APPLET_GROUPS`), which is what moved both
+25/26 build plans into their own block at the foot of the page instead of leaving
+them competing with what is being built now.
+
+`pt.html` also carries a five-step first-run tour, with a `?` in the header to
+reopen it, because a canvas with no instructions is a canvas people open once.
 
 Still to do, roughly in order:
 
-- **Give Mech a real plan.** The Mech Manufacturing Plan is currently an
-  external Canva link in the registry — a build plan that wants to be a build
-  plan. Two lines of code now (a `PLANS` entry and an applet entry pointed at
-  `/plan/mech-2627` instead of Canva); they draw the sections themselves.
 - Add per node:
   - **Assignee** (from `profiles` — we have accounts now)
   - **Due date**, so the countdown can flag what's late
@@ -288,16 +296,36 @@ Still to do, roughly in order:
     express it
 - Then the dashboard can say *"Chassis is 12% behind, 3 tasks blocked on
   parts"*, which is the sentence a team lead actually wants. (Today the tile
-  follows one plan — `DASHBOARD_PLAN` — which is the right shape until there
-  is per-plan data worth a sentence each.)
-- At season rollover: flip the old plan's card to `quiet`, the new one to
-  `live`, point `DASHBOARD_PLAN` at the new plan. The 25/26 data stays in the
-  tables untouched — never wipe `pt_*` for a new season, `pt_done_log` is the
-  feed's history.
-- **Copy a plan's shape into a new season.** Rebuilding a 60-task plan by hand
-  every September is the obvious next paper cut, and by then the graph is
-  already plan-scoped — "duplicate sections and tasks into plan X, tick state
-  cleared" is one endpoint.
+  follows one chart — `DASHBOARD_PLAN` — which is the right shape until there
+  is per-chart data worth a sentence each.)
+- **Duplicate a chart.** Rebuilding a 60-task plan by hand every September is
+  the obvious next paper cut, and the graph is already chart-scoped — "copy this
+  chart's sections and tasks into a new one, tick state cleared" is one endpoint
+  and a menu item on `/flowcharts`. Probably the single highest-value thing left
+  on this list, and it is what makes the September rollover a five-second job.
+- At season rollover: archive last season's chart from the picker and point
+  `DASHBOARD_PLAN` at the new one. The 25/26 data stays in the tables untouched —
+  never wipe `pt_*` for a new season, `pt_done_log` is the feed's history.
+- **Per-chart subteam tag**, so `/flowcharts` and the dashboard can put a
+  Mechanical chart in front of Mechanical first. Same rule as everywhere else in
+  here: relevance, never permission — filter, don't hide.
+
+---
+
+### `/api/dashboard` is a dozen round trips  🐌
+Not urgent, but worth knowing about. Every tile does its own Supabase queries,
+sequentially, and the endpoint now waits on roughly a dozen before it answers.
+Independence is deliberate — one failing table nulls one tile instead of blanking
+the page — but the calls are independent too, and nothing makes them wait for
+each other.
+
+This surfaced as a *test* failure rather than a complaint: `suite-pages` asserted
+on the dashboard after a fixed 1.75s and started reading an undrawn page on a
+busy runner. The suite waits for the page's own signal now (`waitFor` in
+`tests/lib.js`), so it is honest either way — but the endpoint is genuinely slow
+on a cold connection and the fix is small: gather the tiles concurrently
+(`asyncio.to_thread` per tile, or one `Promise.all`-shaped batch) and keep the
+per-tile isolation. Worth doing before the feed or the tiles grow again.
 
 ---
 

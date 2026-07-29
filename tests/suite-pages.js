@@ -5,16 +5,18 @@
  * "plans launcher" broke — the element went, its event wiring did not, and the
  * page threw on load.
  */
-const { BASE, check, summary, open, signUp } = require('./lib');
+const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 
 const PAGES = [
   { path: '/',           name: 'dashboard'  },
   { path: '/attendance', name: 'attendance' },
   { path: '/comp',       name: 'comp'       },
+  { path: '/flowcharts', name: 'flowcharts' },
   { path: '/pt',         name: 'pt'         },
-  // Same file as /pt, different plan — catches the canvas failing to build
-  // itself from a plan whose sections arrive from the registry, not the DB.
-  { path: '/plan/pt-2627', name: 'pt-2627'  },
+  // The dynamic chart route, which is how every chart but the legacy one is
+  // reached. Aimed at 'pt' on purpose: charts are rows now, and the only one
+  // that cannot be deleted from the picker is a non-empty one.
+  { path: '/plan/pt',   name: 'plan/pt'     },
   { path: '/harness',    name: 'harness'    },
   { path: '/profiles',   name: 'profiles'   },
 ];
@@ -46,7 +48,21 @@ const PAGES = [
   console.log('\ndashboard content');
   {
     const { w, d, errors } = await open('/', { setCookies, failOnPrompt: true });
-    const cards = d.querySelectorAll('#applet-grid .applet');
+
+    // Wait for the page's own "the data landed and I have painted" flag before
+    // asserting anything about what it drew. TILES_LOADED is set immediately
+    // after boot()'s four API calls resolve, so it is the honest signal; open()'s
+    // settle() gives up after 1.75s, which is less than /api/dashboard's own
+    // round trips need on a busy runner, and every check below then reads an
+    // undrawn page and reports "0 cards". Read through eval because a top-level
+    // `let` is not a property of window.
+    const drawn = await waitFor(() => w.eval('TILES_LOADED') === true);
+    check('the dashboard finishes drawing', drawn, 'TILES_LOADED still false');
+
+    // Both blocks: the dashboard lays cards out in groups now (Tools, then Last
+    // season), so counting one container would miss the archived ones and read
+    // as cards having gone missing from the page.
+    const cards = d.querySelectorAll('#applet-grid .applet, #applet-groups .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);
     // The grid is filtered by the subteam chips now. A fresh test account has no
     // subteam, so it must land on All and show everything — a default that hid
@@ -68,7 +84,10 @@ const PAGES = [
     // at all — if reveal() stops being called, or is renamed, or an early
     // return skips it, every check above still passes against a DOM nobody can
     // see. This is the one that would notice.
-    check('the page is revealed once drawn', d.body.classList.contains('ready'),
+    // reveal() also fires on a 2.5s safety timer, so waiting for TILES_LOADED
+    // above does not guarantee it has run yet — wait for the class itself.
+    check('the page is revealed once drawn',
+      await waitFor(() => d.body.classList.contains('ready'), 4000),
       `body class="${d.body.className}"`);
     // No tile may still be showing its placeholder by the time it is visible —
     // the "…" in every card was half of what the flash actually looked like.

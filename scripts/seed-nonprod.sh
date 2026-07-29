@@ -90,6 +90,14 @@ echo
 # schedule_events.id is `generated always as identity`, and PostgREST has no way
 # to say OVERRIDING SYSTEM VALUE — sending an explicit id is a hard 400.
 TABLES=(
+  # plans first, for the same reason sections come before nodes: a chart's rows
+  # are unreachable until the chart itself exists — _plan_or_400 checks this
+  # table, so a seeded graph with no plans row is a 400 on every request.
+  #
+  # created_by is stripped. A chart is reference data — the shape of a build
+  # plan — but the name of whoever made it is about a person, and the rule here
+  # has no exceptions.
+  "plans:created_by"
   "pt_sections:"
   "pt_nodes:"
   "pt_edges:"

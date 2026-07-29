@@ -20,6 +20,17 @@ IMAGE="${TEST_IMAGE:-ucdfs-attendance-bot}"
 pass=0; fail=0
 
 ck() { # ck <label> <got> <want>
+  # Guard the arity before comparing anything. macOS ships bash 3.2, which
+  # splits a multi-line "$(node -e "…\"…\"")" into several arguments — so ck was
+  # called with five, compared two empty strings, and printed ok for ten static
+  # checks that had in fact never run. Locally green, red on the bash 5 runner,
+  # and nothing on screen to say which. A harness that cannot check something
+  # has to say so, not pass it.
+  if [ "$#" -ne 3 ]; then
+    fail=$((fail+1))
+    printf "  FAIL  %-46s harness bug: ck got %s args, want 3\n" "${1:-?}" "$#"
+    return
+  fi
   if [ "$2" = "$3" ]; then
     pass=$((pass+1)); printf "  ok    %-46s %s\n" "$1" "$2"
   else

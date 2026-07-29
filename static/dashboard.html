@@ -104,6 +104,14 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .feed-text  { flex: 1; min-width: 0; }
 .feed-actor { font-weight: 700; }
 .feed-when  { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+/* Only drawn with admin override on. Faint until hovered — it sits on a feed
+   everybody reads and it deletes somebody else's line. */
+.feed-x {
+  flex-shrink: 0; border: none; background: none; cursor: pointer; padding: 0 2px;
+  font: inherit; font-size: 0.95rem; line-height: 1; color: var(--muted); opacity: 0.45;
+}
+.feed-x:hover { opacity: 1; color: #c0392b; }
+.feed-x:disabled { opacity: 0.25; cursor: default; }
 
 /* ── Headline strip: the one thing worth knowing right now ── */
 .headline {
@@ -338,6 +346,9 @@ let TILES    = {};
    between a placeholder and a spinner that never stops. */
 let TILES_LOADED = false;
 let SUBTEAMS = [];
+/* The feed as it was last drawn. Kept so a delete button can name its own row
+   without the id ending up in the markup. */
+let FEED     = [];
 let FILTER   = 'all';
 
 /* ── Subteam filter ──
@@ -466,8 +477,9 @@ function appletIcon(id) {
 }
 
 function renderFeed(items) {
+  FEED = items || [];
   const el = document.getElementById('feed');
-  if (!items || !items.length) {
+  if (!FEED.length) {
     el.innerHTML = `
       <div class="empty">
         <div class="empty-icon">🌱</div>
@@ -475,7 +487,13 @@ function renderFeed(items) {
       </div>`;
     return;
   }
-  el.innerHTML = items.map(i => `
+  /* The × is drawn from the profile cookie, which is display data and grants
+     nothing — /api/admin/activity/delete re-checks the database row. A forged
+     cookie gets a button that 403s. */
+  const me  = UCDFS.user() || {};
+  const god = !!me.god_mode;
+
+  el.innerHTML = FEED.map((i, n) => `
     <div class="feed-item">
       <div class="feed-icon">${appletIcon(i.applet)}</div>
       <div class="feed-text">
@@ -483,7 +501,37 @@ function renderFeed(items) {
         ${UCDFS.esc(i.verb)} ${UCDFS.esc(i.subject)}
       </div>
       <div class="feed-when">${UCDFS.esc(i.ago || '')}</div>
+      ${god && i.id ? `<button class="feed-x" type="button" data-n="${n}"
+         title="Delete this entry" aria-label="Delete this entry">×</button>` : ''}
     </div>`).join('');
+
+  el.querySelectorAll('.feed-x').forEach(btn =>
+    btn.addEventListener('click', () => deleteFeedItem(btn, FEED[+btn.dataset.n])));
+}
+
+async function deleteFeedItem(btn, item) {
+  if (!item) return;
+  if (!confirm(`Delete this entry?\n\n${item.actor} ${item.verb} ${item.subject}`)) return;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/activity/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: item.source, id: item.id }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    /* Re-fetch rather than splice the row out. The feed is the newest eight of
+       two merged tables, so removing one should pull the ninth up — a spliced
+       list quietly gets shorter every time you tidy it. */
+    const data = await fetch('/api/dashboard').then(x => x.json()).catch(() => null);
+    if (data) renderFeed(data.activity || []);
+    else btn.closest('.feed-item').remove();
+    UCDFS.toast('Entry deleted');
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't delete that entry");
+  }
 }
 
 function render() {

@@ -34,7 +34,8 @@ static/
   attendance.html     card-based applet
   comp.html           card-based applet
   profiles.html       card-based applet — the team directory
-  admin.html          card-based applet — roles + god mode (requires_role: admin)
+  admin.html          card-based applet — roles, god mode, deleting accounts
+                      (requires_role: admin)
   pt.html             full-screen canvas tool
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
@@ -147,6 +148,17 @@ line still reads correctly after the thing it names is renamed or deleted.
 Attendance deliberately does not write to it: twenty people logging a day each
 morning would bury everything else, and the "who's in now" bar covers it.
 
+The feed is append-only in normal use, with **one exception**: an elevated admin
+can delete a single line from the dashboard, through
+`POST /api/admin/activity/delete` (`{source, id}`). Feed rows therefore carry an
+`id` and a `source` — the feed is two merged tables, so neither identifies a row
+on its own. `FEED_SOURCES` in `main.py` is a whitelist because that source name
+reaches `supabase.table()`; an unknown value has to be a 400 by construction,
+never "whatever the client sent". Deleting a `pt_done_log` line removes the
+**record** of a tick, not the tick — `pt_done` is a different table and the
+build plan is untouched. The deletion is not itself logged: a line saying a line
+was deleted is noise at the top of the one place you were trying to clear.
+
 ## Roles, permissions and god mode
 
 Three things that look similar and are not:
@@ -178,6 +190,33 @@ Two traps in that shared write path, both with tests: **never rewrite your own
 profile cookie with the target's row** (your browser starts displaying you as
 the person you just edited), and credit the activity-feed line to whose profile
 it is rather than to whoever typed it.
+
+### Deleting an account
+
+`POST /api/admin/user/delete` is for the signup with the wrong email address —
+a duplicate nothing can merge and demoting does not hide. It deletes the
+**GoTrue user**, not the `profiles` row, and that ordering is the whole trick:
+`profiles.id references auth.users(id) on delete cascade`, with
+`profile_details` and `profile_prompts` cascading off `profiles` in turn.
+Removing the profile row alone would leave the login, and `auth_login()`
+re-creates a missing profile from the token's metadata — the account walks back
+in at the next sign-in looking new. It is the only caller of `_gotrue_admin()`,
+which sends the **service key**; everything else in the auth block acts as the
+user and sends the anon key.
+
+Four rails, all with tests, because nothing in the app can undo it: the override
+must be **on**, you cannot delete **yourself**, an **admin** must be demoted
+first (which keeps deletion behind the existing last-admin rail rather than
+giving it a weaker one of its own), and the caller has to **echo back the email
+address**, so a stale id from a list rendered a minute ago cannot take out the
+wrong person. Deleting also drops that user's cached tokens
+(`_cache_forget_user`), or a deleted account keeps loading pages for up to
+`TOKEN_CACHE_TTL`, which reads as the delete not having worked.
+
+Attendance rows, feed lines and `pt_done_log` entries **survive** deliberately.
+They are keyed by the name that was typed, not by an account, and they record
+what happened rather than who exists — the same rule that keeps activity
+subjects as text. The feed's own delete is how you tidy those.
 
 Two rules that keep it recoverable, both with tests:
 

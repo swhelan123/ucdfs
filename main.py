@@ -354,6 +354,31 @@ async def _gotrue(method: str, path: str, *, token: Optional[str] = None,
     return r.json() if r.content else {}
 
 
+async def _gotrue_admin(method: str, path: str, *, fallback: str = "Auth failed") -> dict:
+    """The GoTrue *admin* API, which is a different credential to _gotrue().
+
+    Everything above sends the anon key and, where there is one, the caller's own
+    token — it acts as the user. This acts as the project, so it needs the
+    service key, and the anon key would simply 401. Kept separate rather than
+    bolted on as a flag so nothing reaches an /admin/ path by accident.
+    """
+    if not SUPABASE_SERVICE_KEY:
+        raise AuthError("The server has no service key, so accounts can't be deleted here.", 503)
+    headers = {"apikey": SUPABASE_SERVICE_KEY,
+               "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+               "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.request(method, f"{GOTRUE}{path}", headers=headers)
+    if r.status_code >= 400:
+        try:
+            payload = r.json()
+        except Exception:
+            payload = {}
+        logger.error(f"[auth] admin {method} {path} → {r.status_code} {payload}")
+        raise AuthError(_friendly_auth_error(payload, fallback), 503)
+    return r.json() if r.content else {}
+
+
 # ── Token validation ──────────────────────────────────────────────────────────
 # GoTrue is the authority on whether a token is real, but asking it on every
 # request would put a network round-trip in front of every page load. Validated
@@ -378,6 +403,18 @@ def _cache_put(token: str, user: dict):
     if len(_token_cache) > 500:          # tiny team; this is just a leak-stop
         _token_cache.clear()
     _token_cache[token] = (user, time.time() + TOKEN_CACHE_TTL)
+
+
+def _cache_forget_user(uid: str) -> None:
+    """Drop every cached token belonging to one user.
+
+    Only deleting an account needs this. GoTrue stops honouring their tokens the
+    moment the user is gone, but this process would keep serving them from the
+    cache for up to TOKEN_CACHE_TTL — so a deleted account could still load
+    pages for a minute afterwards, which reads as "the delete didn't work"."""
+    for token, (user, _) in list(_token_cache.items()):
+        if (user or {}).get("id") == uid:
+            _token_cache.pop(token, None)
 
 
 async def _user_from_token(token: str) -> Optional[dict]:
@@ -931,6 +968,152 @@ async def api_admin_role(request: Request):
     if target == me.get("id"):
         _set_profile_cookie(response, _get_profile(target) or me)
     return response
+
+
+# ── Deleting an account ───────────────────────────────────────────────────────
+# The case this exists for: somebody signs up as @ucd.ie when the team is on
+# @ucdconnect.ie, or fat-fingers the address, and there is now a second account
+# for one person that nothing can merge. Demoting it doesn't help — it still
+# sits in the directory, in the people list and in every name-keyed lookup.
+#
+# It goes through GoTrue rather than the profiles table, and that ordering is
+# the whole trick: profiles.id is `references auth.users(id) on delete cascade`
+# (migrations/000), and profile_details and profile_prompts cascade off profiles
+# in turn, so removing the auth user takes all three with it. Deleting the
+# profiles row on its own would leave the login intact — and auth_login()
+# re-creates a missing profile from the token's metadata, so the account would
+# walk back in at the next sign-in looking brand new.
+#
+# What deliberately survives: attendance rows, feed lines and pt_done_log
+# entries. Those are keyed by the name that was typed, not by an account, and
+# they record what happened rather than who exists — the same rule that keeps
+# activity subjects as text. The feed's own delete below is how you tidy those.
+
+@app.post("/api/admin/user/delete")
+async def api_admin_delete_user(request: Request):
+    """Erase an account: the login, the profile, the details, the photo.
+
+    Three rails, because nothing inside the app can undo this:
+
+      - **The override has to be on.** Every other cross-user write already asks
+        for it, and this is the most destructive one on the site — an admin
+        reading the people list with it off cannot delete anybody by mis-clicking.
+      - **You cannot delete yourself.** It would erase the account holding the
+        session making the request, and if you were the last admin nobody could
+        ever reach /admin again.
+      - **An admin must be demoted first.** Deleting an admin outright is one
+        keystroke away from locking the team out, and the demotion path already
+        refuses to remove the last one.
+
+    On top of those the caller has to echo back the exact email address, so a
+    stale id from a list rendered before somebody else changed something cannot
+    delete the wrong person.
+    """
+    me = require_role(request, "admin")
+    if not is_god(request):
+        raise HTTPException(403, "Turn on admin override to delete an account")
+
+    b       = await request.json()
+    target  = (b.get("id") or "").strip()
+    confirm = (b.get("confirm_email") or "").strip().lower()
+
+    if not target:
+        raise HTTPException(400, "Which person?")
+    if target == me.get("id"):
+        raise HTTPException(400, "You can't delete your own account — ask another admin.")
+
+    victim = _get_profile(target)
+    if not victim:
+        raise HTTPException(404, "No such account.")
+    if victim.get("role") == "admin":
+        raise HTTPException(400, "Demote them to member first — an admin can't be deleted outright.")
+
+    email = (victim.get("email") or "").strip().lower()
+    if confirm != email:
+        raise HTTPException(400, "That email doesn't match the account you're deleting.")
+
+    # Read the photo's extension before the row that records it cascades away —
+    # afterwards nothing on this machine knows the file on disk is theirs.
+    ext = (_get_details(target) or {}).get("photo_ext") or ""
+
+    try:
+        await _gotrue_admin("DELETE", f"/admin/users/{target}",
+                            fallback="Couldn't delete that account.")
+    except AuthError as e:
+        # Nothing has been touched yet at this point, which is why the auth user
+        # goes first: a failure here leaves the account exactly as it was.
+        raise HTTPException(e.status, e.message)
+
+    _cache_forget_user(target)
+
+    # The cascade is schema, not something this file can see, so check rather
+    # than assume — an environment built before 000 could have the column
+    # without the constraint, and a profile left behind is a ghost account that
+    # still shows in the directory with no way to sign in.
+    if _get_profile(target):
+        try:
+            supabase.table("profiles").delete().eq("id", target).execute()
+        except Exception as e:
+            logger.error(f"[admin] profile row survived deletion of {target}: {e}")
+            raise HTTPException(503, "The login is gone but the profile isn't — check the database.")
+
+    if ext:
+        try:
+            os.remove(os.path.join(AVATAR_DIR, f"{target}.{ext}"))
+        except OSError:
+            pass        # already gone is the state we wanted anyway
+
+    name = ((victim.get("first_name") or "") + " " + (victim.get("last_name") or "")).strip()
+    # Logged by name, not by id: the id is about to mean nothing, and the point
+    # of the line is that somebody can see this happened.
+    log_activity("admin", _public_profile(me).get("name"), "deleted the account of",
+                 name or email)
+
+    return {"ok": True, "deleted": {"id": target, "name": name, "email": email}}
+
+
+# ── Tidying the activity feed ─────────────────────────────────────────────────
+# The feed is append-only in normal use (see migrations/002) and stays that way:
+# this is the exception, for a line that is wrong, noisy, or names somebody who
+# has just been deleted. A dict rather than an if/else because the source name
+# reaches supabase.table() — an unknown value has to be a 400 by construction,
+# never "whatever the client sent".
+FEED_SOURCES = {"activity_log": "id", "pt_done_log": "id"}
+
+
+@app.post("/api/admin/activity/delete")
+async def api_admin_activity_delete(request: Request):
+    """Remove one line from the dashboard feed.
+
+    Deleting a `pt_done_log` line removes the *record* of a tick, not the tick:
+    pt_done is a separate table and the build plan is untouched. That is the
+    intent — this tidies the feed, it does not edit the plan through the back
+    door.
+
+    Not itself logged to activity_log. A line saying a line was deleted is noise
+    in the one place you were trying to clear, and it would be the top of the
+    feed every time.
+    """
+    require_role(request, "admin")
+    if not is_god(request):
+        raise HTTPException(403, "Turn on admin override to delete feed entries")
+
+    b      = await request.json()
+    source = (b.get("source") or "").strip()
+    if source not in FEED_SOURCES:
+        raise HTTPException(400, "Not a feed source.")
+    try:
+        row_id = int(b.get("id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Which entry?")
+
+    try:
+        supabase.table(source).delete().eq(FEED_SOURCES[source], row_id).execute()
+    except Exception as e:
+        logger.error(f"[admin] feed delete failed for {source}#{row_id}: {e}")
+        raise HTTPException(503, "Couldn't delete that entry.")
+
+    return {"ok": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2495,13 +2678,18 @@ def _ts_key(ts) -> float:
 
 
 def _pt_activity(limit: int) -> list:
-    rows = supabase.table("pt_done_log").select("node_id,done,user_name,created_at") \
+    rows = supabase.table("pt_done_log").select("id,node_id,done,user_name,created_at") \
         .order("created_at", desc=True).limit(limit).execute().data or []
     if not rows:
         return []
     labels = {n["id"]: n.get("label") for n in
               (supabase.table("pt_nodes").select("id,label").execute().data or [])}
     return [{
+        # id + source are what the feed's delete needs to name one line out of
+        # two merged tables. They are not secret — every row is already on the
+        # page — and nothing but an elevated admin can act on them.
+        "id":         r.get("id"),
+        "source":     "pt_done_log",
         "applet":     "pt",
         "actor":      r.get("user_name") or "Someone",
         "verb":       "ticked off" if r.get("done") else "un-ticked",
@@ -2512,9 +2700,9 @@ def _pt_activity(limit: int) -> list:
 
 
 def _general_activity(limit: int) -> list:
-    rows = supabase.table("activity_log").select("applet,actor,verb,subject,created_at") \
+    rows = supabase.table("activity_log").select("id,applet,actor,verb,subject,created_at") \
         .order("created_at", desc=True).limit(limit).execute().data or []
-    return [dict(r) for r in rows]
+    return [{**r, "source": "activity_log"} for r in rows]
 
 
 def _activity(limit: int = 8) -> list:

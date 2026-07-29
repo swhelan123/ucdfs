@@ -260,26 +260,35 @@ out of things they need at 2am before a deadline.
 ### Build Plans  🔧  *(generalise the PT plan)*
 The replacement for the Notion tracker, built from the thing that already works.
 
-Today `pt_nodes` / `pt_edges` / `pt_done` are hardcoded to one plan. Add a
-`plan_id` column and the exact same canvas serves **Powertrain, Chassis, Aero,
-Electronics, Business** — five plans, one proven UI, no new interaction model to
-teach anyone.
+**The multi-plan core is done** (`migrations/005` + the `PLANS` registry in
+`main.py`): every `pt_*` table carries a `plan_id`, one canvas serves any
+registered plan at `/plan/<id>`, and `/pt` stays the legacy alias so nothing
+saved before the change moved. Sections came out of `pt.html`'s hardcoded list
+and into the registry, which is what makes a new plan a two-entry code change.
+`pt-2627` exists as a `soon` card with placeholder sections — rename the
+labels when the season plan is real (section *ids* are permanent; nodes are
+stored against them).
 
-This also kills the odd one out: the Mech Manufacturing Plan is currently an
-external Canva link in the registry. It's a build plan that wants to be a build
-plan.
+Still to do, roughly in order:
 
-Add per node:
-- **Assignee** (from `profiles` — we have accounts now)
-- **Due date**, so the countdown can flag what's late
-- **Blocked** flag distinct from not-started — "waiting on a part" is the single
-  most common real state and neither Notion nor the current plan can express it
-
-Then the dashboard can say *"Chassis is 12% behind, 3 tasks blocked on parts"*,
-which is the sentence a team lead actually wants.
-
-**Migration:** `alter table pt_nodes add column plan_id text default 'pt'` and
-the same for the related tables. Existing data keeps working untouched.
+- **Give Mech a real plan.** The Mech Manufacturing Plan is currently an
+  external Canva link in the registry — a build plan that wants to be a build
+  plan. One `PLANS` entry with their sections, swap the applet entry from
+  `external` to `/plan/mech-2627`.
+- Add per node:
+  - **Assignee** (from `profiles` — we have accounts now)
+  - **Due date**, so the countdown can flag what's late
+  - **Blocked** flag distinct from not-started — "waiting on a part" is the
+    single most common real state and neither Notion nor the current plan can
+    express it
+- Then the dashboard can say *"Chassis is 12% behind, 3 tasks blocked on
+  parts"*, which is the sentence a team lead actually wants. (Today the tile
+  follows one plan — `DASHBOARD_PLAN` — which is the right shape until there
+  is per-plan data worth a sentence each.)
+- At season rollover: flip the old plan's card to `quiet`, the new one to
+  `live`, point `DASHBOARD_PLAN` at the new plan. The 25/26 data stays in the
+  tables untouched — never wipe `pt_*` for a new season, `pt_done_log` is the
+  feed's history.
 
 ---
 

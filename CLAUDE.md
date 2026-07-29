@@ -78,8 +78,39 @@ the dashboard to add a tool.**
 - `requires_role`: the permission field. `_may_open()` enforces it on both the
   page route and `/api/applets`, so a gated entry can never be visible on the
   dashboard but closed on click. Omitting it means everyone.
+- `plan`: for entries backed by `pt.html` — which build plan the card opens.
+  See "Build plans" below. Route and plan must agree: `pt.html` reads the plan
+  id back out of its own URL.
 
-Current ids: `attendance`, `profiles`, `pt`, `harness`, `comp`, `mech`, `admin`.
+Current ids: `attendance`, `profiles`, `pt`, `pt-2627`, `harness`, `comp`,
+`mech`, `admin`.
+
+## Build plans
+
+`pt.html` is one canvas serving many plans. `PLANS` in `main.py` is the
+registry: plan id → name + section list (label, cols, rows). **Adding a plan is
+one `PLANS` entry plus one `APPLETS` entry routed as `/plan/<id>`** — no new
+page, no migration. `/pt` is the legacy alias for plan `pt`, kept because saved
+bookmarks and pre-multi-plan clients omit the plan entirely and must keep
+meaning the 25/26 plan.
+
+- Every `pt_*` table carries a `plan_id` (`migrations/005`), default `'pt'`.
+  Composite PKs — node ids are only unique within a plan.
+- `PLANS` is also the whitelist. An unknown plan id is a 400 by construction on
+  every endpoint, never a silent write to a plan no page can show.
+- **Section ids are permanent; labels are free.** Nodes are stored against the
+  section id, so renaming an id orphans every node in that section. Retiring a
+  section id has the same problem — move its nodes first.
+- Section *structure* is the registry; section *sizes* are DB overrides
+  (`pt_sections`), same split as before.
+- The live-collab WebSocket is one room per plan, scoped by the `join`
+  message — never relay across plans or a drag on one plan moves phantoms on
+  every other.
+- `DASHBOARD_PLAN` in `main.py` picks which plan the dashboard tile counts.
+  Point it at the new plan at season rollover, or an empty next-season plan
+  drags the live build's percentage to nonsense.
+- The feed credits a tick to the applet that opens its plan
+  (`APPLET_BY_PLAN`), so lines carry the right badge after plans multiply.
 
 ## Auth and data access
 

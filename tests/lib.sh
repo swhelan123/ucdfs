@@ -143,7 +143,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Test Bot'
+TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Plans Check,Test Bot'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time
@@ -173,6 +173,34 @@ try:
 except Exception as e:
     # The table may not exist yet (002 unapplied). Never fail a run over tidying.
     print(f"  cleanup: could not tidy the activity feed ({e})")
+PY
+}
+
+# Same idea for pt_done_log: suite-plans ticks a node on the 26/27 plan, and
+# that audit line is append-only by design — nothing in the app removes it when
+# the node goes. Same double guard as above, name AND time window.
+cleanup_pt_done_log() {
+  local since="${1:-}"
+  [ -z "$since" ] && return 0
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_ACTORS" "$since" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, actors, since = sys.argv[1], sys.argv[2], sys.argv[3].split(','), sys.argv[4]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+
+inlist = ",".join('"' + a.replace('"', '') + '"' for a in actors)
+q = ("/rest/v1/pt_done_log?user_name=in.(" + urllib.parse.quote(inlist, safe='",') + ")" +
+     "&created_at=gte." + urllib.parse.quote(since))
+
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test tick line(s)")
+except Exception as e:
+    print(f"  cleanup: could not tidy pt_done_log ({e})")
 PY
 }
 

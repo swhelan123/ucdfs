@@ -377,24 +377,18 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 // ── LAYOUT CONSTANTS ─────────────────────────────────────────────────
 const CW=150, CH=95, NW=128, NH=48, GW=46, GH=26, SP=24, SG=52, SBOT=1066;
 
-// ── SECTIONS ──────────────────────────────────────────────────────────
-const SDEFS=[
-  {id:'lv',   lbl:'Low Voltage Wiring', cols:3, rows:10},
-  {id:'tdp',  lbl:'3D Prints',          cols:4, rows:3 },
-  {id:'tsac', lbl:'TSAC Assembly',      cols:5, rows:8 },
-  {id:'cc',   lbl:'Charging Cart',      cols:3, rows:4 },
-  {id:'bp',   lbl:'Back Packaging',     cols:6, rows:5 },
-  {id:'sw',   lbl:'Software',           cols:4, rows:3 },
-  {id:'hv',   lbl:'HV Wiring',          cols:5, rows:5 },
-];
-let cx0=48;
-const S={};
-SDEFS.forEach(s=>{
-  s.w=s.cols*CW+2*SP; s.h=s.rows*CH+2*SP;
-  s.x=cx0; s.y=SBOT-s.h; s.bottom=s.y+s.h;
-  S[s.id]=s; cx0+=s.w+SG;
-});
-const CWIDTH=cx0-SG+48, CHEIGHT=SBOT+90;
+// ── PLAN & SECTIONS ───────────────────────────────────────────────────
+// One page, many plans. Which plan this tab shows comes from its own URL —
+// /pt is the legacy alias for the original PT plan, everything newer routes
+// as /plan/<id> — and the section list arrives with /pt/api/state, because
+// the PLANS registry in main.py is the single source of truth for structure.
+// Everything below (SDEFS, S, canvas size) is populated by initPlan() before
+// the first node renders; nothing plan-shaped is hardcoded here any more.
+const PLAN=(location.pathname.match(/^\/plan\/([\w-]+)/)||[])[1]||'pt';
+
+const SDEFS=[];          // section defs in layout order, built by initPlan()
+const S={};              // section id → def
+let CWIDTH=0, CHEIGHT=0; // canvas size, derived from the sections
 
 const TC={m:'var(--mfg)',a:'var(--asm)',c:'var(--done)',ms:'var(--ms)'};
 
@@ -443,16 +437,12 @@ const BUILTIN_LABELS={
 const canvas=document.getElementById('canvas');
 const zoomwrap=document.getElementById('zoomwrap');
 const svg=document.getElementById('svg-layer');
-canvas.style.width=CWIDTH+'px'; canvas.style.height=CHEIGHT+'px';
-svg.setAttribute('width',CWIDTH);
-svg.setAttribute('height',CHEIGHT);
-svg.setAttribute('viewBox',`0 0 ${CWIDTH} ${CHEIGHT}`);
 
 // ── SNAP GUIDES ───────────────────────────────────────────────────────
 const snapV=document.createElement('div'); snapV.className='snapline snapV';
-snapV.style.top='-600px'; snapV.style.height=(CHEIGHT+1200)+'px';
+snapV.style.top='-600px';
 const snapH=document.createElement('div'); snapH.className='snapline snapH';
-snapH.style.left='0'; snapH.style.width=CWIDTH+'px';
+snapH.style.left='0';
 canvas.appendChild(snapV); canvas.appendChild(snapH);
 function showGuides(x,y){
   if(x!=null){ snapV.style.left=x+'px'; snapV.style.display='block'; } else snapV.style.display='none';
@@ -486,20 +476,44 @@ svg.appendChild(defs);
 
 // ── SECTION BOXES ─────────────────────────────────────────────────────
 const secEls={};
-SDEFS.forEach(s=>{
-  const d=document.createElement('div');
-  d.className='sec-box'; d.dataset.sec=s.id;
-  Object.assign(d.style,{left:s.x+'px',top:s.y+'px',width:s.w+'px',height:s.h+'px'});
-  const l=document.createElement('div');
-  l.className='sec-label';
-  l.innerHTML='<span class="dot"></span>'+s.lbl;
-  d.appendChild(l);
-  const rz=document.createElement('div');
-  rz.className='sec-resize'; rz.title='Drag to resize';
-  d.appendChild(rz);
-  canvas.appendChild(d); secEls[s.id]=d;
-  attachSecResize(s,rz,d);
-});
+// Runs once, from loadState, with the plan meta the state endpoint returned.
+// Geometry: cols × rows sizes each box, boxes flow left to right in registry
+// order with bottoms aligned — the same layout the old hardcoded list produced.
+function initPlan(meta){
+  document.title=meta.name;
+  document.querySelector('#hdr .ttl').textContent=(meta.icon||'🏎')+' '+meta.name;
+  let cx0=48;
+  (meta.sections||[]).forEach(sd=>{
+    const s={id:sd.id, lbl:sd.label, cols:sd.cols, rows:sd.rows};
+    s.w=s.cols*CW+2*SP; s.h=s.rows*CH+2*SP;
+    s.x=cx0; s.y=SBOT-s.h; s.bottom=s.y+s.h;
+    S[s.id]=s; SDEFS.push(s); cx0+=s.w+SG;
+  });
+  CWIDTH=cx0-SG+48; CHEIGHT=SBOT+90;
+  canvas.style.width=CWIDTH+'px'; canvas.style.height=CHEIGHT+'px';
+  svg.setAttribute('width',CWIDTH);
+  svg.setAttribute('height',CHEIGHT);
+  svg.setAttribute('viewBox',`0 0 ${CWIDTH} ${CHEIGHT}`);
+  snapV.style.height=(CHEIGHT+1200)+'px';
+  snapH.style.width=CWIDTH+'px';
+  SDEFS.forEach(s=>{
+    const d=document.createElement('div');
+    d.className='sec-box'; d.dataset.sec=s.id;
+    Object.assign(d.style,{left:s.x+'px',top:s.y+'px',width:s.w+'px',height:s.h+'px'});
+    const l=document.createElement('div');
+    l.className='sec-label';
+    l.innerHTML='<span class="dot"></span>'+s.lbl;
+    d.appendChild(l);
+    const rz=document.createElement('div');
+    rz.className='sec-resize'; rz.title='Drag to resize';
+    d.appendChild(rz);
+    canvas.appendChild(d); secEls[s.id]=d;
+    attachSecResize(s,rz,d);
+    const o=document.createElement('option');
+    o.value=s.id; o.textContent=s.lbl; mSec.appendChild(o);
+  });
+  applyTransform();
+}
 
 // ── NODE ANCHORS ──────────────────────────────────────────────────────
 function aTop(id){
@@ -517,7 +531,10 @@ function edgeD(f,t,cross){
   if(cross){
     const sx=PM[f].cx+38, sy=aBot(f).y;
     const ex=e.x, ey=e.y;
-    const routeY=S.sw.y-18, r=16;
+    // Cross-section edges route above the legacy plan's Software box; only
+    // built-in 25/26 edges are ever is_cross, so any section is a safe
+    // fallback on plans that have no "sw".
+    const routeY=(S.sw||SDEFS[0]).y-18, r=16;
     return `M${sx} ${sy}
        L${sx} ${routeY-r} Q${sx} ${routeY} ${sx+r} ${routeY}
        L${ex-r} ${routeY} Q${ex} ${routeY} ${ex} ${routeY+r}
@@ -535,7 +552,7 @@ function drawEdge(f,t,cross){
     path.setAttribute('marker-end','url(#arx)');
     path.setAttribute('opacity','.9');
     const s=aTop(f), e=aBot(t);
-    const sx=PM[f].cx+38, ex=e.x, routeY=S.sw.y-18;
+    const sx=PM[f].cx+38, ex=e.x, routeY=(S.sw||SDEFS[0]).y-18;
     const txt=document.createElementNS('http://www.w3.org/2000/svg','text');
     txt.setAttribute('x',(sx+ex)/2); txt.setAttribute('y',routeY-8);
     txt.setAttribute('text-anchor','middle');
@@ -611,7 +628,7 @@ async function toggleDone(id){
   wsSend({type:'toggle',id,done:now,user:viewerName,ts});
   try{
     await fetch('/pt/api/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({node_id:id,done:now,user_name:viewerName})});
+      body:JSON.stringify({plan:PLAN,node_id:id,done:now,user_name:viewerName})});
   }catch(e){
     if(now) doneSet.delete(id); else doneSet.add(id);
     doneLogMap[id]&&doneLogMap[id].pop();
@@ -630,7 +647,7 @@ function clearProgressFor(id){
   progressSet.delete(id); applyProgress();
   wsSend({type:'progress',id,inprogress:false});
   fetch('/pt/api/progress',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({node_id:id,in_progress:false})}).catch(()=>{});
+    body:JSON.stringify({plan:PLAN,node_id:id,in_progress:false})}).catch(()=>{});
 }
 async function toggleProgress(id){
   const now=!progressSet.has(id);
@@ -639,13 +656,13 @@ async function toggleProgress(id){
     doneSet.delete(id); applyDone();
     wsSend({type:'toggle',id,done:false});
     fetch('/pt/api/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({node_id:id,done:false})}).catch(()=>{});
+      body:JSON.stringify({plan:PLAN,node_id:id,done:false})}).catch(()=>{});
   }
   applyProgress();
   wsSend({type:'progress',id,inprogress:now});
   try{
     await fetch('/pt/api/progress',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({node_id:id,in_progress:now})});
+      body:JSON.stringify({plan:PLAN,node_id:id,in_progress:now})});
   }catch(e){ if(now) progressSet.delete(id); else progressSet.add(id); applyProgress(); wsSend({type:'progress',id,inprogress:!now}); }
 }
 
@@ -773,7 +790,7 @@ function attachSecResize(s,handle,box){
       const o=sizeOverrides[s.id]||{w:s.w,h:s.h};
       wsSend({type:'section',sec:s.id,w:o.w,h:o.h});
       fetch('/pt/api/sections',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({sec:s.id,w:o.w,h:o.h})});
+        body:JSON.stringify({plan:PLAN,sec:s.id,w:o.w,h:o.h})});
     };
     window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
   });
@@ -813,7 +830,7 @@ function attachDrag(n,el){
       if(moved){
         wsSend({type:'node_move',id:n.id,x:PM[n.id].cx,y:PM[n.id].cy});
         fetch('/pt/api/nodes/move',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({id:n.id,x:PM[n.id].cx,y:PM[n.id].cy})});
+          body:JSON.stringify({plan:PLAN,id:n.id,x:PM[n.id].cx,y:PM[n.id].cy})});
       } else {
         if(pinned===n.id){ pinned=null; clearHighlight(); }
         else { pinned=n.id; applyHighlight(n.id); }
@@ -900,7 +917,7 @@ async function deleteCustom(id){
   if(!confirm('Delete this task?')) return;
   removeCustomLocal(id);
   wsSend({type:'node_delete',id});
-  fetch('/pt/api/nodes/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  fetch('/pt/api/nodes/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:PLAN,id})});
 }
 function applyMove(id,x,y){
   if(!PM[id]) return;
@@ -924,7 +941,6 @@ const depDD=document.getElementById('m-depdd');
 const depBox=document.getElementById('m-depbox');
 let selectedDeps=[], depMatches=[];
 
-SDEFS.forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.lbl; mSec.appendChild(o); });
 
 function openModal(){
   mName.value=''; mType.value='m'; mSec.selectedIndex=0;
@@ -975,7 +991,7 @@ async function submitTask(){
   const {x,y}=autoPlace(sec);
   try{
     const r=await fetch('/pt/api/nodes',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({label,sec,type,deps:selectedDeps,x,y})});
+      body:JSON.stringify({plan:PLAN,label,sec,type,deps:selectedDeps,x,y})});
     if(!r.ok) throw new Error();
     const d=await r.json();
     const raw=d.node;
@@ -1054,7 +1070,7 @@ async function saveDetails(){
   if(text) detailsMap[id]=text; else delete detailsMap[id];
   applyDetail(id); wsSend({type:'details',id,text}); closeDetails();
   try{ await fetch('/pt/api/details',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({node_id:id,details:text})}); }catch(e){}
+    body:JSON.stringify({plan:PLAN,node_id:id,details:text})}); }catch(e){}
 }
 document.getElementById('detpop-save').addEventListener('click',saveDetails);
 document.getElementById('detpop-cancel').addEventListener('click',closeDetails);
@@ -1128,7 +1144,7 @@ async function saveRename(){
   wsSend({type:'label',id,text:newLabel,ntype:newType});
   closeRename();
   try{ await fetch('/pt/api/nodes/rename',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id,label:newLabel,type:newType})}); }catch(e){}
+    body:JSON.stringify({plan:PLAN,id,label:newLabel,type:newType})}); }catch(e){}
 }
 document.getElementById('renpop-save').addEventListener('click',saveRename);
 document.getElementById('renpop-cancel').addEventListener('click',closeRename);
@@ -1190,12 +1206,12 @@ function removeEdgeLocal(f,t){
 function addEdgeRemote(f,t){
   if(!addEdgeLocal(f,t)) return;
   wsSend({type:'edge_add',f,t});
-  fetch('/pt/api/edges/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f,t})});
+  fetch('/pt/api/edges/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:PLAN,f,t})});
 }
 function removeEdgeRemote(f,t){
   removeEdgeLocal(f,t);
   wsSend({type:'edge_remove',f,t});
-  fetch('/pt/api/edges/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({f,t})});
+  fetch('/pt/api/edges/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:PLAN,f,t})});
 }
 
 // edge removal popover
@@ -1354,7 +1370,7 @@ function wsSend(o){ if(ws&&wsReady){ try{ ws.send(JSON.stringify(o)); }catch(e){
 function wsConnect(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
   ws=new WebSocket(proto+'//'+location.host+'/pt/ws');
-  ws.onopen=()=>{ wsReady=true; wsSend({type:'join',id:myId,name:viewerName,color:myColor}); };
+  ws.onopen=()=>{ wsReady=true; wsSend({type:'join',plan:PLAN,id:myId,name:viewerName,color:myColor}); };
   ws.onclose=()=>{ wsReady=false; setTimeout(wsConnect,2500); };
   ws.onerror=()=>{ try{ ws.close(); }catch(e){} };
   ws.onmessage=ev=>{ try{ handleWs(JSON.parse(ev.data)); }catch(e){} };
@@ -1373,8 +1389,12 @@ document.getElementById('scroll').addEventListener('click',()=>{
 
 // ── LOAD ALL STATE (single round trip) ───────────────────────────────
 async function loadState(){
-  const r=await fetch('/pt/api/state');
+  const r=await fetch('/pt/api/state?plan='+encodeURIComponent(PLAN));
   const d=await r.json();
+
+  // Sections before nodes: every node renders relative to its section box,
+  // and the canvas has no size at all until initPlan has run.
+  initPlan(d.plan||{name:document.title,sections:[]});
 
   // Populate NM and PM from all nodes
   (d.nodes||[]).forEach(row=>{

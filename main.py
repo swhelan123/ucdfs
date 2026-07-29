@@ -169,6 +169,50 @@ async def api_subteams():
 #
 # subteams and requires_role are not the same kind of thing and must never be
 # conflated: one is what you'd rather see first, the other is what you may open.
+# ── Build plans ───────────────────────────────────────────────────────────────
+# One canvas (pt.html), many plans. Which plans exist — and their section
+# layouts — lives here, same philosophy as APPLETS: adding a plan is one entry
+# here plus one applet entry below, no migration and no new page. The database
+# (migrations/005) holds each plan's nodes, edges and tick state, keyed by
+# plan_id; sections' *sizes* are DB overrides but their existence is this dict,
+# which is also the whitelist — an unknown plan id is a 400 by construction,
+# never "whatever the client sent".
+#
+# Section geometry: cols × rows sets each box's size; boxes are laid out left
+# to right in list order, bottoms aligned. Renaming a section id orphans that
+# section's nodes (they are stored with the sec id), so treat ids as permanent
+# and labels as free.
+PLANS = {
+    "pt": {
+        "name": "PT Manufacturing Plan",
+        "sections": [
+            {"id": "lv",   "label": "Low Voltage Wiring", "cols": 3, "rows": 10},
+            {"id": "tdp",  "label": "3D Prints",          "cols": 4, "rows": 3},
+            {"id": "tsac", "label": "TSAC Assembly",      "cols": 5, "rows": 8},
+            {"id": "cc",   "label": "Charging Cart",      "cols": 3, "rows": 4},
+            {"id": "bp",   "label": "Back Packaging",     "cols": 6, "rows": 5},
+            {"id": "sw",   "label": "Software",           "cols": 4, "rows": 3},
+            {"id": "hv",   "label": "HV Wiring",          "cols": 5, "rows": 5},
+        ],
+    },
+    # 26/27 starter. Sections are placeholders until the season plan is real —
+    # edit labels freely, but see the note above before touching ids.
+    "pt-2627": {
+        "name": "PT Plan 26/27",
+        "sections": [
+            {"id": "design", "label": "Design & Order", "cols": 4, "rows": 6},
+            {"id": "mfg",    "label": "Manufacture",    "cols": 4, "rows": 6},
+            {"id": "asm",    "label": "Assemble",       "cols": 4, "rows": 6},
+            {"id": "test",   "label": "Test",           "cols": 3, "rows": 4},
+        ],
+    },
+}
+
+# The dashboard's build-plan tile follows one plan: the season currently being
+# built. Point it at the new plan when the season rolls over.
+DASHBOARD_PLAN = "pt"
+
+
 APPLETS = [
     {
         "id":     "attendance",
@@ -202,6 +246,25 @@ APPLETS = [
         "accent": "teal",
         "status": "live",
         "subteams": ["pt"],
+        # Which build plan this card opens. pt.html reads the plan id back out
+        # of its own URL (/pt is the legacy alias for plan "pt"; everything
+        # newer routes as /plan/<id>), so route and plan must agree.
+        "plan":   "pt",
+    },
+    {
+        "id":     "pt-2627",
+        "name":   "PT Plan 26/27",
+        "icon":   "🏎️",
+        "route":  "/plan/pt-2627",
+        "file":   "pt.html",
+        "blurb":  "Powertrain build plan for the 26/27 season",
+        "accent": "teal",
+        # "soon" renders a non-clickable placeholder card, but the route is
+        # registered and works — flip to "live" once the sections in PLANS
+        # stop being placeholders.
+        "status": "soon",
+        "subteams": ["pt"],
+        "plan":   "pt-2627",
     },
     {
         "id":     "harness",
@@ -253,6 +316,24 @@ APPLETS = [
 ]
 
 APPLETS_BY_ID = {a["id"]: a for a in APPLETS}
+
+# plan id → the applet that opens it, so a feed line from any plan can carry
+# the right applet id for its icon.
+APPLET_BY_PLAN = {a["plan"]: a["id"] for a in APPLETS if a.get("plan")}
+
+
+def _plan_or_400(value) -> str:
+    """Resolve a request's plan id against the PLANS whitelist.
+
+    Missing means the legacy plan — every pre-multi-plan client (and curl
+    muscle memory) says nothing and must keep meaning "pt". Unknown is a hard
+    400: the id is only ever used as a filter value, but accepting it would
+    write rows no page can ever show.
+    """
+    pid = (value or "pt").strip()
+    if pid not in PLANS:
+        raise HTTPException(400, "unknown plan")
+    return pid
 
 
 def _may_open(applet: dict, profile: Optional[dict]) -> bool:
@@ -1812,17 +1893,27 @@ async def index():
 
 
 # ── PT: single state endpoint (nodes, edges, done, details, sections) ──────────
+# All /pt/api/* endpoints serve every build plan, not just the original PT one:
+# GET takes ?plan=, POSTs take "plan" in the body, and omitting it means the
+# legacy plan so pre-multi-plan saves and clients keep working unchanged.
 @app.get("/pt/api/state")
-async def pt_state():
-    nodes       = supabase.table("pt_nodes").select("*").execute()
-    edges       = supabase.table("pt_edges").select("*").execute()
-    done        = supabase.table("pt_done").select("node_id").execute()
-    in_progress = supabase.table("pt_progress").select("node_id").execute()
-    details     = supabase.table("pt_details").select("*").execute()
-    sections    = supabase.table("pt_sections").select("*").execute()
+async def pt_state(plan: Optional[str] = None):
+    pid = _plan_or_400(plan)
+    nodes       = supabase.table("pt_nodes").select("*").eq("plan_id", pid).execute()
+    edges       = supabase.table("pt_edges").select("*").eq("plan_id", pid).execute()
+    done        = supabase.table("pt_done").select("node_id").eq("plan_id", pid).execute()
+    in_progress = supabase.table("pt_progress").select("node_id").eq("plan_id", pid).execute()
+    details     = supabase.table("pt_details").select("*").eq("plan_id", pid).execute()
+    sections    = supabase.table("pt_sections").select("*").eq("plan_id", pid).execute()
     done_log    = supabase.table("pt_done_log").select("node_id,done,user_name,created_at") \
-                      .order("created_at").execute()
+                      .eq("plan_id", pid).order("created_at").execute()
+    # The header icon comes from the applet card that opens this plan, so the
+    # two can never disagree.
+    applet = APPLETS_BY_ID.get(APPLET_BY_PLAN.get(pid, ""), {})
     return {
+        # The plan's structure rides with its data so pt.html needs no second
+        # request — and no hardcoded section list — to draw any plan.
+        "plan":        {"id": pid, "icon": applet.get("icon"), **PLANS[pid]},
         "nodes":       nodes.data or [],
         "edges":       edges.data or [],
         "done":        [r["node_id"] for r in (done.data or [])],
@@ -1837,18 +1928,20 @@ async def pt_state():
 @app.post("/pt/api/toggle")
 async def pt_toggle(request: Request):
     b = await request.json()
+    pid       = _plan_or_400(b.get("plan"))
     node_id   = (b.get("node_id")   or "").strip()
     user_name = (b.get("user_name") or "Unknown").strip()
     if not node_id:
         raise HTTPException(400, "node_id required")
     done = bool(b.get("done"))
     if done:
-        supabase.table("pt_done").upsert({"node_id": node_id}).execute()
-        supabase.table("pt_progress").delete().eq("node_id", node_id).execute()
+        supabase.table("pt_done").upsert({"plan_id": pid, "node_id": node_id}).execute()
+        supabase.table("pt_progress").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     else:
-        supabase.table("pt_done").delete().eq("node_id", node_id).execute()
+        supabase.table("pt_done").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     # Append-only audit log — never overwrite previous entries
     supabase.table("pt_done_log").insert({
+        "plan_id":   pid,
         "node_id":   node_id,
         "done":      done,
         "user_name": user_name,
@@ -1859,14 +1952,15 @@ async def pt_toggle(request: Request):
 @app.post("/pt/api/progress")
 async def pt_progress_set(request: Request):
     b = await request.json()
+    pid     = _plan_or_400(b.get("plan"))
     node_id = (b.get("node_id") or "").strip()
     if not node_id:
         raise HTTPException(400, "node_id required")
     if b.get("in_progress"):
-        supabase.table("pt_progress").upsert({"node_id": node_id}).execute()
-        supabase.table("pt_done").delete().eq("node_id", node_id).execute()
+        supabase.table("pt_progress").upsert({"plan_id": pid, "node_id": node_id}).execute()
+        supabase.table("pt_done").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     else:
-        supabase.table("pt_progress").delete().eq("node_id", node_id).execute()
+        supabase.table("pt_progress").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     return {"ok": True}
 
 
@@ -1874,6 +1968,7 @@ async def pt_progress_set(request: Request):
 @app.post("/pt/api/nodes")
 async def pt_nodes_add(request: Request):
     b = await request.json()
+    pid   = _plan_or_400(b.get("plan"))
     label = (b.get("label") or "").strip()
     sec   = (b.get("sec")   or "").strip()
     typ   = (b.get("type")  or "m").strip()
@@ -1883,6 +1978,7 @@ async def pt_nodes_add(request: Request):
         typ = "m"
     deps = [d for d in (b.get("deps") or []) if isinstance(d, str)]
     node = {
+        "plan_id":   pid,
         "id":        "cust_" + uuid.uuid4().hex[:8],
         "label":     label,
         "sec":       sec,
@@ -1897,7 +1993,7 @@ async def pt_nodes_add(request: Request):
     for dep_id in deps:
         edge_id = f"{dep_id}__{node['id']}"
         supabase.table("pt_edges").upsert(
-            {"id": edge_id, "f": dep_id, "t": node["id"], "is_cross": False}
+            {"plan_id": pid, "id": edge_id, "f": dep_id, "t": node["id"], "is_cross": False}
         ).execute()
     return {"node": node}
 
@@ -1905,18 +2001,20 @@ async def pt_nodes_add(request: Request):
 @app.post("/pt/api/nodes/move")
 async def pt_nodes_move(request: Request):
     b = await request.json()
+    pid     = _plan_or_400(b.get("plan"))
     node_id = (b.get("id") or "").strip()
     if not node_id:
         raise HTTPException(400, "id required")
     supabase.table("pt_nodes").update(
         {"x": b.get("x"), "y": b.get("y")}
-    ).eq("id", node_id).execute()
+    ).eq("plan_id", pid).eq("id", node_id).execute()
     return {"ok": True}
 
 
 @app.post("/pt/api/nodes/rename")
 async def pt_nodes_rename(request: Request):
     b = await request.json()
+    pid     = _plan_or_400(b.get("plan"))
     node_id = (b.get("id") or "").strip()
     label   = (b.get("label") or "").strip()
     if not node_id or not label:
@@ -1925,22 +2023,23 @@ async def pt_nodes_rename(request: Request):
     typ = (b.get("type") or "").strip()
     if typ in ("m", "a", "ms", "c"):
         update["type"] = typ
-    supabase.table("pt_nodes").update(update).eq("id", node_id).execute()
+    supabase.table("pt_nodes").update(update).eq("plan_id", pid).eq("id", node_id).execute()
     return {"ok": True}
 
 
 @app.post("/pt/api/nodes/delete")
 async def pt_nodes_delete(request: Request):
     b = await request.json()
+    pid     = _plan_or_400(b.get("plan"))
     node_id = (b.get("id") or "").strip()
     if not node_id:
         raise HTTPException(400, "id required")
-    supabase.table("pt_nodes").delete().eq("id", node_id).execute()
-    supabase.table("pt_done").delete().eq("node_id", node_id).execute()
-    supabase.table("pt_progress").delete().eq("node_id", node_id).execute()
-    supabase.table("pt_details").delete().eq("node_id", node_id).execute()
-    supabase.table("pt_edges").delete().eq("f", node_id).execute()
-    supabase.table("pt_edges").delete().eq("t", node_id).execute()
+    supabase.table("pt_nodes").delete().eq("plan_id", pid).eq("id", node_id).execute()
+    supabase.table("pt_done").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
+    supabase.table("pt_progress").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
+    supabase.table("pt_details").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
+    supabase.table("pt_edges").delete().eq("plan_id", pid).eq("f", node_id).execute()
+    supabase.table("pt_edges").delete().eq("plan_id", pid).eq("t", node_id).execute()
     return {"ok": True}
 
 
@@ -1948,12 +2047,13 @@ async def pt_nodes_delete(request: Request):
 @app.post("/pt/api/edges/add")
 async def pt_edges_add(request: Request):
     b = await request.json()
+    pid = _plan_or_400(b.get("plan"))
     f = (b.get("f") or "").strip()
     t = (b.get("t") or "").strip()
     if not f or not t or f == t:
         raise HTTPException(400, "valid f and t required")
     supabase.table("pt_edges").upsert(
-        {"id": f"{f}__{t}", "f": f, "t": t, "is_cross": False}
+        {"plan_id": pid, "id": f"{f}__{t}", "f": f, "t": t, "is_cross": False}
     ).execute()
     return {"ok": True}
 
@@ -1961,11 +2061,12 @@ async def pt_edges_add(request: Request):
 @app.post("/pt/api/edges/remove")
 async def pt_edges_remove(request: Request):
     b = await request.json()
+    pid = _plan_or_400(b.get("plan"))
     f = (b.get("f") or "").strip()
     t = (b.get("t") or "").strip()
     if not f or not t:
         raise HTTPException(400, "f and t required")
-    supabase.table("pt_edges").delete().eq("f", f).eq("t", t).execute()
+    supabase.table("pt_edges").delete().eq("plan_id", pid).eq("f", f).eq("t", t).execute()
     return {"ok": True}
 
 
@@ -1973,14 +2074,17 @@ async def pt_edges_remove(request: Request):
 @app.post("/pt/api/details")
 async def pt_details_set(request: Request):
     b = await request.json()
+    pid = _plan_or_400(b.get("plan"))
     nid = (b.get("node_id") or "").strip()
     if not nid:
         raise HTTPException(400, "node_id required")
     text = (b.get("details") or "").strip()
     if text:
-        supabase.table("pt_details").upsert({"node_id": nid, "details": text}).execute()
+        supabase.table("pt_details").upsert(
+            {"plan_id": pid, "node_id": nid, "details": text}
+        ).execute()
     else:
-        supabase.table("pt_details").delete().eq("node_id", nid).execute()
+        supabase.table("pt_details").delete().eq("plan_id", pid).eq("node_id", nid).execute()
     return {"ok": True}
 
 
@@ -1988,22 +2092,26 @@ async def pt_details_set(request: Request):
 @app.post("/pt/api/sections")
 async def pt_sections_set(request: Request):
     b = await request.json()
+    pid = _plan_or_400(b.get("plan"))
     sec = (b.get("sec") or "").strip()
     if not sec:
         raise HTTPException(400, "sec required")
     supabase.table("pt_sections").upsert(
-        {"sec": sec, "w": b.get("w"), "h": b.get("h")}
+        {"plan_id": pid, "sec": sec, "w": b.get("w"), "h": b.get("h")}
     ).execute()
     return {"ok": True}
 
 
 # ── PT live collaboration (presence, cursors, live sync) ────────────────────────
-pt_clients: dict = {}  # WebSocket -> {id, name, color} | None
+# One socket endpoint, one room per plan: everything is scoped by the plan id
+# the client joins with, or someone dragging a node on the 26/27 plan would
+# move a phantom on every screen showing the 25/26 one.
+pt_clients: dict = {}  # WebSocket -> {id, name, color, plan} | None
 
-async def _pt_broadcast(payload: dict, exclude: Optional[WebSocket] = None):
+async def _pt_broadcast(payload: dict, plan: str, exclude: Optional[WebSocket] = None):
     dead = []
-    for c in list(pt_clients.keys()):
-        if c is exclude:
+    for c, meta in list(pt_clients.items()):
+        if c is exclude or not meta or meta.get("plan") != plan:
             continue
         try:
             await c.send_json(payload)
@@ -2012,9 +2120,9 @@ async def _pt_broadcast(payload: dict, exclude: Optional[WebSocket] = None):
     for d in dead:
         pt_clients.pop(d, None)
 
-async def _pt_presence():
-    users = [m for m in pt_clients.values() if m]
-    await _pt_broadcast({"type": "presence", "users": users})
+async def _pt_presence(plan: str):
+    users = [m for m in pt_clients.values() if m and m.get("plan") == plan]
+    await _pt_broadcast({"type": "presence", "users": users}, plan)
 
 @app.websocket("/pt/ws")
 async def pt_ws(ws: WebSocket):
@@ -2031,20 +2139,27 @@ async def pt_ws(ws: WebSocket):
             data = await ws.receive_json()
             t = data.get("type")
             if t == "join":
+                plan = data.get("plan")
                 pt_clients[ws] = {
                     "id": data.get("id"), "name": data.get("name"), "color": data.get("color"),
+                    "plan": plan if plan in PLANS else "pt",
                 }
-                await _pt_presence()
-            else:
-                # relay everything else (cursor, toggle, node_add/move/delete, section) to others
-                await _pt_broadcast(data, exclude=ws)
+                await _pt_presence(pt_clients[ws]["plan"])
+            elif pt_clients.get(ws):
+                # relay everything else (cursor, toggle, node_add/move/delete,
+                # section) to the sender's plan only. Before join there is no
+                # plan to scope to, so pre-join messages are dropped. .get, not
+                # [ws]: a failed send during a broadcast evicts dead sockets,
+                # and this one may already be gone by the time it speaks again.
+                await _pt_broadcast(data, pt_clients[ws]["plan"], exclude=ws)
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
     finally:
-        pt_clients.pop(ws, None)
-        await _pt_presence()
+        meta = pt_clients.pop(ws, None)
+        if meta:
+            await _pt_presence(meta["plan"])
 
 
 # ── Wiring Harness Mapper ───────────────────────────────────────────────────────
@@ -2579,9 +2694,11 @@ def _attendance_tile() -> dict:
 
 
 def _pt_tile() -> dict:
-    nodes = supabase.table("pt_nodes").select("id").execute().data or []
-    done  = supabase.table("pt_done").select("node_id").execute().data or []
-    prog  = supabase.table("pt_progress").select("node_id").execute().data or []
+    # One plan's numbers, not all plans mashed together — an empty next-season
+    # plan would otherwise drag the live build's percentage down to nonsense.
+    nodes = supabase.table("pt_nodes").select("id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
+    done  = supabase.table("pt_done").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
+    prog  = supabase.table("pt_progress").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
     total = len(nodes)
     pct   = round(100 * len(done) / total) if total else 0
     return {
@@ -2678,23 +2795,28 @@ def _ts_key(ts) -> float:
 
 
 def _pt_activity(limit: int) -> list:
-    rows = supabase.table("pt_done_log").select("id,node_id,done,user_name,created_at") \
+    rows = supabase.table("pt_done_log").select("id,plan_id,node_id,done,user_name,created_at") \
         .order("created_at", desc=True).limit(limit).execute().data or []
     if not rows:
         return []
-    labels = {n["id"]: n.get("label") for n in
-              (supabase.table("pt_nodes").select("id,label").execute().data or [])}
+    # Node ids are only unique within a plan, so the label lookup is keyed by
+    # both — or a 26/27 node could borrow a 25/26 node's name in the feed.
+    labels = {(n.get("plan_id"), n["id"]): n.get("label") for n in
+              (supabase.table("pt_nodes").select("plan_id,id,label").execute().data or [])}
     return [{
         # id + source are what the feed's delete needs to name one line out of
         # two merged tables. They are not secret — every row is already on the
         # page — and nothing but an elevated admin can act on them.
         "id":         r.get("id"),
         "source":     "pt_done_log",
-        "applet":     "pt",
+        # Credited to the applet that opens the plan, so the line carries the
+        # right badge. A plan whose applet entry has since been removed still
+        # renders, just under the generic "pt" badge.
+        "applet":     APPLET_BY_PLAN.get(r.get("plan_id"), "pt"),
         "actor":      r.get("user_name") or "Someone",
         "verb":       "ticked off" if r.get("done") else "un-ticked",
         # Falls back to the raw id for a node that has since been deleted.
-        "subject":    labels.get(r.get("node_id")) or r.get("node_id") or "",
+        "subject":    labels.get((r.get("plan_id"), r.get("node_id"))) or r.get("node_id") or "",
         "created_at": r.get("created_at"),
     } for r in rows]
 

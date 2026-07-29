@@ -12,6 +12,9 @@ const PAGES = [
   { path: '/attendance', name: 'attendance' },
   { path: '/comp',       name: 'comp'       },
   { path: '/pt',         name: 'pt'         },
+  // Same file as /pt, different plan — catches the canvas failing to build
+  // itself from a plan whose sections arrive from the registry, not the DB.
+  { path: '/plan/pt-2627', name: 'pt-2627'  },
   { path: '/harness',    name: 'harness'    },
   { path: '/profiles',   name: 'profiles'   },
 ];

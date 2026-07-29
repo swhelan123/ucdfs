@@ -55,8 +55,10 @@ ck "compose has no inline keys" "$(grep -c 'eyJhbGci' "$ROOT/docker-compose.yml"
 # RFC 1918 and route nowhere from outside, but this repo may be made public and
 # "it is only a private IP" is a judgement better not made in a hurry each time.
 # Checked against tracked files only, so it never trips on local scratch.
+# tr strips the padding macOS wc puts before the count, which otherwise fails
+# the string comparison in ck on a Mac while passing on the Linux runner.
 ips=$(git -C "$ROOT" grep -lE '\b(192\.168\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3})\.[0-9]{1,3}\b' \
-        -- . ':(exclude)tests/suite-static.sh' 2>/dev/null | wc -l)
+        -- . ':(exclude)tests/suite-static.sh' 2>/dev/null | wc -l | tr -d ' ')
 ck "no private IPs in tracked files" "$ips" "0"
 
 summary "static"

@@ -2,7 +2,7 @@
  *
  * Catches the class of bug that static checks miss: markup removed while the JS
  * that reaches for it stays behind. That is exactly how the old attendance
- * "plans launcher" broke — the element went, its event wiring did not, and the
+ * "plans launcher" broke: the element went, its event wiring did not, and the
  * page threw on load.
  */
 const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
@@ -23,7 +23,7 @@ const PAGES = [
 
 (async () => {
   const { setCookies } = await signUp('Page', 'Check');
-  // Same session, as a request header — for the checks that hit the API directly
+  // Same session, as a request header, for the checks that hit the API directly
   // rather than through a page.
   const cookieHeader = setCookies.map(c => c.split(';')[0]).join('; ');
 
@@ -36,7 +36,7 @@ const PAGES = [
     // that failed to apply lands on /login and every check below passes
     // vacuously against the wrong document.
     if (w.location.pathname === '/login' || d.getElementById('auth-form')) {
-      errors.push('redirected to /login — the test session did not apply');
+      errors.push('redirected to /login: the test session did not apply');
     }
     const main = d.getElementById('main');
     if (main && main.style.display === 'none') errors.push('#main still hidden after gate');
@@ -65,7 +65,7 @@ const PAGES = [
     const cards = d.querySelectorAll('#applet-grid .applet, #applet-groups .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);
     // The grid is filtered by the subteam chips now. A fresh test account has no
-    // subteam, so it must land on All and show everything — a default that hid
+    // subteam, so it must land on All and show everything. A default that hid
     // most of the site from a new member would be the worst possible first
     // impression. The filter's own behaviour is covered in suite-profiles.
     check('a new account sees the whole grid, unfiltered',
@@ -81,15 +81,15 @@ const PAGES = [
 
     // The dashboard is hidden until boot() has drawn it once, so it is never
     // seen half-built. The failure mode that buys is a page that never appears
-    // at all — if reveal() stops being called, or is renamed, or an early
+    // at all: if reveal() stops being called, or is renamed, or an early
     // return skips it, every check above still passes against a DOM nobody can
     // see. This is the one that would notice.
     // reveal() also fires on a 2.5s safety timer, so waiting for TILES_LOADED
-    // above does not guarantee it has run yet — wait for the class itself.
+    // above does not guarantee it has run yet, so wait for the class itself.
     check('the page is revealed once drawn',
       await waitFor(() => d.body.classList.contains('ready'), 4000),
       `body class="${d.body.className}"`);
-    // No tile may still be showing its placeholder by the time it is visible —
+    // No tile may still be showing its placeholder by the time it is visible,
     // the "…" in every card was half of what the flash actually looked like.
     check('no tile is still pending when revealed',
       d.querySelectorAll('.applet-stat.loading').length === 0,
@@ -97,12 +97,12 @@ const PAGES = [
 
     // The degraded path, which the check above cannot reach because the happy
     // path always has data. /api/dashboard nulls a single tile when one table
-    // fails, by design — and with one paint there is no second render coming to
+    // fails, by design, and with one paint there is no second render coming to
     // replace a placeholder, so "…" would sit there for good. A spinner that
     // never resolves is worse than no number at all.
     //
     // appletCard and TILES_LOADED are top-level let/const, so they are lexical
-    // globals rather than properties of window — they have to be read by
+    // globals rather than properties of window, so they have to be read by
     // evaluating in page scope. See tests/README.md.
     let degraded = null;
     try {
@@ -180,7 +180,7 @@ const PAGES = [
     check('and is still in its own block too',
       favShape.stillHome === true && favShape.copies === 2, JSON.stringify(favShape));
     check('both copies show as starred', favShape.bothOn === true, JSON.stringify(favShape));
-    // Un-starring has to put the page back exactly as it was — a favourite that
+    // Un-starring has to put the page back exactly as it was. A favourite that
     // cannot be undone is a card you have lost track of.
     check('clearing the last star restores the empty state',
       favShape.restored === true, JSON.stringify(favShape));
@@ -226,7 +226,7 @@ const PAGES = [
     const cd = j.countdown;
     check('countdown in payload', !!cd && typeof cd.days === 'number',
       cd ? `${cd.days} days to ${cd.name}` : '(missing)');
-    // Recompute independently — catches a wrong target date or a sign error
+    // Recompute independently: catches a wrong target date or a sign error
     // that a "looks like a number" check would sail past. One day of slack
     // because the server counts in Europe/Dublin and this runs in the host's
     // timezone; the two legitimately differ for an hour around midnight.

@@ -8,7 +8,7 @@
 #   ./deploy.sh rollback         list the prod images you could go back to
 #
 # A tag is a git sha. CI builds once, deploys that same image to stage, and
-# later deploys THE SAME IMAGE to prod — promoting an artefact rather than
+# later deploys THE SAME IMAGE to prod, promoting an artefact rather than
 # rebuilding from source twice and hoping the two builds agree.
 #
 # The rules this script exists to enforce, because getting them wrong is silent:
@@ -43,7 +43,7 @@ DATA_ROOT="${UCDFS_DATA_ROOT:-$HOME_DIR/data}"
 
 # ── Per-tier settings ──────────────────────────────────────────────────────
 # Ports: 3978 is the live site and is spoken for. 3979 belongs to the test
-# suite's throwaway container — deliberately not reused here, so a deploy can
+# suite's throwaway container, deliberately not reused here, so a deploy can
 # never collide with a test run in progress.
 case "$ENV" in
   dev)   PORT=3980; ENV_FILE="$HOME_DIR/.env.nonprod"; DATA="$DATA_ROOT/dev/uploads"   ;;
@@ -72,33 +72,33 @@ if [ "$ENV" = "build" ]; then
 fi
 
 # ── The env file is the database ───────────────────────────────────────────
-[ -f "$ENV_FILE" ] || die "no $ENV_FILE — see .env.example (set UCDFS_HOME if secrets live elsewhere)"
+[ -f "$ENV_FILE" ] || die "no $ENV_FILE. See .env.example (set UCDFS_HOME if secrets live elsewhere)"
 
 # Read the tier label out of the file and check it agrees with the tier we were
 # asked to deploy. This is the guard that catches the copy-paste where someone
 # fills .env.nonprod with production credentials: the labels stop matching and
 # the deploy stops rather than quietly serving real data on a staging URL.
 FILE_ENV="$(grep -E '^UCDFS_ENV=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"'"'"' ')"
-[ -n "$FILE_ENV" ] || die "$ENV_FILE has no UCDFS_ENV line — label it so this check can work"
+[ -n "$FILE_ENV" ] || die "$ENV_FILE has no UCDFS_ENV line. Label it so this check can work"
 
 case "$ENV" in
   prod)         [ "$FILE_ENV" = "prod" ]    || die "prod must use a UCDFS_ENV=prod file; $ENV_FILE says '$FILE_ENV'" ;;
-  dev|stage)    [ "$FILE_ENV" = "nonprod" ] || die "$ENV must use a UCDFS_ENV=nonprod file; $ENV_FILE says '$FILE_ENV' — refusing to point $ENV at production" ;;
+  dev|stage)    [ "$FILE_ENV" = "nonprod" ] || die "$ENV must use a UCDFS_ENV=nonprod file; $ENV_FILE says '$FILE_ENV'. Refusing to point $ENV at production" ;;
 esac
 
 grep -qE '^SUPABASE_SERVICE_KEY=.+' "$ENV_FILE" \
-  || die "SUPABASE_SERVICE_KEY is empty in $ENV_FILE — the app cannot read its own data without it"
+  || die "SUPABASE_SERVICE_KEY is empty in $ENV_FILE. The app cannot read its own data without it"
 
 # ── What to run ────────────────────────────────────────────────────────────
 if [ "$ENV" = "dev" ] && [ -z "$TAG" ]; then
-  # Dev is the one tier allowed to run uncommitted work — that is what it is for.
+  # Dev is the one tier allowed to run uncommitted work. That is what it is for.
   TAG="dev-$(date +%H%M%S)"
   echo "Building the working tree as ucdfs:$TAG"
   docker build -t "ucdfs:$TAG" .
 else
   [ -n "$TAG" ] || die "$ENV needs an image tag: ./deploy.sh $ENV \$(git rev-parse --short HEAD)"
   docker image inspect "ucdfs:$TAG" >/dev/null 2>&1 \
-    || die "no image ucdfs:$TAG — build it first with ./deploy.sh build $TAG"
+    || die "no image ucdfs:$TAG. Build it first with ./deploy.sh build $TAG"
 fi
 
 # Production gets one more check. Deploying a sha that is not on main means

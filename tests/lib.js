@@ -14,7 +14,7 @@ let pass = 0, fail = 0;
 
 function check(label, ok, extra = '') {
   ok ? pass++ : fail++;
-  console.log(`${ok ? '  ok  ' : '  FAIL'} ${label}${ok || !extra ? '' : ' — ' + extra}`);
+  console.log(`${ok ? '  ok  ' : '  FAIL'} ${label}${ok || !extra ? '' : ': ' + extra}`);
 }
 
 function summary(name) {
@@ -40,7 +40,7 @@ async function open(path, opts = {}) {
   });
   vc.on('error', (...a) => errors.push('console.error: ' + a.join(' ')));
 
-  // Cookies must be in the jar BEFORE fromURL fetches the page — beforeParse
+  // Cookies must be in the jar BEFORE fromURL fetches the page: beforeParse
   // runs after the response has arrived, so seeding there is too late and the
   // server would have already redirected an "authenticated" request to /login.
   //
@@ -101,13 +101,13 @@ async function settle(d, ms = 1500) {
  * For anything that waits on a network round trip, use this rather than
  * settle()'s fixed window. The dashboard is the cautionary tale: it draws after
  * four API calls, one of which fans out into a dozen Supabase queries, and
- * settle() returns after 1.75s — shorter than the page's own 2.5s reveal
+ * settle() returns after 1.75s, shorter than the page's own 2.5s reveal
  * fallback. So the suite asserted on a page that had not finished drawing and
  * failed with "0 cards", intermittently, on a runner slightly slower than the
  * last one. A fixed sleep in a test is a deadline the code has to beat, and it
  * gets tighter every time the app grows a query.
  *
- * The predicate throwing counts as "not yet" — an element the page has not
+ * The predicate throwing counts as "not yet": an element the page has not
  * created is the ordinary case while waiting for it.
  */
 async function waitFor(predicate, ms = 8000, step = 50) {
@@ -123,7 +123,7 @@ async function waitFor(predicate, ms = 8000, step = 50) {
  * Click the submit button and wait for the request to finish.
  *
  * Note: dispatching a synthetic Event('submit') does not reliably run listeners
- * in jsdom — clicking the type=submit button drives the real path, as a user
+ * in jsdom. Clicking the type=submit button drives the real path, as a user
  * would. Learned the hard way.
  */
 async function submit(d) {

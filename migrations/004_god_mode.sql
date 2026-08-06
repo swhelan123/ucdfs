@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  UCDFS — god mode
+--  UCDFS: god mode
 --
 --  Two separate things, and keeping them separate is the whole point:
 --
@@ -14,8 +14,8 @@
 --  god mode is a switch you flip when you need it, and the app says loudly when
 --  it is on.
 --
---  Turning god mode OFF makes an admin behave as an ordinary member everywhere
---  — including the Competition Hub. Turning it back ON only ever needs role =
+--  Turning god mode OFF makes an admin behave as an ordinary member everywhere,
+--  including the Competition Hub. Turning it back ON only ever needs role =
 --  'admin', never god_mode itself, or an admin could switch themselves out of
 --  their own admin rights and have no way back in short of this file.
 --
@@ -26,7 +26,7 @@ alter table public.profiles
   add column if not exists god_mode boolean not null default false;
 
 comment on column public.profiles.god_mode is
-  'Is this admin currently elevated? Meaningless unless role = admin — the role is the capability, this is the switch.';
+  'Is this admin currently elevated? Meaningless unless role = admin. The role is the capability, this is the switch.';
 
 
 -- ── Grant it ───────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ update public.profiles
 
 
 -- ── Promoting the rest of the committee ────────────────────────────────────
--- Do this from /admin in the app now rather than here — it is a normal task,
+-- Do this from /admin in the app now rather than here. It is a normal task,
 -- not a migration. This is only the bootstrap for the first admin, who cannot
 -- promote themselves through a UI they cannot yet reach.
 --

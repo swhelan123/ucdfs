@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  UCDFS — activity_log
+--  UCDFS: activity_log
 --
 --  One append-only table every applet writes a line to, so the dashboard can
 --  show a live pulse of the team's work without each applet inventing its own
@@ -10,7 +10,7 @@
 --  the failure, and the dashboard feed falls back to pt_done_log alone).
 --
 --  Unlike 001 this is a single part. RLS goes on immediately because the app is
---  already deployed with the service key by the time you're reading this — the
+--  already deployed with the service key by the time you're reading this. The
 --  ordering trap 001 warns about only applied to the first lockdown.
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -24,7 +24,7 @@ create table if not exists public.activity_log (
   verb       text        not null,
   -- Denormalised on purpose: the text of what was acted on, captured at write
   -- time. A feed line has to keep reading correctly after the thing it names is
-  -- renamed or deleted — it records what happened, not what currently exists.
+  -- renamed or deleted. It records what happened, not what currently exists.
   subject    text        not null default '',
   created_at timestamptz not null default now()
 );

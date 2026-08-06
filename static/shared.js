@@ -9,7 +9,7 @@
  * login: an httpOnly one holding the tokens (the actual credential, which this
  * script cannot read and therefore cannot leak), and a readable one holding
  * display name + role. UCDFS.user() reads the readable one, which keeps it
- * synchronous — so every call site written against the old localStorage version
+ * synchronous, so every call site written against the old localStorage version
  * still works unchanged.
  *
  * The profile cookie is display data, never authorization. The server re-checks
@@ -21,7 +21,7 @@
   var PROFILE_COOKIE = 'ucdfs_profile';
 
   /* Where people's names lived before accounts existed. Only the sign-in screen
-     reads these now — to greet a returning user by name and pre-fill the signup
+     reads these now, to greet a returning user by name and pre-fill the signup
      form, so the move to accounts isn't a cold wall. */
   var LEGACY = [
     ['ucdfs_user', null],    // the shared-layer key
@@ -50,14 +50,14 @@
     if (extra) {
       u.email = extra.email || '';
       u.role  = extra.role  || 'member';
-      /* Presentational only — it defaults the dashboard filter and nothing
+      /* Presentational only. It defaults the dashboard filter and nothing
          else. Null is a real value ("not sure yet"), so it stays null rather
          than being coerced to a subteam nobody picked. An older cookie written
          before subteams existed simply has no field, which lands in the same
          place. */
       u.subteam = extra.subteam || null;
       /* Your own face, so a page can draw it without waiting on a fetch. Null
-         when you haven't uploaded one — every caller falls back to initials. */
+         when you haven't uploaded one. Every caller falls back to initials. */
       u.photo = extra.photo || null;
       /* Drives the god-mode banner and nothing else. Display, like everything
          else here: forging it draws a banner and grants precisely nothing,
@@ -71,8 +71,8 @@
     var parts = ('; ' + document.cookie).split('; ' + name + '=');
     if (parts.length !== 2) return null;
     var raw = parts.pop().split(';').shift();
-    /* A value containing a character that is not legal raw — "/" in a photo
-       URL, say — comes back wrapped in double quotes. Strip them, or JSON.parse
+    /* A value containing a character that is not legal raw ("/" in a photo
+       URL, say) comes back wrapped in double quotes. Strip them, or JSON.parse
        reads the payload as a string and identity silently vanishes. The server
        encodes to avoid this; this is the belt to that pair of braces, and it
        also rescues any cookie issued before that fix. */
@@ -101,7 +101,7 @@
    * Re-read the profile cookie, discarding the cache.
    *
    * Needed because the server rewrites that cookie when you edit your own
-   * profile — picking a subteam, say. Without this, user() keeps handing back
+   * profile, picking a subteam, say. Without this, user() keeps handing back
    * the version from page load and the dashboard filter defaults to the subteam
    * you just left.
    */
@@ -111,7 +111,7 @@
   }
 
   /**
-   * The name this browser knew before accounts existed. Sign-in screen only —
+   * The name this browser knew before accounts existed. Sign-in screen only,
    * it is not an identity and grants nothing.
    */
   function legacyName() {
@@ -197,7 +197,7 @@
   /**
    * Canvas tools (pt, harness) need a display name synchronously at script-eval
    * time. Their page route is session-protected, so the profile cookie is
-   * already there — no prompt, no fallback identity.
+   * already there, with no prompt and no fallback identity.
    */
   function requireName() {
     var u = user();
@@ -230,7 +230,7 @@
    * {lowercased full name: photo URL} for the whole team, fetched once.
    *
    * The name-keyed pages (attendance, the nowbar) predate accounts, so a face
-   * has to be looked up by the name that was typed. Cached like applets() —
+   * has to be looked up by the name that was typed. Cached like applets(),
    * every list on a page shares one request.
    */
   function photos() {
@@ -265,7 +265,7 @@
   // ── Applet registry ──────────────────────────────────────────────────────
 
   /**
-   * Cached fetch of /api/applets — the server is the single source of truth.
+   * Cached fetch of /api/applets. The server is the single source of truth.
    *
    * The cache holds the whole payload so the dashboard's layout groups arrive
    * on the same request as the cards. applets() still resolves to just the
@@ -300,8 +300,8 @@
    * Styles for the elements this file injects into pages.
    *
    * They cannot live in shared.css. The canvas tools (pt, harness) load
-   * shared.js but deliberately NOT shared.css — they have their own visual
-   * language — so anything appended to document.body from here would render as
+   * shared.js but deliberately NOT shared.css. They have their own visual
+   * language, so anything appended to document.body from here would render as
    * raw unstyled markup on exactly the pages nobody would think to check. That
    * is what happened to the override banner the first time.
    *
@@ -390,11 +390,11 @@
   function onboard(onPicked) {
     if (onPicked) obCallbacks.push(onPicked);
     if (!user() || window.location.pathname === '/login') return;
-    /* Already answered — never ask again, and skip the request entirely. */
+    /* Already answered. Never ask again, and skip the request entirely. */
     if (user().subteam) return;
 
     /* Called twice on the dashboard: once automatically for every page, once by
-       the page itself to hear about the answer. Only the first call asks — the
+       the page itself to hear about the answer. Only the first call asks. The
        second just leaves its callback. Without this the overlay is built twice
        and the second one covers the first. */
     if (obStarted) return;
@@ -451,7 +451,7 @@
         });
       }).catch(function () {
         buttons.forEach(function (b) { b.disabled = false; });
-        toast("Couldn't save that — try again");
+        toast("Couldn't save that. Try again");
       });
     }
 
@@ -459,7 +459,7 @@
       b.addEventListener('click', function () { pick(b.dataset.subteam); });
     });
     /* "Not sure yet" posts null and still marks them onboarded. It is an
-       answer, not a skip — half of September's intake genuinely don't know. */
+       answer, not a skip: half of September's intake genuinely don't know. */
     wrap.querySelector('#ob-later').addEventListener('click', function () { pick(null); });
   }
 
@@ -472,7 +472,7 @@
     wrap.querySelector('#ob-h').textContent = s ? "You're on " + s.name + ' ' + s.icon : 'Nice one';
     wrap.querySelector('#ob-p').textContent =
       'Add a photo and pick three prompts so people know who you are.';
-    /* Its own class, not .btn — the canvas tools have no shared.css to take
+    /* Its own class, not .btn. The canvas tools have no shared.css to take
        that from, and this overlay can appear on them. */
     wrap.querySelector('#ob-opts').innerHTML =
       '<a class="ob-cta" href="/profiles?edit=1">Set up my profile</a>';
@@ -489,7 +489,7 @@
    *
    * Being able to edit anyone's anything must never be a state you are in
    * without noticing. The flag comes from the profile cookie, which makes this
-   * display only — every actual gate is enforced server-side against the
+   * display only. Every actual gate is enforced server-side against the
    * database row, so a forged cookie draws a banner and grants nothing.
    */
   function godBar() {

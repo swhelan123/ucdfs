@@ -24,13 +24,13 @@ from supabase import create_client, Client
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_KEY"]
 # The service_role key bypasses RLS. Once migrations/001_auth_and_rls.sql PART 2
-# has run, this is the ONLY key that can reach the data — the anon key is exactly
+# has run, this is the ONLY key that can reach the data. The anon key is exactly
 # what RLS is there to shut out. It must never be sent to a browser.
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 if not SUPABASE_SERVICE_KEY:
     logger.warning(
-        "SUPABASE_SERVICE_KEY is not set — falling back to the anon key. "
+        "SUPABASE_SERVICE_KEY is not set, falling back to the anon key. "
         "This works only while RLS is still disabled. Set it before running "
         "PART 2 of the migration, or every query will start returning nothing."
     )
@@ -40,7 +40,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_
 
 # ── Uploads ───────────────────────────────────────────────────────────────────
 # Profile photos live on this server's disk, not in Supabase Storage. They are
-# small, few, and only ever read by us — a bucket would add a second storage
+# small, few, and only ever read by us. A bucket would add a second storage
 # system, a second set of credentials and a second thing to back up, to hold a
 # few megabytes we already have a machine for.
 #
@@ -58,7 +58,7 @@ try:
 except OSError as e:
     # Non-fatal on purpose: the whole site should not fail to boot because the
     # photo directory is unwritable. Uploads 503 and everything else works.
-    logger.warning(f"[uploads] {AVATAR_DIR} is not writable: {e} — photo upload will fail")
+    logger.warning(f"[uploads] {AVATAR_DIR} is not writable: {e}. Photo upload will fail")
 
 # Photos are resized in the browser before upload (see profiles.html), so this
 # is a backstop against a crafted request, not the normal path.
@@ -75,9 +75,9 @@ ALLOWED_EMAIL_DOMAINS = {
 GOTRUE = f"{SUPABASE_URL}/auth/v1"
 
 # Two cookies, doing different jobs:
-#   SESSION_COOKIE — httpOnly, holds the tokens. The actual credential. JS can
+#   SESSION_COOKIE: httpOnly, holds the tokens. The actual credential. JS can
 #                    never read it, so an XSS bug cannot exfiltrate the session.
-#   PROFILE_COOKIE — readable by JS, holds display name + role only. Lets
+#   PROFILE_COOKIE: readable by JS, holds display name + role only. Lets
 #                    UCDFS.user() stay synchronous. NEVER trusted server-side.
 SESSION_COOKIE = "ucdfs_session"
 PROFILE_COOKIE = "ucdfs_profile"
@@ -90,20 +90,20 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
 # else, so changing the date here is the whole job.
 #
 # Times the team logs (attendance arrival/departure) are wall-clock Dublin, not
-# UTC. COMP_TZ further down is Europe/London on purpose — that one is about
+# UTC. COMP_TZ further down is Europe/London on purpose. That one is about
 # where the competition physically is, not where we are.
 TEAM_TZ = ZoneInfo("Europe/Dublin")
 
 FSUK_NAME = "FSUK 2027"
 # PROVISIONAL. IMechE had not published the 2027 dates when this was written;
-# this follows the 2026 pattern (arrival was Tue 14 Jul 2026 — see
+# this follows the 2026 pattern (arrival was Tue 14 Jul 2026, see
 # SAME_DAY_SPECIAL_DATE). Change it the day they announce. A countdown the team
 # finds out is wrong is worse than no countdown, so the dashboard says
 # "provisional" out loud until this flag flips.
 FSUK_DATE        = date(2027, 7, 13)
 FSUK_PROVISIONAL = True
 
-# (label, date) — design freeze, manufacturing deadline, first test day, …
+# (label, date): design freeze, manufacturing deadline, first test day, …
 # Empty is fine: the countdown then just shows the competition on its own.
 SEASON_MILESTONES: list[tuple[str, date]] = []
 
@@ -118,7 +118,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # names and colours can never drift between them.
 #
 # These are RELEVANCE, not permission. An Operations member must still be able
-# to open the PT plan — it just should not be the first thing they see. Anything
+# to open the PT plan. It just should not be the first thing they see. Anything
 # that needs actually gating uses a role (see require_role); if the two ever get
 # conflated we will lock someone out of something they need at 2am before a
 # deadline. Keep them separate.
@@ -137,7 +137,7 @@ SUBTEAMS_BY_ID = {s["id"]: s for s in SUBTEAMS}
 
 def _clean_subteam(value) -> Optional[str]:
     """A subteam id, or None. Anything unrecognised becomes None rather than an
-    error — a stale value from an old client should degrade to "not set", not
+    error. A stale value from an old client should degrade to "not set", not
     reject the whole save."""
     v = (value or "").strip().lower()
     return v if v in SUBTEAM_IDS else None
@@ -152,20 +152,20 @@ async def api_subteams():
 # ── Applet registry ───────────────────────────────────────────────────────────
 # The single source of truth for what exists on the site. It generates the page
 # routes AND feeds /api/applets, which the dashboard renders. Adding an applet
-# is one entry here plus one file in static/ — the dashboard needs no edit.
+# is one entry here plus one file in static/, and the dashboard needs no edit.
 #
-#   status:   "live"  — working, full brightness on the dashboard
-#             "quiet" — real but dormant (off-season); dimmed, still clickable
-#             "soon"  — placeholder card, not clickable
+#   status:   "live"  is working, full brightness on the dashboard
+#             "quiet" is real but dormant (off-season); dimmed, still clickable
+#             "soon"  is a placeholder card, not clickable
 #   accent:   a colour token from shared.css (indigo/purple/green/amber/teal/red)
-#   subteams: who this is most relevant to — ids from SUBTEAMS above, or ["all"].
+#   subteams: who this is most relevant to. Ids from SUBTEAMS above, or ["all"].
 #             Drives the dashboard filter chips and nothing else. Omitting it
 #             means "all", so an entry that forgets the field stays visible to
 #             everyone rather than quietly disappearing for most of the team.
 #   requires_role: the PERMISSION field. A role name; the page route 403s and
 #             /api/applets omits the entry for anyone without it. God mode
 #             satisfies it. Omitting it means everyone, which is the right
-#             default — gating is the exception and should be written down.
+#             default, since gating is the exception and should be written down.
 #
 # subteams and requires_role are not the same kind of thing and must never be
 # conflated: one is what you'd rather see first, the other is what you may open.
@@ -176,7 +176,7 @@ async def api_subteams():
 # one, instead of asking for a deploy.
 #
 # The safety property the old PLANS dict provided is kept, only moved. A plan id
-# reaches supabase.table() filters, so it is still checked before use — against
+# reaches supabase.table() filters, so it is still checked before use, against
 # this table now. Ids are minted here (`chart_…`), never accepted from a caller,
 # so nobody can name a row into existence by asking for it.
 LEGACY_PLAN = "pt"      # what an omitted plan means; see _plan_or_400
@@ -218,7 +218,7 @@ APPLETS = [
         "icon":   "🗺️",
         "route":  "/flowcharts",
         "file":   "flowcharts.html",
-        "blurb":  "Build plans and dependency charts — pick one or start a new one",
+        "blurb":  "Build plans and dependency charts: pick one or start a new one",
         "accent": "teal",
         "status": "live",
         # Tagged for everyone, not just Powertrain. It used to be the PT plan
@@ -270,13 +270,13 @@ APPLETS = [
         "accent": "red",
         "status": "live",
         "subteams": ["all"],
-        # The only gated entry. Everyone else never sees the card at all —
+        # The only gated entry. Everyone else never sees the card at all,
         # /api/applets omits it rather than showing a tile that 403s.
         "requires_role": "admin",
     },
     # ── Last season ───────────────────────────────────────────────────────
     # Both 25/26 build plans. They are finished, not broken, and people still
-    # look things up in them — so they move to their own block at the foot of
+    # look things up in them, so they move to their own block at the foot of
     # the dashboard rather than being deleted or left competing for attention
     # with what is being built now.
     {
@@ -286,7 +286,7 @@ APPLETS = [
         # No "file": the page is served by the /plan/{plan_id} route, which is
         # the only way in now that charts are rows rather than registry entries.
         "route":  "/plan/pt",
-        "blurb":  "Last season's powertrain build — 25/26",
+        "blurb":  "Last season's powertrain build, 25/26",
         "accent": "teal",
         "status": "quiet",
         "subteams": ["pt"],
@@ -299,7 +299,7 @@ APPLETS = [
         "name":   "Mech Manufacturing Plan",
         "icon":   "⚙️",
         "route":  "https://www.canva.com/design/DAHFgTx32zs/IXAWyUJbm15DIqgdsbRkTg/edit",
-        "blurb":  "Last season's chassis build — 25/26, on Canva",
+        "blurb":  "Last season's chassis build, 25/26, on Canva",
         "accent": "green",
         "status": "quiet",
         "external": True,
@@ -312,7 +312,7 @@ APPLETS_BY_ID = {a["id"]: a for a in APPLETS}
 
 # plan id → the applet that opens it, so a feed line from a charted plan can
 # carry that card's icon. Anything else badges as the flowcharts tool, which is
-# where it was drawn — see _pt_activity.
+# where it was drawn. See _pt_activity.
 APPLET_BY_PLAN = {a["plan"]: a["id"] for a in APPLETS if a.get("plan")}
 
 # Dashboard blocks, in order, with the heading each one gets. An entry with no
@@ -326,7 +326,7 @@ APPLET_GROUPS = [
 
 
 def _plan_row(pid: str) -> Optional[dict]:
-    """One chart, or None. The whitelist lookup — see _plan_or_400."""
+    """One chart, or None. The whitelist lookup. See _plan_or_400."""
     if not pid:
         return None
     try:
@@ -343,7 +343,7 @@ def _plan_row(pid: str) -> Optional[dict]:
 def _plan_or_400(value) -> str:
     """Resolve a request's chart id, or refuse.
 
-    Missing means the legacy chart — every pre-multi-plan client (and curl
+    Missing means the legacy chart. Every pre-multi-plan client (and curl
     muscle memory) says nothing and must keep meaning "pt". Unknown is a hard
     400: the id is only ever used as a filter value, but accepting one that
     names no chart would write rows no page can ever show.
@@ -363,7 +363,7 @@ def _may_open(applet: dict, profile: Optional[dict]) -> bool:
     """Does this person satisfy the entry's requires_role? God mode always does.
 
     One function, used by both the page route and /api/applets, so a gated
-    applet cannot end up visible on the dashboard but closed on click — or,
+    applet cannot end up visible on the dashboard but closed on click, or,
     worse, the other way round.
     """
     needed = applet.get("requires_role")
@@ -389,7 +389,7 @@ for _applet in APPLETS:
 
 
 # The one way into a chart. Charts are rows, so there is no registry entry to
-# generate a route from — this is a single dynamic route serving the same canvas
+# generate a route from. This is a single dynamic route serving the same canvas
 # for every chart.
 @app.get("/plan/{plan_id}")
 async def plan_page(plan_id: str):
@@ -418,7 +418,7 @@ def _favourites_for(profile: Optional[dict]) -> list:
     Filtered against the live registry on the way out as well as on the way in,
     so a card that has since been retired quietly stops being a favourite rather
     than leaving a gap where a tile used to be. Missing table (008 not applied
-    yet) reads as "no favourites", never as an error — this is a convenience on
+    yet) reads as "no favourites", never as an error. This is a convenience on
     a page that has to render regardless.
     """
     if not profile:
@@ -429,7 +429,7 @@ def _favourites_for(profile: Optional[dict]) -> list:
 
 @app.get("/api/applets")
 async def api_applets(request: Request):
-    """What the dashboard renders. Public fields only — no file paths.
+    """What the dashboard renders. Public fields only, no file paths.
 
     Entries you may not open are omitted rather than dimmed: a tile that exists
     only to refuse you is worse than no tile.
@@ -438,7 +438,7 @@ async def api_applets(request: Request):
     return {
         "applets": [
             # "group" rides along so the dashboard can lay out its blocks
-            # without knowing which cards belong where — same rule as always:
+            # without knowing which cards belong where. Same rule as always:
             # adding a card is an entry here, never an edit to the dashboard.
             {k: v for k, v in a.items() if k != "file"}
             for a in APPLETS if _may_open(a, profile)
@@ -458,7 +458,7 @@ async def api_applets(request: Request):
 #  calls GoTrue and hands back an httpOnly cookie. The anon key stays server-side
 #  and the session cannot be read by any script on the page.
 #
-#  Deliberately not using supabase.auth.* — that client keeps the signed-in
+#  Deliberately not using supabase.auth.*. That client keeps the signed-in
 #  session as state on the client object, and this one client instance is shared
 #  by every request in the process. One user signing in would change who the
 #  next request is. The GoTrue REST API is stateless, so it is used directly.
@@ -484,7 +484,7 @@ def _friendly_auth_error(payload: dict, fallback: str) -> str:
            or payload.get("message") or payload.get("error") or "")
     low = raw.lower()
     if "already registered" in low or "already exists" in low:
-        return "There's already an account with that email — sign in instead."
+        return "There's already an account with that email. Sign in instead."
     if "invalid login" in low or "invalid_grant" in low:
         return "That email and password don't match."
     if "password" in low and "least" in low:
@@ -511,7 +511,7 @@ async def _gotrue_admin(method: str, path: str, *, fallback: str = "Auth failed"
     """The GoTrue *admin* API, which is a different credential to _gotrue().
 
     Everything above sends the anon key and, where there is one, the caller's own
-    token — it acts as the user. This acts as the project, so it needs the
+    token. It acts as the user. This acts as the project, so it needs the
     service key, and the anon key would simply 401. Kept separate rather than
     bolted on as a flag so nothing reaches an /admin/ path by accident.
     """
@@ -563,7 +563,7 @@ def _cache_forget_user(uid: str) -> None:
 
     Only deleting an account needs this. GoTrue stops honouring their tokens the
     moment the user is gone, but this process would keep serving them from the
-    cache for up to TOKEN_CACHE_TTL — so a deleted account could still load
+    cache for up to TOKEN_CACHE_TTL, so a deleted account could still load
     pages for a minute afterwards, which reads as "the delete didn't work"."""
     for token, (user, _) in list(_token_cache.items()):
         if (user or {}).get("id") == uid:
@@ -607,7 +607,7 @@ def _upsert_profile(user_id: str, first: str, last: str, email: str) -> dict:
     Write the profile row, but never let a failure here sink the request.
 
     The auth account is created first, so raising at this point would leave the
-    person with working credentials, no profile, and a 500 — unable to sign up
+    person with working credentials, no profile, and a 500, unable to sign up
     again because the email is taken. resolve_from_cookies() rebuilds a missing
     profile on the next request, so degrading quietly is genuinely recoverable.
     """
@@ -616,7 +616,7 @@ def _upsert_profile(user_id: str, first: str, last: str, email: str) -> dict:
         supabase.table("profiles").upsert(row).execute()
     except Exception as e:
         logger.error(
-            f"[auth] could not write profile for {email}: {e} — "
+            f"[auth] could not write profile for {email}: {e}. "
             "if this says 'row-level security', SUPABASE_SERVICE_KEY is missing."
         )
     return {**row, "role": "member"}
@@ -626,7 +626,7 @@ def _public_profile(profile: dict, photo: Optional[str] = None) -> dict:
     """What the browser is allowed to know about the signed-in user.
 
     subteam and photo ride along so the dashboard can default its filter chips
-    and draw your face without a round trip — UCDFS.user() has to stay
+    and draw your face without a round trip. UCDFS.user() has to stay
     synchronous. That is safe precisely because neither grants anything: they
     are presentational, and the server never reads them back off the cookie.
     Never put anything here that is checked.
@@ -659,7 +659,7 @@ def _set_session(response: Response, tokens: dict, profile: dict):
 
 
 def _set_profile_cookie(response: Response, profile: dict):
-    """Readable by JS on purpose — display only, never an authorization input.
+    """Readable by JS on purpose: display only, never an authorization input.
 
     Split out from _set_session because editing your profile changes what this
     holds (your subteam, your photo) without touching the session. Rewriting it
@@ -667,7 +667,7 @@ def _set_profile_cookie(response: Response, profile: dict):
     you left ten seconds ago, or the header pill showing the photo you just
     replaced.
 
-    The detail lookup costs one query, on sign-in and on save — not on every
+    The detail lookup costs one query, on sign-in and on save, not on every
     request, which is the whole reason this lives in a cookie at all.
     """
     photo = _avatar_url(profile.get("id"), _get_details(profile.get("id") or ""))
@@ -703,8 +703,8 @@ async def resolve_from_cookies(cookies: dict) -> tuple:
     the refresh token is still good.
 
     Returns (profile, rotated_tokens); both are None when there is no valid
-    session. Takes a plain cookie dict so WebSocket handshakes — which have
-    cookies but no Request — can use the same path as HTTP.
+    session. Takes a plain cookie dict so WebSocket handshakes (which have
+    cookies but no Request) can use the same path as HTTP.
     """
     raw = cookies.get(SESSION_COOKIE)
     if not raw:
@@ -768,7 +768,7 @@ PUBLIC_EXACT = {
 PUBLIC_PREFIXES = ("/static/",)
 # "/" is the dashboard and "/pt" is the legacy chart alias. Both are listed by
 # hand because neither is generated from APPLETS: the dashboard is not an applet,
-# and the `pt` card deliberately has no "file" — it points at /plan/pt, which the
+# and the `pt` card deliberately has no "file". It points at /plan/pt, which the
 # dynamic chart route serves. Miss one and that page answers a signed-out browser
 # with JSON instead of sending it to sign in.
 PAGE_ROUTES = {"/", "/pt"} | {
@@ -808,7 +808,7 @@ async def auth_middleware(request: Request, call_next):
 
 def current_profile(request: Request) -> dict:
     """The signed-in user inside a protected endpoint. The middleware guarantees
-    this exists — reaching a 401 path without one is impossible."""
+    this exists. Reaching a 401 path without one is impossible."""
     profile = getattr(request.state, "profile", None)
     if not profile:
         raise HTTPException(401, "Not signed in")
@@ -821,7 +821,7 @@ def current_profile(request: Request) -> dict:
 #
 # Both are read from the profiles row the middleware already loaded, never from
 # the cookie. The cookie carries god_mode too, but only so the UI can draw the
-# banner — it is display, exactly like role, and the server never reads it back.
+# banner. It is display, exactly like role, and the server never reads it back.
 
 def is_admin(profile: Optional[dict]) -> bool:
     """Allowed to switch god mode on. Not the same as having it on."""
@@ -840,7 +840,7 @@ def is_god(request: Request) -> bool:
 def require_role(request: Request, *roles: str) -> dict:
     """Gate an endpoint on role. God mode satisfies any requirement.
 
-    An admin with god mode *off* deliberately does not pass — that is the point
+    An admin with god mode *off* deliberately does not pass. That is the point
     of the switch, and it is what lets an admin check what an ordinary member
     actually sees rather than guessing.
     """
@@ -895,8 +895,8 @@ async def auth_check(request: Request):
     Guessing from a name left in localStorage cannot work: that name is on one
     device and says nothing about whether an account exists.
 
-    This reveals no more than /api/auth/signup already does — that returns
-    "there's already an account with that email" for the same input — and the
+    This reveals no more than /api/auth/signup already does, which returns
+    "there's already an account with that email" for the same input, and the
     first name it returns is contained in the UCD address that was submitted.
     """
     b = await request.json()
@@ -1015,7 +1015,7 @@ async def api_me(request: Request):
 #  Admin  (migrations/004)
 #
 #  Two jobs: switching god mode on and off, and handing out roles. The second is
-#  what lets COMP_ADMIN_PASSWORD stay dead — promoting the committee used to
+#  what lets COMP_ADMIN_PASSWORD stay dead. Promoting the committee used to
 #  mean an UPDATE in the SQL editor, which is why nobody did it and everyone
 #  kept typing the shared password instead.
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1029,7 +1029,7 @@ async def api_god_mode(request: Request):
 
     Gated on require_admin, NOT on god mode: an admin who switched themselves
     off has to be able to switch back on. Nobody can grant themselves the
-    capability here — only the role does that, and only another admin (or 004)
+    capability here. Only the role does that, and only another admin (or 004)
     can hand that out.
     """
     me = require_admin(request)
@@ -1040,7 +1040,7 @@ async def api_god_mode(request: Request):
         supabase.table("profiles").update({"god_mode": on}).eq("id", me["id"]).execute()
     except Exception as e:
         logger.error(f"[admin] god mode toggle failed for {me['id']}: {e}")
-        raise HTTPException(503, "Couldn't switch that — has migration 004 been applied?")
+        raise HTTPException(503, "Couldn't switch that. Has migration 004 been applied?")
 
     fresh = _get_profile(me["id"]) or {**me, "god_mode": on}
     response = JSONResponse({"ok": True, "god_mode": on,
@@ -1052,7 +1052,7 @@ async def api_god_mode(request: Request):
 
 @app.get("/api/admin/people")
 async def api_admin_people(request: Request):
-    """Everyone, with their role. Admin-only — this is the permission list."""
+    """Everyone, with their role. Admin-only: this is the permission list."""
     require_role(request, "admin")
     try:
         rows = supabase.table("profiles").select(
@@ -1084,7 +1084,7 @@ async def api_admin_role(request: Request):
     """Set someone's role.
 
     The one guard that matters: you cannot remove the last admin. Locking every
-    admin out of the app is unrecoverable from inside it — the way back is
+    admin out of the app is unrecoverable from inside it. The way back is
     editing the database by hand, at which point the tool has failed.
     """
     me = require_role(request, "admin")
@@ -1106,9 +1106,9 @@ async def api_admin_role(request: Request):
             admins = supabase.table("profiles").select("id").eq("role", "admin").execute().data or []
         except Exception as e:
             logger.error(f"[admin] admin count failed: {e}")
-            raise HTTPException(503, "Couldn't check that safely — nothing changed.")
+            raise HTTPException(503, "Couldn't check that safely. Nothing changed.")
         if len(admins) <= 1:
-            raise HTTPException(400, "That's the last admin — promote someone else first.")
+            raise HTTPException(400, "That's the last admin. Promote someone else first.")
 
     updates = {"role": role}
     # Losing the capability has to take the elevation with it, or a demoted
@@ -1121,7 +1121,7 @@ async def api_admin_role(request: Request):
         supabase.table("profiles").update(updates).eq("id", target).execute()
     except Exception as e:
         logger.error(f"[admin] role change failed for {target}: {e}")
-        raise HTTPException(503, "Couldn't save that — has migration 004 been applied?")
+        raise HTTPException(503, "Couldn't save that. Has migration 004 been applied?")
 
     name = ((victim.get("first_name") or "") + " " + (victim.get("last_name") or "")).strip()
     log_activity("admin", _public_profile(me).get("name"), "made", f"{name} {role}")
@@ -1136,20 +1136,20 @@ async def api_admin_role(request: Request):
 # ── Deleting an account ───────────────────────────────────────────────────────
 # The case this exists for: somebody signs up as @ucd.ie when the team is on
 # @ucdconnect.ie, or fat-fingers the address, and there is now a second account
-# for one person that nothing can merge. Demoting it doesn't help — it still
+# for one person that nothing can merge. Demoting it doesn't help. It still
 # sits in the directory, in the people list and in every name-keyed lookup.
 #
 # It goes through GoTrue rather than the profiles table, and that ordering is
 # the whole trick: profiles.id is `references auth.users(id) on delete cascade`
 # (migrations/000), and profile_details and profile_prompts cascade off profiles
 # in turn, so removing the auth user takes all three with it. Deleting the
-# profiles row on its own would leave the login intact — and auth_login()
+# profiles row on its own would leave the login intact, and auth_login()
 # re-creates a missing profile from the token's metadata, so the account would
 # walk back in at the next sign-in looking brand new.
 #
 # What deliberately survives: attendance rows, feed lines and pt_done_log
 # entries. Those are keyed by the name that was typed, not by an account, and
-# they record what happened rather than who exists — the same rule that keeps
+# they record what happened rather than who exists, the same rule that keeps
 # activity subjects as text. The feed's own delete below is how you tidy those.
 
 @app.post("/api/admin/user/delete")
@@ -1159,7 +1159,7 @@ async def api_admin_delete_user(request: Request):
     Three rails, because nothing inside the app can undo this:
 
       - **The override has to be on.** Every other cross-user write already asks
-        for it, and this is the most destructive one on the site — an admin
+        for it, and this is the most destructive one on the site, an admin
         reading the people list with it off cannot delete anybody by mis-clicking.
       - **You cannot delete yourself.** It would erase the account holding the
         session making the request, and if you were the last admin nobody could
@@ -1183,19 +1183,19 @@ async def api_admin_delete_user(request: Request):
     if not target:
         raise HTTPException(400, "Which person?")
     if target == me.get("id"):
-        raise HTTPException(400, "You can't delete your own account — ask another admin.")
+        raise HTTPException(400, "You can't delete your own account. Ask another admin.")
 
     victim = _get_profile(target)
     if not victim:
         raise HTTPException(404, "No such account.")
     if victim.get("role") == "admin":
-        raise HTTPException(400, "Demote them to member first — an admin can't be deleted outright.")
+        raise HTTPException(400, "Demote them to member first. An admin can't be deleted outright.")
 
     email = (victim.get("email") or "").strip().lower()
     if confirm != email:
         raise HTTPException(400, "That email doesn't match the account you're deleting.")
 
-    # Read the photo's extension before the row that records it cascades away —
+    # Read the photo's extension before the row that records it cascades away,
     # afterwards nothing on this machine knows the file on disk is theirs.
     ext = (_get_details(target) or {}).get("photo_ext") or ""
 
@@ -1210,7 +1210,7 @@ async def api_admin_delete_user(request: Request):
     _cache_forget_user(target)
 
     # The cascade is schema, not something this file can see, so check rather
-    # than assume — an environment built before 000 could have the column
+    # than assume, since an environment built before 000 could have the column
     # without the constraint, and a profile left behind is a ghost account that
     # still shows in the directory with no way to sign in.
     if _get_profile(target):
@@ -1218,7 +1218,7 @@ async def api_admin_delete_user(request: Request):
             supabase.table("profiles").delete().eq("id", target).execute()
         except Exception as e:
             logger.error(f"[admin] profile row survived deletion of {target}: {e}")
-            raise HTTPException(503, "The login is gone but the profile isn't — check the database.")
+            raise HTTPException(503, "The login is gone but the profile isn't. Check the database.")
 
     if ext:
         try:
@@ -1239,7 +1239,7 @@ async def api_admin_delete_user(request: Request):
 # The feed is append-only in normal use (see migrations/002) and stays that way:
 # this is the exception, for a line that is wrong, noisy, or names somebody who
 # has just been deleted. A dict rather than an if/else because the source name
-# reaches supabase.table() — an unknown value has to be a 400 by construction,
+# reaches supabase.table(), so an unknown value has to be a 400 by construction,
 # never "whatever the client sent".
 FEED_SOURCES = {"activity_log": "id", "pt_done_log": "id"}
 
@@ -1250,7 +1250,7 @@ async def api_admin_activity_delete(request: Request):
 
     Deleting a `pt_done_log` line removes the *record* of a tick, not the tick:
     pt_done is a separate table and the build plan is untouched. That is the
-    intent — this tidies the feed, it does not edit the plan through the back
+    intent: this tidies the feed, it does not edit the plan through the back
     door.
 
     Not itself logged to activity_log. A line saying a line was deleted is noise
@@ -1284,7 +1284,7 @@ async def api_admin_activity_delete(request: Request):
 #
 #  A directory, not a social network. The prompts exist because free-text "write
 #  a bio" fields produce empty profiles and picking from a list produces filled
-#  ones — choosing is easier than composing. The tags exist because they are the
+#  ones, since choosing is easier than composing. The tags exist because they are the
 #  reason to open this page in November: "who do I ask about CAN bus?".
 #
 #  Everything here degrades when 003 has not been applied yet. The page then
@@ -1292,7 +1292,7 @@ async def api_admin_activity_delete(request: Request):
 #  migrations are applied by hand and there is always a window.
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Pick 3. Adding one here is the whole job — prompt_key is free text in the
+# Pick 3. Adding one here is the whole job: prompt_key is free text in the
 # database precisely so this list can change without a migration. Retiring one
 # does NOT delete anybody's answer; it just stops being offered.
 PROMPTS = [
@@ -1321,8 +1321,8 @@ MAX_TAG_LEN   = 28
 MAX_ANSWER    = 280
 
 # Stored value / what it reads as. "Retired member" is here so people who have
-# graduated stay in the directory as themselves rather than as a stale 4th year
-# — they are usually the only ones who remember why a decision was made.
+# graduated stay in the directory as themselves rather than as a stale 4th year.
+# They are usually the only ones who remember why a decision was made.
 # No PhD: nobody on the team is one, and an option nobody picks is just noise.
 YEARS = [
     {"value": "1st",  "label": "1st year"},
@@ -1336,14 +1336,14 @@ YEARS = [
 YEAR_VALUES = {y["value"] for y in YEARS}
 YEAR_LABELS = {y["value"]: y["label"] for y in YEARS}
 
-# Deliberately NOT profiles.role. That column is a permission — 'member' |
-# 'committee' | 'admin' — and is checked by require_role. This one is what
+# Deliberately NOT profiles.role. That column is a permission ('member' |
+# 'committee' | 'admin') and is checked by require_role. This one is what
 # someone calls themselves on their profile card and is checked by nothing. Two
 # fields because they answer two questions; merging them would mean editing your
 # own profile could grant you access.
 #
 # scope is the bit that took a second pass to get right. Captains and members
-# belong to a division; the Team Principal and Technical Director do not — they
+# belong to a division; the Team Principal and Technical Director do not. They
 # sit across all three. So a team-wide role makes the division optional instead
 # of forcing someone to file themselves under a subteam they don't actually run.
 ROLES = [
@@ -1405,7 +1405,7 @@ def _details_available() -> bool:
     """Is migration 003 actually applied?
 
     Everything on this page degrades when it is not, but the first-sign-in
-    prompt is the one thing that must not appear — asking someone to pick a
+    prompt is the one thing that must not appear. Asking someone to pick a
     subteam and then failing to save it is worse than not asking. So the
     dashboard checks this before showing the step at all.
     """
@@ -1503,7 +1503,7 @@ async def api_profiles(request: Request):
                   .order("position").execute().data or []):
             prompts_by_id.setdefault(p.get("profile_id"), []).append(p)
     except Exception as e:
-        # 003 not applied yet, most likely. Show the accounts we do have —
+        # 003 not applied yet, most likely. Show the accounts we do have,
         # an empty directory reads as "broken", a bare one reads as "new".
         logger.debug(f"[profiles] detail tables unavailable: {e}")
 
@@ -1512,7 +1512,7 @@ async def api_profiles(request: Request):
               for r in rows]
     # Filled profiles first so the grid looks populated on day one of
     # recruitment rather than like a wall of blank cards; then by role, so it
-    # reads as a team — principal, technical director, captains, then everyone —
+    # reads as a team: principal, technical director, captains, then everyone,
     # rather than as an alphabetical list.
     people.sort(key=lambda p: (0 if p["photo"] else 1,
                                0 if p["prompts"] else 1,
@@ -1538,7 +1538,7 @@ async def api_profile_save(request: Request):
     There is no id in the body and there never should be: the row written is
     always current_profile(request), so "edit someone else's profile" is not a
     request this endpoint can express. Editing another person is a different
-    endpoint — /api/admin/profile — precisely so that the privileged path is
+    endpoint (/api/admin/profile) precisely so that the privileged path is
     somewhere explicit rather than a parameter on the ordinary one.
     """
     return await _save_profile(request, current_profile(request)["id"])
@@ -1583,7 +1583,7 @@ async def _save_profile(request: Request, uid: str, body: Optional[dict] = None)
             {"subteam": subteam, "subteams_extra": extra}).eq("id", uid).execute()
     except Exception as e:
         logger.error(f"[profiles] subteam save failed for {uid}: {e}")
-        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+        raise HTTPException(503, "Couldn't save that. Has migration 003 been applied?")
 
     # Read before write, so the feed can tell "joined the directory" from the
     # fifteenth tweak to someone's tag list. Deliberately NOT keyed on
@@ -1607,7 +1607,7 @@ async def _save_profile(request: Request, uid: str, body: Optional[dict] = None)
         supabase.table("profile_details").upsert(details).execute()
     except Exception as e:
         logger.error(f"[profiles] details save failed for {uid}: {e}")
-        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+        raise HTTPException(503, "Couldn't save that. Has migration 003 been applied?")
 
     # Prompts are replace-all for this person: whatever they submitted is now
     # the complete set. Simpler than diffing, and matches what the editor does.
@@ -1643,7 +1643,7 @@ async def _save_profile(request: Request, uid: str, body: Optional[dict] = None)
     # Only the first time. Somebody joining the directory is news; somebody
     # rewording their answer about the 10mm socket is not, and a feed that
     # reports both is a feed people stop reading. Credited to whose profile it
-    # is, not to whoever typed it — an admin filling in a gap on someone's
+    # is, not to whoever typed it. An admin filling in a gap on someone's
     # behalf should not read as that admin joining the directory.
     if was_blank and (details["year"] or details["course"] or details["tags"]):
         log_activity("profiles", _public_profile(fresh).get("name"),
@@ -1651,7 +1651,7 @@ async def _save_profile(request: Request, uid: str, body: Optional[dict] = None)
 
     response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
     # Only ever rewrite your OWN cookie. Doing this unconditionally would hand
-    # an admin editing someone else that person's name, photo and subteam —
+    # an admin editing someone else that person's name, photo and subteam,
     # their own browser would quietly start displaying them as the person they
     # just edited.
     if mine:
@@ -1664,7 +1664,7 @@ async def api_profile_subteam(request: Request):
     """The first-sign-in question, on its own.
 
     Separate from the full save so the onboarding card can be three buttons and
-    a fetch. "Not sure yet" posts null and still marks them onboarded — the flow
+    a fetch. "Not sure yet" posts null and still marks them onboarded. The flow
     must never block anyone, and during recruitment half of them genuinely do
     not know yet. Without recording that we asked, they would be asked again on
     every single page load.
@@ -1683,7 +1683,7 @@ async def api_profile_subteam(request: Request):
         }).execute()
     except Exception as e:
         logger.error(f"[profiles] subteam pick failed for {uid}: {e}")
-        raise HTTPException(503, "Couldn't save that — has migration 003 been applied?")
+        raise HTTPException(503, "Couldn't save that. Has migration 003 been applied?")
 
     fresh = _get_profile(uid) or {**me, "subteam": subteam}
     response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
@@ -1693,7 +1693,7 @@ async def api_profile_subteam(request: Request):
 
 @app.post("/api/profile/favourites")
 async def api_profile_favourites(request: Request):
-    """Star or unstar one card. Takes no id but its own — see /api/profile.
+    """Star or unstar one card. Takes no id but its own. See /api/profile.
 
     A toggle rather than a whole list, so two tabs starring different cards do
     not overwrite each other with a stale array. Order is kept as clicked, which
@@ -1708,7 +1708,7 @@ async def api_profile_favourites(request: Request):
     # and rendered, and an id naming no card is junk that never cleans itself up.
     if applet_id not in APPLETS_BY_ID:
         raise HTTPException(400, "unknown applet")
-    # You cannot favourite what you cannot open — the card is not on your
+    # You cannot favourite what you cannot open. The card is not on your
     # dashboard to star, so a request to star it did not come from the UI.
     if not _may_open(APPLETS_BY_ID[applet_id], me):
         raise HTTPException(403, "You don't have access to that")
@@ -1730,7 +1730,7 @@ async def api_profile_favourites(request: Request):
         }).execute()
     except Exception as e:
         logger.error(f"[profiles] favourite toggle failed for {uid}: {e}")
-        raise HTTPException(503, "Couldn't save that — has migration 008 been applied?")
+        raise HTTPException(503, "Couldn't save that. Has migration 008 been applied?")
 
     # Deliberately not written to the activity feed. Which tools someone likes
     # is nobody else's business and would bury the things that are.
@@ -1760,7 +1760,7 @@ async def api_profile_me(request: Request):
 # Stored on this machine's disk under UPLOAD_DIR (a mounted volume), not in
 # Supabase Storage. See the Uploads block at the top of this file for why.
 
-# Sniffed from the bytes, never taken from the declared content type — the
+# Sniffed from the bytes, never taken from the declared content type. The
 # client controls that string and it proves nothing about what was sent.
 _IMAGE_MAGIC = [
     (b"\xff\xd8\xff", "jpg"),
@@ -1772,7 +1772,7 @@ def _sniff_image(raw: bytes) -> Optional[str]:
     for magic, ext in _IMAGE_MAGIC:
         if raw.startswith(magic):
             return ext
-    # WebP is RIFF....WEBP — the marker is at offset 8, not 0.
+    # WebP is RIFF....WEBP: the marker is at offset 8, not 0.
     if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
         return "webp"
     return None
@@ -1785,7 +1785,7 @@ async def api_profile_photo(request: Request):
     Takes a base64 data URL in JSON rather than multipart. The browser already
     has to draw the image to a canvas to resize it (a 4 MB phone photo per
     person adds up fast, and there is no image library in this container to do
-    it server-side), and a canvas hands back a data URL — so this shape costs
+    it server-side), and a canvas hands back a data URL, so this shape costs
     one fetch and no new dependency, where multipart would need python-multipart
     added to requirements.txt for no gain at this size.
     """
@@ -1804,7 +1804,7 @@ async def api_profile_photo(request: Request):
     if not blob:
         raise HTTPException(400, "No image received.")
     if len(blob) > MAX_AVATAR_BYTES:
-        raise HTTPException(413, "That photo is too big — under 2 MB please.")
+        raise HTTPException(413, "That photo is too big. Under 2 MB please.")
 
     ext = _sniff_image(blob)
     if not ext:
@@ -1837,7 +1837,7 @@ async def api_profile_photo(request: Request):
         }).execute()
     except Exception as e:
         logger.error(f"[profiles] could not record avatar for {uid}: {e}")
-        raise HTTPException(503, "Photo saved but not recorded — has 003 been applied?")
+        raise HTTPException(503, "Photo saved but not recorded. Has 003 been applied?")
 
     # Rewrite the cookie so the header pill and the "who's in now" bar pick the
     # new face up on the next page load rather than the next sign-in.
@@ -1854,7 +1854,7 @@ async def api_profile_photo_remove(request: Request):
     me  = current_profile(request)
     uid = me["id"]
 
-    # Somebody else's, with the override on — the moderation case. Same shape as
+    # Somebody else's, with the override on: the moderation case. Same shape as
     # the profile save: an explicit id, checked at the door.
     try:
         b = await request.json()
@@ -1901,7 +1901,7 @@ def _photo_map() -> dict:
     which predates accounts existing. The `profile_names` view was added in 001
     as the bridge for exactly this, and this is the same bridge for faces.
 
-    A name that matches nobody just has no photo — never an error, and never a
+    A name that matches nobody just has no photo, never an error, and never a
     reason for a list of people to fail to render.
     """
     try:
@@ -1938,7 +1938,7 @@ async def api_people_photos():
 # Filenames are generated by this file, never by a user, so this pattern is an
 # exact description of what is legitimately in that directory rather than a
 # blocklist of what is not. A name that does not match is not a traversal
-# attempt to sanitise — it is a request for a file we did not write.
+# attempt to sanitise. It is a request for a file we did not write.
 _AVATAR_NAME = re.compile(r"^[0-9a-fA-F-]{36}\.(jpg|png|webp)$")
 
 
@@ -2025,7 +2025,7 @@ async def index():
 #
 # None of this is role-gated, on purpose. A chart is a shared artifact like a
 # task or a section, and every one of those is already something any member can
-# add and edit — gating charts alone would be inconsistent, and the friction
+# add and edit. Gating charts alone would be inconsistent, and the friction
 # lands on exactly the person we want drawing one. The rails here are structural
 # instead: ids are minted server-side, archiving is reversible, and deleting is
 # refused unless the chart is empty. Compare the /api/admin/* endpoints, which
@@ -2043,7 +2043,7 @@ def _chart_actor(request: Request) -> str:
 def _plan_counts() -> dict:
     """Task and tick counts per chart, for the picker's subtitles.
 
-    Two queries for every chart rather than two per chart — the whole point is
+    Two queries for every chart rather than two per chart. The whole point is
     that this page stays cheap as the number of charts grows.
     """
     counts: dict = {}
@@ -2088,7 +2088,7 @@ async def api_plans_create(request: Request):
 
     live = supabase.table("plans").select("id").eq("archived", False).execute().data or []
     if len(live) >= MAX_LIVE_PLANS:
-        raise HTTPException(400, "Too many charts — archive some first")
+        raise HTTPException(400, "Too many charts. Archive some first")
 
     row = {
         "id":         "chart_" + uuid.uuid4().hex[:8],
@@ -2144,7 +2144,7 @@ async def api_plans_delete(request: Request):
 
     Refused while it holds anything at all. There is no undo in this app and no
     backup a member can reach, so the only chart it will destroy is one with
-    nothing in it — a mistyped name, a duplicate. For a chart with real work on
+    nothing in it: a mistyped name, a duplicate. For a chart with real work on
     it, archiving is the answer, and it is one click away in the same menu.
     """
     b   = await request.json()
@@ -2155,7 +2155,7 @@ async def api_plans_delete(request: Request):
     # a list rendered a minute ago cannot take out a chart someone has since
     # renamed or replaced.
     if (b.get("name") or "").strip() != (row.get("name") or ""):
-        raise HTTPException(400, "Chart name does not match — reload and try again")
+        raise HTTPException(400, "Chart name does not match. Reload and try again")
 
     def _is_empty() -> bool:
         for table, field in (("pt_nodes", "id"), ("pt_sections", "sec")):
@@ -2165,7 +2165,7 @@ async def api_plans_delete(request: Request):
         return True
 
     if not _is_empty():
-        raise HTTPException(400, "This chart isn't empty — archive it instead")
+        raise HTTPException(400, "This chart isn't empty. Archive it instead")
 
     # pt_nodes and pt_sections are never deleted from here, and that is the
     # point: this endpoint removes a chart that holds nothing, so if there were
@@ -2174,7 +2174,7 @@ async def api_plans_delete(request: Request):
     # a season's work.
     #
     # Everything below is keyed to a node id, so with no nodes there is nothing
-    # meaningful in any of it — these deletes only sweep up rows a previous
+    # meaningful in any of it. These deletes only sweep up rows a previous
     # delete could have stranded. The tick log is deliberately left alone, like
     # attendance rows and feed lines: it records what happened, not what exists.
     for table in ("pt_done", "pt_progress", "pt_details", "pt_edges"):
@@ -2182,11 +2182,11 @@ async def api_plans_delete(request: Request):
 
     # Checked again immediately before the chart itself goes. There is no
     # transaction across these calls, so somebody adding a task during the sweep
-    # above would otherwise leave it in a chart that no longer exists — and the
+    # above would otherwise leave it in a chart that no longer exists, and the
     # whitelist then makes it unreachable, so it could never be found or tidied.
     # Losing the race costs a few stray satellite rows; the task survives.
     if not _is_empty():
-        raise HTTPException(400, "This chart isn't empty — archive it instead")
+        raise HTTPException(400, "This chart isn't empty. Archive it instead")
     supabase.table("plans").delete().eq("id", pid).execute()
 
     log_activity("flowcharts", _chart_actor(request),
@@ -2213,7 +2213,7 @@ async def pt_state(plan: Optional[str] = None):
     # proved it exists, so this is the same lookup rather than a second risk.
     row = _plan_row(pid) or {"id": pid, "name": "Chart"}
     return {
-        # Name and icon only — the canvas draws itself from "sections" below,
+        # Name and icon only. The canvas draws itself from "sections" below,
         # which is data, so the page needs no second request and no idea which
         # chart it is looking at beyond the id it asked for.
         "plan":        {"id": pid, "name": row.get("name") or pid,
@@ -2243,7 +2243,7 @@ async def pt_toggle(request: Request):
         supabase.table("pt_progress").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     else:
         supabase.table("pt_done").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
-    # Append-only audit log — never overwrite previous entries
+    # Append-only audit log: never overwrite previous entries
     supabase.table("pt_done_log").insert({
         "plan_id":   pid,
         "node_id":   node_id,
@@ -2317,7 +2317,7 @@ async def pt_nodes_move(request: Request):
 
 @app.post("/pt/api/nodes/move-bulk")
 async def pt_nodes_move_bulk(request: Request):
-    """Move many nodes at once — what dragging a whole section does.
+    """Move many nodes at once, which is what dragging a whole section does.
 
     Tasks hold absolute canvas coordinates, not an offset within their box, so
     moving a section has to carry its contents or they stay behind on the
@@ -2420,7 +2420,7 @@ async def pt_details_set(request: Request):
 # ── PT sections ────────────────────────────────────────────────────────────────
 # Sections are rows, not registry entries (migrations/006): a plan starts empty
 # and whoever owns it draws its own boxes. Ids are generated here rather than
-# taken from the client — a node remembers which section it is in by that id,
+# taken from the client. A node remembers which section it is in by that id,
 # so a client-chosen id could collide with a section that already owns tasks.
 SECTION_DEFAULT_W = 498.0
 SECTION_DEFAULT_H = 523.0
@@ -2491,7 +2491,7 @@ async def pt_sections_delete(request: Request):
     """Remove an empty section.
 
     Refused while it still holds tasks. Deleting the box would leave them
-    pointing at a section that no longer exists — invisible, but still in the
+    pointing at a section that no longer exists, invisible, but still in the
     graph and still counted by the dashboard tile. Emptying it first is a
     deliberate act; cascading the delete would not be.
     """
@@ -2547,7 +2547,7 @@ async def pt_ws(ws: WebSocket):
             if t == "join":
                 # The room name is checked against the charts that exist, same
                 # as every HTTP write. Unchecked, a client could name any room
-                # and be relayed the edits of whoever else guessed that name —
+                # and be relayed the edits of whoever else guessed that name,
                 # and an unknown room is a typo, so it falls back to the legacy
                 # chart rather than closing the socket mid-session.
                 plan = (data.get("plan") or "").strip()
@@ -2672,14 +2672,14 @@ async def get_attendance(target_date: Optional[str] = None):
 def _require_own_row(request: Request, name: str):
     """You may only write your own attendance. God mode may write anyone's.
 
-    This used to live only in the page — the buttons were hidden for other
+    This used to live only in the page. The buttons were hidden for other
     people's rows, but the endpoint took whatever name it was given, so any
     signed-in member could delete anybody's entry with one fetch. Hiding a
     control is not a permission.
 
     Compared case-folded and whitespace-collapsed, because the name here comes
     from the account while the stored rows predate accounts and were typed by
-    hand — "shane whelan" and "Shane  Whelan" are the same person, and treating
+    hand: "shane whelan" and "Shane  Whelan" are the same person, and treating
     them as different silently locks people out of their own history.
     """
     if is_god(request):
@@ -2779,7 +2779,7 @@ def _is_comp_admin(request: Request) -> bool:
     /admin now, so there is a way to hand out access that isn't a password
     everyone knows and nobody can revoke.
 
-    An admin with god mode *off* does not pass, deliberately — that is how you
+    An admin with god mode *off* does not pass, deliberately. That is how you
     check what an ordinary member sees.
     """
     profile = getattr(request.state, "profile", None) or {}
@@ -2864,7 +2864,7 @@ def _get_own_pending_request(req_id, name: str) -> dict:
     if row["requester"] != name:
         raise HTTPException(403, "You can only edit or remove your own requests")
     if row["status"] != "pending":
-        raise HTTPException(400, "Already bought — can't change it now")
+        raise HTTPException(400, "Already bought. Can't change it now")
     return row
 
 
@@ -3071,7 +3071,7 @@ def _attendance_tile() -> dict:
 
     # In *now*, not merely in at some point today. Someone who logged no
     # departure time counts as still here: we genuinely don't know when they
-    # leave, and wrongly showing a present person as gone is the worse error —
+    # leave, and wrongly showing a present person as gone is the worse error,
     # the whole point of this is answering "is anyone in the workshop?".
     photos = _photo_map()
     here = []
@@ -3084,7 +3084,7 @@ def _attendance_tile() -> dict:
                          "photo": photos.get(name.lower())})
     here.sort(key=lambda p: p["name"])
 
-    # The last of them out — "until 17:00" means the workshop empties then.
+    # The last of them out: "until 17:00" means the workshop empties then.
     until = max([p["until"] for p in here if p["until"]], default=None)
 
     if here:
@@ -3105,7 +3105,7 @@ def _attendance_tile() -> dict:
 
 
 def _flowcharts_tile() -> dict:
-    """How many charts are on the go — the card is a door to a list, not to one
+    """How many charts are on the go. The card is a door to a list, not to one
     chart, so the useful number is the size of the list."""
     rows = supabase.table("plans").select("id,archived").execute().data or []
     live = len([r for r in rows if not r.get("archived")])
@@ -3117,7 +3117,7 @@ def _flowcharts_tile() -> dict:
 
 
 def _pt_tile() -> dict:
-    # One chart's numbers, not all charts mashed together — an empty
+    # One chart's numbers, not all charts mashed together. An empty
     # next-season plan would otherwise drag the live build's figure to nonsense.
     nodes = supabase.table("pt_nodes").select("id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
     done  = supabase.table("pt_done").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
@@ -3205,7 +3205,7 @@ def _countdown() -> dict:
 #                 writes to via log_activity().
 #
 # Merging the two means the feed has history from day one and keeps working
-# before 002 is applied. Attendance is deliberately not in here — twenty people
+# before 002 is applied. Attendance is deliberately not in here: twenty people
 # logging a day each morning would bury everything else, and "who's in now"
 # already covers it.
 def _ts_key(ts) -> float:
@@ -3223,13 +3223,13 @@ def _pt_activity(limit: int) -> list:
     if not rows:
         return []
     # Node ids are only unique within a plan, so the label lookup is keyed by
-    # both — or a 26/27 node could borrow a 25/26 node's name in the feed.
+    # both, or a 26/27 node could borrow a 25/26 node's name in the feed.
     labels = {(n.get("plan_id"), n["id"]): n.get("label") for n in
               (supabase.table("pt_nodes").select("plan_id,id,label").execute().data or [])}
     return [{
         # id + source are what the feed's delete needs to name one line out of
-        # two merged tables. They are not secret — every row is already on the
-        # page — and nothing but an elevated admin can act on them.
+        # two merged tables. They are not secret, since every row is already on the
+        # page, and nothing but an elevated admin can act on them.
         "id":         r.get("id"),
         "source":     "pt_done_log",
         # Credited to the card that opens this chart when one exists (last
@@ -3267,7 +3267,7 @@ def _activity(limit: int = 8) -> list:
 @app.get("/api/dashboard")
 async def api_dashboard():
     return {
-        # Dublin, not the container's clock — which is UTC, so date.today()
+        # Dublin, not the container's clock, which is UTC, so date.today()
         # here would report yesterday between midnight and 1am in summer,
         # disagreeing with the day the tiles below are actually describing.
         "date":      datetime.now(TEAM_TZ).date().isoformat(),

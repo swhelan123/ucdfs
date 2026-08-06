@@ -291,7 +291,7 @@ table.sched .sw{width:13px;height:13px;border-radius:4px;display:inline-block;ve
 .splice .slabel,.bnode .slabel{position:absolute;top:22px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--muted);
   white-space:nowrap;pointer-events:none;background:rgba(246,248,253,.85);padding:0 3px;border-radius:4px;}
 
-/* Breakout node — a point the bundle passes through or branches at. Square, so
+/* Breakout node: a point the bundle passes through or branches at. Square, so
    it never reads as a splice: nothing is electrically joined here. */
 .bnode{position:absolute;z-index:7;width:16px;height:16px;border-radius:4px;background:#fff;
   border:2.5px solid #1d2b45;box-shadow:0 2px 6px rgba(29,43,69,.28);cursor:grab;}
@@ -481,7 +481,7 @@ table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
   </div>
   <button class="tbtn" id="btn-board">＋ PCB</button>
   <button class="tbtn" id="btn-splice" title="Add a splice / junction">＋ Splice</button>
-  <button class="tbtn" id="btn-node" title="Add a breakout — a point the bundle passes through or branches at">＋ Breakout</button>
+  <button class="tbtn" id="btn-node" title="Add a breakout: a point the bundle passes through or branches at">＋ Breakout</button>
   <button class="tbtn" id="btn-seg" title="Join the two selected anchors with a bundle segment (shift-drag to select)">＋ Segment</button>
   <button class="tbtn primary" id="btn-add">＋ Connector</button>
   <button class="zbtn" id="zout" title="Zoom out">−</button>
@@ -583,7 +583,7 @@ table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
 <div class="modal-bg" id="modal">
   <div class="modal">
     <h3>Add connector</h3>
-    <div class="msub">Pick a type to auto-set the pin layout — everything stays editable.</div>
+    <div class="msub">Pick a type to auto-set the pin layout. Everything stays editable.</div>
     <div class="fld">
       <label for="m-name">Name / location</label>
       <input type="text" id="m-name" placeholder="e.g. ECU, Front-left wheel speed" autocomplete="off">
@@ -604,7 +604,7 @@ table.rep td{padding:4px 6px;border:1px solid var(--card-border);}
       <div class="fld">
         <label>Gender</label>
         <div class="seg" id="m-gender">
-          <button data-g="">—</button>
+          <button data-g="">None</button>
           <button data-g="M">Male</button>
           <button data-g="F">Female</button>
         </div>
@@ -722,7 +722,7 @@ const TYPES=[
 ];
 const TYPE_BY_ID={}; TYPES.forEach(t=>TYPE_BY_ID[t.id]=t);
 function typeLabel(id){ const t=TYPE_BY_ID[id]; return t?t.name:(id||'Custom'); }
-// Same, tidied for a printed parts order — "Custom…" reads as a truncation.
+// Same, tidied for a printed parts order. "Custom…" reads as a truncation.
 function typeName(id){ return typeLabel(id).replace(/…$/,'').trim(); }
 function isSingle(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.single); }
 function isJst(id){ const t=TYPE_BY_ID[id]; return !!(t&&t.jst); }
@@ -862,14 +862,14 @@ function awgSpec(g){ return AWG_SPEC[g]||AWG_SPEC['20']; }
 // ── Parts library: harness-side housings + crimp contacts ────────────
 // One rule governs this section: **every connector produces at least one BOM
 // line.** A BOM that silently drops a connector is worse than one that admits a
-// gap — you find out when the box arrives with wire and nothing to crimp it
+// gap. You find out when the box arrives with wire and nothing to crimp it
 // into. connParts() below guarantees it, and the rule check lists anything
 // still missing a number.
 //
 // Part numbers are given where the series numbering is deterministic (Deutsch,
 // JST, Micro-Fit) or the part is a single fixed reference (AMPSEAL). Where the
 // number varies by way-count in a way we cannot derive, the line still appears
-// with an empty pn, shown as PN_TBD — visible and actionable, not absent.
+// with an empty pn, shown as PN_TBD, visible and actionable, not absent.
 //
 // `awg` on a contact is its crimp range as [thickest, thinnest] AWG. The
 // Contacts rule in runDRC() checks every landed wire against it, so adding a
@@ -878,7 +878,7 @@ const PN_TBD='(specify)';
 const awgTxt=r=>r?r[0]+'-'+r[1]+' AWG':'';
 
 // Standard wire-insulation colours, for naming a swatch on a parts order.
-// "Wire 20 AWG — #1a1a1a" is not something a supplier can fill; "Black" is.
+// "Wire 20 AWG, #1a1a1a" is not something a supplier can fill; "Black" is.
 // Nearest match in RGB, which is crude but only ever has to pick between
 // eleven well-separated colours.
 const WIRE_COLORS=[['Black',0,0,0],['White',255,255,255],['Red',226,59,59],
@@ -908,7 +908,7 @@ const JST_PARTS={
 function jstSeries(typeId){ const t=TYPE_BY_ID[typeId]; return (t&&t.jst)?t.series:null; }
 function jstHousingPN(series,pins){ const p=JST_PARTS[series]; if(!p) return ''; return p.pad?`${p.hb}-${String(pins).padStart(p.pad,'0')}${p.hsuf||''}`:`${p.hb}-${pins}${p.hsuf||''}`; }
 
-// Deutsch. DTM is NOT a DT variant — it is the smaller sibling with its own
+// Deutsch. DTM is NOT a DT variant. It is the smaller sibling with its own
 // housings, its own wedgelock and size-20 contacts. This used to emit DT
 // numbers for both, which orders parts that physically do not fit.
 const DEUTSCH={
@@ -934,7 +934,7 @@ function housingSpec(c){
   if(c.type==='amphd') return {pn:'776273-1',desc:'AMPSEAL 23-way plug housing'};
   if(/^ss\d/.test(c.type||'')) return {pn:'',desc:`TE Superseal 1.5 ${c.pins}-way housing`};
   if(c.type==='ring'||c.type==='mxn'||c.type==='splice') return null;
-  return {pn:'',desc:`${typeName(c.type)} — ${c.pins}-way housing`};
+  return {pn:'',desc:`${typeName(c.type)}, ${c.pins}-way housing`};
 }
 
 /** The crimp contact for a connector: {pn,desc,awg:[lo,hi]} or null when the
@@ -949,7 +949,7 @@ function contactSpec(c){
   if(/^ss\d/.test(c.type||'')) return {pn:'',desc:'Superseal 1.5 contact',awg:[16,20]};
   if(c.type==='amphd') return {pn:'770520-1',desc:'AMPSEAL contact',awg:[16,20]};
   if(c.type==='molex') return {pn:'43030-0007',desc:'Micro-Fit 3.0 crimp terminal',awg:[20,24]};
-  if(c.type==='ring'||c.type==='mxn') return {pn:'',desc:'Ring terminal / lug — set stud size & gauge',awg:null};
+  if(c.type==='ring'||c.type==='mxn') return {pn:'',desc:'Ring terminal / lug: set stud size & gauge',awg:null};
   if(c.type==='splice') return {pn:'',desc:'Butt splice / crimp joint',awg:null};
   return null;
 }
@@ -966,7 +966,7 @@ function connParts(c){
   if(k) out.push({pn:k.pn,desc:k.desc+(k.awg?` (${awgTxt(k.awg)})`:''),per:'contact'});
   // The guarantee. An unrecognised type still has to reach the parts order,
   // even if only as a line telling someone to fill the number in.
-  if(!out.length) out.push({pn:'',desc:`${typeName(c.type)} — specify part number`,per:'conn'});
+  if(!out.length) out.push({pn:'',desc:`${typeName(c.type)}: specify part number`,per:'conn'});
   return out;
 }
 // crimp terminal PN for whichever connector a wire end lands on (''=splice/none)
@@ -1073,7 +1073,7 @@ function renderConnector(c){
     p.textContent=(i+1);
     Object.assign(p.style,{left:col*(PINSIZE+PINGAP)+'px',top:row*(PINSIZE+PINGAP)+'px'});
     const lbl=labels[i];
-    p.title=lbl?('Pin '+(i+1)+': '+lbl):('Pin '+(i+1)+' — drag to another pin to wire');
+    p.title=lbl?('Pin '+(i+1)+': '+lbl):('Pin '+(i+1)+'. Drag to another pin to wire');
     if(lbl) p.dataset.sig=lbl;
     attachPinWire(c.id,i,p);
     grid.appendChild(p); pins.push(p);
@@ -1251,7 +1251,7 @@ function redrawAllWires(){ DOC.wires.forEach(updateWire); refreshFormboard(); }
 //               cause of a wrong cut list. w.lenManual keeps a measured value.
 //   bundles     a segment's diameter comes from the wires actually inside it,
 //               and branches where the topology branches.
-//   dimensions  annotate a segment, which has a real length — rather than
+//   dimensions  annotate a segment, which has a real length, rather than
 //               guessing at the midpoint of a bezier.
 //   accessories clips and sleeving attach at a distance along a segment. There
 //               was nowhere to put them before this existed.
@@ -1267,7 +1267,7 @@ function segEndExists(e){ if(!e) return false;
   return segIsNode(e)?!!nodemap[e.n]:segIsSplice(e)?!!smap[e.s]:!!cmap[e.c]; }
 function segOk(g){ return !!(g&&segEndExists(g.a)&&segEndExists(g.b)); }
 /**
- * Where a segment end sits. For a connector this is its body, not a pin — but
+ * Where a segment end sits. For a connector this is its body, not a pin, but
  * pulled back to the edge of the card facing `toward`, so a thick bundle meets
  * the connector instead of disappearing underneath it.
  */
@@ -1279,7 +1279,7 @@ function segPos(e,toward){
   if(!toward) return {x:b.cx,y:b.cy};
   const dx=toward.x-b.cx, dy=toward.y-b.cy;
   if(!dx&&!dy) return {x:b.cx,y:b.cy};
-  // ray/rectangle intersection — whichever face the ray leaves through first
+  // ray/rectangle intersection: whichever face the ray leaves through first
   const t=Math.min(dx?(b.w/2)/Math.abs(dx):Infinity, dy?(b.h/2)/Math.abs(dy):Infinity);
   return {x:b.cx+dx*t, y:b.cy+dy*t};
 }
@@ -1293,7 +1293,7 @@ function segEndLabel(e){
   if(segIsSplice(e)){ const s=smap[e.s]; return (s&&s.name)||'splice'; }
   const c=cmap[e.c]; return c?connFullName(c):'?';
 }
-/** Which anchor a WIRE end sits on — its connector body, or the splice itself. */
+/** Which anchor a WIRE end sits on: its connector body, or the splice itself. */
 function wireAnchorKey(ep){ return epIsSplice(ep)?('S'+ep.s):('C'+ep.c); }
 function wireAnchor(ep){ return epIsSplice(ep)?{s:ep.s}:{c:ep.c}; }
 
@@ -1334,7 +1334,7 @@ function segRoute(fromKey,toKey,g){
 }
 /**
  * Route every wire whose ends are joined by the segment graph. A wire with no
- * path keeps whatever it had — routing is an aid, never a way to lose data.
+ * path keeps whatever it had. Routing is an aid, never a way to lose data.
  */
 function autoRouteWires(){
   const g=segGraph(); let routed=0, unreachable=0;
@@ -1348,7 +1348,7 @@ function autoRouteWires(){
 /**
  * First-cut topology from the wires that already exist: one segment per
  * distinct pair of anchors wires run between, seeded with the longest wire
- * length on that pair. Gives an existing design a formboard in one action —
+ * length on that pair. Gives an existing design a formboard in one action,
  * the lengths are then corrected on the drawing, where they are visible.
  */
 function deriveTopology(){
@@ -1546,7 +1546,7 @@ function renderNode(n){
   const el=document.createElement('div');
   el.className='bnode'; el.dataset.id=n.id;
   el.style.left=(n.x-8)+'px'; el.style.top=(n.y-8)+'px';
-  el.title='Breakout'+(n.name?(' — '+n.name):'')+' · drag to move · double-click to rename';
+  el.title='Breakout'+(n.name?(': '+n.name):'')+' · drag to move · double-click to rename';
   if(n.name){ const lb=document.createElement('div'); lb.className='slabel'; lb.textContent=n.name; el.appendChild(lb); }
   el.addEventListener('dblclick',ev=>{ ev.stopPropagation(); openNodeEdit(n.id,el); });
   attachNodeDrag(n,el);
@@ -1581,7 +1581,7 @@ function addNode(){
     y:snap(Math.round((scroll.scrollTop+scroll.clientHeight/2)/scale))};
   DOC.nodes.push(n); nodemap[n.id]=n; renderNode(n);
   wsSend({type:'node_add',n}); scheduleSave(); checkEmpty();
-  setSaveStat('breakout added — drag it, then join it with ＋ Segment');
+  setSaveStat('breakout added. Drag it, then join it with ＋ Segment');
 }
 function deleteNodeCore(id){
   DOC.nodes=DOC.nodes.filter(n=>n.id!==id);
@@ -1700,7 +1700,7 @@ function addSegmentFromSelection(){
   DOC.segments.push(g); segmap[g.id]=g;
   clearMulti(); refreshFormboard();
   wsSend({type:'seg_add',g}); scheduleSave();
-  setSaveStat('segment added — click it to set its length');
+  setSaveStat('segment added. Click it to set its length');
 }
 
 function refreshFormboard(){
@@ -1736,7 +1736,7 @@ function repaintPins(onlyConn){
       const p=ce.pins[ep.p];
       p.classList.add('wired'); p.style.background=col; p.style.color=textOn(col);
       const sig=w.signal||p.dataset.sig||'';
-      p.title='Pin '+(ep.p+1)+(sig?(' — '+sig):'')+' → '+epLabel(ep===w.from?w.to:w.from);
+      p.title='Pin '+(ep.p+1)+(sig?(': '+sig):'')+' → '+epLabel(ep===w.from?w.to:w.from);
     });
   });
 }
@@ -1836,7 +1836,7 @@ function snap(v){ const g=DOC.grid||0; return g>0?Math.round(v/g)*g:v; }
 function renderSplice(s){
   const el=document.createElement('div'); el.className='splice'+(selSplice===s.id?' sel':''); el.dataset.id=s.id;
   el.style.left=(s.x-10)+'px'; el.style.top=(s.y-10)+'px';
-  el.title='Splice'+(s.name?(' — '+s.name):'')+' · drag to move · drag the ring to wire';
+  el.title='Splice'+(s.name?(': '+s.name):'')+' · drag to move · drag the ring to wire';
   const h=document.createElement('div'); h.className='splice-handle'; h.title='Drag to a pin/splice to wire'; el.appendChild(h);
   if(s.name){ const lb=document.createElement('div'); lb.className='slabel'; lb.textContent=s.name; el.appendChild(lb); }
   h.addEventListener('mousedown',e=>{ if(e.button!==0) return; beginWire({s:s.id},e); });
@@ -1935,7 +1935,7 @@ wpop.innerHTML=`
   </div>
   <div class="row2">
     <div class="pfld" style="flex:1"><label>Voltage class</label>
-      <div class="seg" id="wpop-vclass"><button data-g="">—</button><button data-g="LV">LV</button><button data-g="HV">HV</button></div>
+      <div class="seg" id="wpop-vclass"><button data-g="">None</button><button data-g="LV">LV</button><button data-g="HV">HV</button></div>
     </div>
     <div class="pfld" style="flex:1"><label>Strip A / B (mm)</label>
       <div style="display:flex;gap:6px"><input type="number" id="wpop-stripA" min="0" step="0.5" placeholder="6" style="flex:1"><input type="number" id="wpop-stripB" min="0" step="0.5" placeholder="6" style="flex:1"></div>
@@ -2091,7 +2091,7 @@ cpop.innerHTML=`
   </div>
   <div class="pfld"><label>Gender</label>
     <div class="seg" id="cpop-gender">
-      <button data-g="">—</button><button data-g="M">Male</button><button data-g="F">Female</button>
+      <button data-g="">None</button><button data-g="M">Male</button><button data-g="F">Female</button>
     </div>
   </div>
   <div class="pfld"><label>Mounted on (PCB)</label><select id="cpop-board"></select></div>
@@ -2199,7 +2199,7 @@ mType.addEventListener('change',()=>applyTypeDefaults(mType,mPins,mCols,true));
 mPins.addEventListener('input',()=>{ if(isSingle(mType.value)) mCols.value=mPins.value; });
 document.querySelectorAll('#m-gender button').forEach(b=>b.addEventListener('click',()=>{ mGender=b.dataset.g; segSel('m-gender',mGender); }));
 function populateBoardSelect(sel,current){
-  sel.innerHTML='<option value="">— Standalone —</option>'+
+  sel.innerHTML='<option value="">Standalone</option>'+
     (DOC.boards||[]).map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('');
   sel.value=current||'';
 }
@@ -2250,7 +2250,7 @@ function renderBoard(b){
   lbl.innerHTML=`<span class="bdot"></span><span class="bname">${esc(b.name||'PCB')}</span>`+
     `<span class="bbtns"><button class="badd" title="Add connector to this PCB">＋</button><button class="bedit" title="Edit PCB">✎</button></span>`;
   el.appendChild(lbl);
-  const em=document.createElement('div'); em.className='board-empty'; em.textContent='No connectors — click ＋';
+  const em=document.createElement('div'); em.className='board-empty'; em.textContent='No connectors. Click ＋';
   el.appendChild(em);
   lbl.querySelector('.badd').addEventListener('click',ev=>{ ev.stopPropagation(); openModal(b.id); });
   lbl.querySelector('.bedit').addEventListener('click',ev=>{ ev.stopPropagation(); openBoardEdit(b.id,el); });
@@ -2415,9 +2415,9 @@ function refreshSchedule(){
     rows+=`<tr data-id="${w.id}">
       <td>${i+1}</td>
       <td><span class="sw" style="background:${wireColor(w)}"></span></td>
-      <td>${esc(w.signal||'—')}${w.vclass?` <span class="vtag ${w.vclass}">${w.vclass}</span>`:''}</td>
+      <td>${esc(w.signal||'-')}${w.vclass?` <span class="vtag ${w.vclass}">${w.vclass}</span>`:''}</td>
       <td>${esc(epShort(w.from))}<br><span style="color:var(--muted)">→ ${esc(epShort(w.to))}</span></td>
-      <td>${wireLenMm(w)?fmtLen(wireCutMm(w))+(wireIsDerived(w)?' <span class="drv" title="derived from the route">ƒ</span>':''):'—'}</td>
+      <td>${wireLenMm(w)?fmtLen(wireCutMm(w))+(wireIsDerived(w)?' <span class="drv" title="derived from the route">ƒ</span>':''):'-'}</td>
       <td class="${over?'bad':''}">${w.gauge}</td></tr>`;
   });
   let gRows=Object.keys(byG).sort((a,b)=>+a-+b).map(g=>`<div class="row"><span class="nm">${g} AWG</span><span class="vl">${fmtLen(byG[g])}</span></div>`).join('');
@@ -2550,7 +2550,7 @@ function makeDetected(libId,ref,value,fp){
   const pc=inferPinsCols(s)||{pins:2,cols:2};
   const dt=detectType(s);
   const gender=/female|recept|socket/i.test(s)?'F':(/(?:^|[_\s])male|_male|\bplug\b/i.test(s)?'M':'');
-  // Many designs put the real function in Value (e.g. "Brake_Pressure_Front") — prefer it for the name
+  // Many designs put the real function in Value (e.g. "Brake_Pressure_Front"), so prefer it for the name
   const part=(libId||'').split(':').pop();
   const descr=value && value!==part && !/^conn(_|\b)/i.test(value) && !/^[A-Za-z]\d+$/.test(value);
   const name=descr ? ((ref?ref+' ':'')+value.replace(/_/g,' ')) : (ref||value||'Conn');
@@ -2614,7 +2614,7 @@ function renderKiList(list){
       <input class="kn" value="${esc(dc.name||dc.ref||'')}" title="connector name">
       <select class="kt" title="connector type">${typeOpts}</select>
       <input class="kp" type="number" min="1" max="64" value="${dc.pins||2}" title="pins">
-      <select class="kg" title="gender"><option value=""${!dc.gender?' selected':''}>—</option><option value="M"${dc.gender==='M'?' selected':''}>M</option><option value="F"${dc.gender==='F'?' selected':''}>F</option></select>`;
+      <select class="kg" title="gender"><option value=""${!dc.gender?' selected':''}>-</option><option value="M"${dc.gender==='M'?' selected':''}>M</option><option value="F"${dc.gender==='F'?' selected':''}>F</option></select>`;
     wrap.appendChild(row);
   });
 }
@@ -2625,7 +2625,7 @@ function openKicadImport(text,fname){
     if(/^\s*\(kicad_sch/.test(text)){ det=kicadSchConnectors(text); fmt='KiCad schematic'; }
     else if(/^\s*\(export/.test(text)){ const r=kicadNetConnectors(text); det=r.connectors; nets=r.nets; fmt='KiCad netlist'; }
     else if(/\$Comp/.test(text)){ det=kicad5SchConnectors(text); fmt='KiCad 5 schematic'; }
-    else if(/^\s*\{/.test(text)){ alert('That looks like a .kicad_pro project file — it doesn’t contain components. Open the .kicad_sch schematic, or export a netlist (.net).'); return; }
+    else if(/^\s*\{/.test(text)){ alert('That looks like a .kicad_pro project file. It doesn’t contain components. Open the .kicad_sch schematic, or export a netlist (.net).'); return; }
     else { alert('Unrecognised file. Choose a .kicad_sch, .sch or .net file.'); return; }
   }catch(e){ alert('Could not parse that file.'); return; }
   kiNets=nets; kiDetected=det;
@@ -2780,7 +2780,7 @@ function normalizeDoc(d){
   d=d||{};
   const ep=e=>{ if(!e) return e; return epIsSplice(e)?{s:e.s}:{c:e.c,p:e.p}; };
   // A SEGMENT endpoint anchors to a connector body, a splice or a breakout
-  // node — never to a pin. Wires terminate at pins; the bundle they run inside
+  // node, never to a pin. Wires terminate at pins; the bundle they run inside
   // does not. Keeping the two endpoint shapes separate is what stops the
   // physical model and the electrical one from bleeding into each other.
   const sep=e=>{ if(!e) return null; if(e.n!=null) return {n:e.n}; if(e.s!=null) return {s:e.s}; return {c:e.c}; };
@@ -2806,7 +2806,7 @@ function normalizeDoc(d){
       // The segments this wire physically runs through, in order. Empty = not
       // routed, in which case it keeps the old point-to-point behaviour and
       // its hand-entered length. lenManual pins a measured length even when
-      // routed — see wireLenMm().
+      // routed. See wireLenMm().
       route:Array.isArray(w.route)?w.route.filter(x=>typeof x==='string'):[],
       lenManual:!!w.lenManual,label:w.label||''})),
     cables:(d.cables||[]).map(cb=>({id:cb.id||uid('cb_'),name:cb.name||'',kind:cb.kind||'twisted',shield:!!cb.shield,wires:Array.isArray(cb.wires)?cb.wires.slice():[]})),
@@ -2851,7 +2851,7 @@ function rebuildAll(){
   DOC.wires=DOC.wires.filter(w=>epExists(w.from)&&epExists(w.to));
   // Same discipline one level down: a segment whose anchor is gone is dropped,
   // and a route referencing a dropped segment is cleared rather than left
-  // pointing at nothing — a stale route would silently mis-state wire lengths.
+  // pointing at nothing. A stale route would silently mis-state wire lengths.
   DOC.segments=DOC.segments.filter(segOk);
   DOC.segments.forEach(s=>{ segmap[s.id]=s; });
   DOC.wires.forEach(w=>{ if((w.route||[]).some(id=>!segmap[id])) w.route=[]; });
@@ -3060,7 +3060,7 @@ function runDRC(){
   let unconnected=0;
   DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++) if(!pw[c.id+':'+i]) unconnected++; });
   if(unconnected) issues.push({sev:'info',cat:'Connectivity',msg:`${unconnected} pin${unconnected>1?'s':''} unconnected`});
-  DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++){ const ws=pw[c.id+':'+i]||[]; if(ws.length>1) issues.push({sev:'warn',cat:'Connectivity',msg:`${connFullName(c)} pin ${i+1} has ${ws.length} wires — add a splice`,ref:{type:'wire',id:ws[0].id}}); } });
+  DOC.connectors.forEach(c=>{ for(let i=0;i<c.pins;i++){ const ws=pw[c.id+':'+i]||[]; if(ws.length>1) issues.push({sev:'warn',cat:'Connectivity',msg:`${connFullName(c)} pin ${i+1} has ${ws.length} wires. Add a splice`,ref:{type:'wire',id:ws[0].id}}); } });
   const seen={}; DOC.wires.forEach(w=>{ const k=[epKey(w.from),epKey(w.to)].sort().join('|'); if(seen[k]) issues.push({sev:'warn',cat:'Connectivity',msg:`Duplicate wire ${epShort(w.from)} ↔ ${epShort(w.to)}`,ref:{type:'wire',id:w.id}}); else seen[k]=1; });
   DOC.wires.forEach(w=>{ if(!(wireLenMm(w)>0)) issues.push({sev:'info',cat:'Lengths',msg:`${epShort(w.from)}→${epShort(w.to)} has no length`,ref:{type:'wire',id:w.id}}); });
   nets.forEach(n=>{ if(n.signals.size>1) issues.push({sev:'err',cat:'Nets',msg:`Conflicting signals on one net: ${[...n.signals].join(', ')}`,ref:{type:'wire',id:n.wires[0].id}}); });
@@ -3119,11 +3119,11 @@ function computeBOM(){
     connParts(c).forEach(p=>{ const qty=p.per==='contact'?wired:1; if(qty>0) add('Connectors & contacts',p.pn||PN_TBD,p.desc,qty); }); });
   const u=DOC.unit, agg={};
   DOC.wires.forEach(w=>{ const k=w.gauge+'|'+wireColor(w); (agg[k]=agg[k]||{g:w.gauge,c:wireColor(w),len:0}).len+=wireCutMm(w); });
-  Object.values(agg).forEach(a=>add('Wire',`${a.g} AWG`,`Wire ${a.g} AWG — ${colorName(a.c)} (${a.c})`,+(a.len/UNIT_FACTOR[u]).toFixed(1),u));
+  Object.values(agg).forEach(a=>add('Wire',`${a.g} AWG`,`Wire ${a.g} AWG, ${colorName(a.c)} (${a.c})`,+(a.len/UNIT_FACTOR[u]).toFixed(1),u));
   // cable / twist groups → one line each with computed bundle OD
   const cables={}; DOC.wires.forEach(w=>{ if(w.cable){ const g=cables[w.cable]=cables[w.cable]||{cores:0,area:0,len:0,shield:false}; g.cores++; g.area+=awgSpec(w.gauge).mm2; g.len=Math.max(g.len,wireCutMm(w)); if(w.shield) g.shield=true; } });
   Object.keys(cables).forEach(name=>{ const g=cables[name]; const od=(2*Math.sqrt((g.area/Math.PI))/0.55+0.8).toFixed(1);
-    add('Cables',name,`${g.cores}-core${g.shield?' shielded':''} cable — OD ~${od} mm`,+(g.len/UNIT_FACTOR[u]).toFixed(1),u);
+    add('Cables',name,`${g.cores}-core${g.shield?' shielded':''} cable, OD ~${od} mm`,+(g.len/UNIT_FACTOR[u]).toFixed(1),u);
     if(g.shield) add('Cables',name+'-DRAIN','Shield drain wire + heatshrink',1); });
   if(DOC.wires.length){ add('Consumables','LABEL','Wire label / marker (per end)',DOC.wires.length*2); add('Consumables','HS','Heatshrink boot (per end)',DOC.wires.length*2); }
   if(DOC.splices.length) add('Consumables','SPLICE','Crimp/solder splice',DOC.splices.length);
@@ -3133,7 +3133,7 @@ function refreshBOM(){
   const body=document.getElementById('bom-body'), items=computeBOM();
   if(!items.length){ body.innerHTML='<div class="sched-empty">Nothing to list yet.</div>'; return; }
   const cats={}; items.forEach(it=>{ (cats[it.cat]=cats[it.cat]||[]).push(it); });
-  let html=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${items.length} line items. Part numbers are typical references — verify before ordering.</div>`;
+  let html=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${items.length} line items. Part numbers are typical references. Verify before ordering.</div>`;
   Object.keys(cats).forEach(cat=>{ html+=`<div class="bom-cat">${esc(cat)}</div><table class="bom"><thead><tr><th>Part</th><th>Description</th><th style="text-align:right">Qty</th></tr></thead><tbody>`;
     cats[cat].sort((a,b)=>a.pn.localeCompare(b.pn)).forEach(it=>{ html+=`<tr><td>${esc(it.pn)}</td><td>${esc(it.desc)}</td><td class="qty">${it.qty} ${it.uom}</td></tr>`; }); html+='</tbody></table>'; });
   body.innerHTML=html;
@@ -3194,7 +3194,7 @@ plpop.innerHTML=`<div class="pttl" id="plpop-ttl">Pin labels</div><div class="pi
 document.body.appendChild(plpop);
 let plpopId=null;
 function openPinLabels(connId,anchor){ const c=cmap[connId]; if(!c) return; plpopId=connId; pushUndo();
-  document.getElementById('plpop-ttl').textContent='Pin labels — '+(c.name||'Connector');
+  document.getElementById('plpop-ttl').textContent='Pin labels: '+(c.name||'Connector');
   const g=document.getElementById('plpop-grid'), lbl=c.pinLabels||{};
   g.innerHTML=''; for(let i=0;i<c.pins;i++){ const row=document.createElement('div'); row.className='pinlbl-row';
     row.innerHTML=`<span class="pn">${i+1}</span><input data-i="${i}" value="${esc(lbl[i]||'')}" placeholder="signal">`; g.appendChild(row); }
@@ -3260,7 +3260,7 @@ document.getElementById('libimport').addEventListener('change',e=>{ const f=e.ta
 //  REVISIONS
 // ════════════════════════════════════════════════════════════════════
 function revSnap(){ return JSON.stringify(DOC,(k,v)=>(k==='revisions'||(k&&k[0]==='_'))?undefined:v); }
-function saveRevision(){ const note=prompt('Revision note (e.g. “Rev B — added BSPD harness”):','')||''; DOC.revisions=DOC.revisions||[];
+function saveRevision(){ const note=prompt('Revision note (e.g. “Rev B: added BSPD harness”):','')||''; DOC.revisions=DOC.revisions||[];
   DOC.revisions.push({id:uid('rv_'),ts:Date.now(),author:(typeof viewerName!=='undefined'?viewerName:''),note,snap:revSnap()});
   if(DOC.revisions.length>30) DOC.revisions=DOC.revisions.slice(-30); scheduleSave(); refreshRevPanel(); setSaveStat('revision saved'); }
 function restoreRevision(id){ const r=(DOC.revisions||[]).find(x=>x.id===id); if(!r||!confirm('Restore this revision? (Current state becomes an undo step.)')) return;
@@ -3286,7 +3286,7 @@ function refreshRevPanel(){ const body=document.getElementById('rev-body'), revs
 // ════════════════════════════════════════════════════════════════════
 function repName(){ return (DOC.boards[0]&&DOC.boards[0].name)||'Harness'; }
 function titleBlock(sub){ const d=new Date().toISOString().slice(0,10), nm=(typeof viewerName!=='undefined'?viewerName:'');
-  return `<div class="rep-title"><div><h1>${esc(repName())} — ${esc(sub)}</h1></div><div class="meta">UCD Formula Student · ${d}${nm?(' · '+esc(nm)):''}<br>${DOC.connectors.length} connectors · ${DOC.wires.length} wires · ${(DOC.revisions||[]).length} revisions</div></div>`; }
+  return `<div class="rep-title"><div><h1>${esc(repName())}: ${esc(sub)}</h1></div><div class="meta">UCD Formula Student · ${d}${nm?(' · '+esc(nm)):''}<br>${DOC.connectors.length} connectors · ${DOC.wires.length} wires · ${(DOC.revisions||[]).length} revisions</div></div>`; }
 function printReport(sub,inner){ document.getElementById('report').innerHTML=`<div class="rep-page">${titleBlock(sub)}${inner}</div>`; document.body.classList.add('printing'); window.print(); }
 window.addEventListener('afterprint',()=>document.body.classList.remove('printing'));
 function repCutlist(){ const u=DOC.unit, nets=computeNets(), nbw={}; nets.forEach(n=>n.wires.forEach(w=>nbw[w.id]=n));
@@ -3342,7 +3342,7 @@ const WV_COLORS={'#1d2b45':'BK','#000000':'BK','#e23b3b':'RD','#f5821f':'OG','#f
 function wvColor(h){ return WV_COLORS[(h||'').toLowerCase()]||'WH'; }
 function wvName(ep){ return (epIsSplice(ep)?('SPL_'+(smap[ep.s].name||ep.s)):connFullName(cmap[ep.c])).replace(/[^A-Za-z0-9_]+/g,'_'); }
 function wirevizYAML(){
-  const L=['# WireViz export — generated by Harness Mapper','connectors:'];
+  const L=['# WireViz export, generated by Harness Mapper','connectors:'];
   DOC.connectors.forEach(c=>{ L.push(`  ${wvName({c:c.id,p:0})}:`); L.push(`    pincount: ${c.pins}`); L.push(`    notes: ${JSON.stringify(typeLabel(c.type)+(c.gender?(' '+c.gender):''))}`);
     if(c.pinLabels){ const arr=[]; for(let i=0;i<c.pins;i++) arr.push(JSON.stringify((c.pinLabels[i]||'').toString())); L.push(`    pinlabels: [${arr.join(', ')}]`); } });
   DOC.splices.forEach(s=>{ L.push(`  ${('SPL_'+(s.name||s.id)).replace(/[^A-Za-z0-9_]+/g,'_')}:`); L.push('    style: simple'); L.push('    pincount: 1'); });
@@ -3362,7 +3362,7 @@ function openKicadUpdate(text,fname){
     else if(/\$Comp/.test(text)) det=kicad5SchConnectors(text);
     else { alert('Pick a .kicad_sch or .net file.'); return; }
   }catch(e){ alert('Could not parse that file.'); return; }
-  if(!DOC.boards.length){ alert('No PCB to update yet — import as a new PCB first.'); return; }
+  if(!DOC.boards.length){ alert('No PCB to update yet. Import as a new PCB first.'); return; }
   const base=(fname||'').replace(/\.[^.]+$/,'').toLowerCase();
   let board=DOC.boards.find(b=>b.name.toLowerCase()===base)||DOC.boards.find(b=>base.includes(b.name.toLowerCase())||b.name.toLowerCase().includes(base));
   if(!board){ const names=DOC.boards.map((b,i)=>`${i+1}. ${b.name}`).join('\n'); const pick=prompt('Which PCB to update?\n'+names,'1'); const idx=parseInt(pick)-1; board=DOC.boards[idx]; }

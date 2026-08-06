@@ -174,7 +174,7 @@
 <script>
 let CHARTS = [];
 /* null while the form is creating, a chart id while it is renaming. One form,
-   two jobs — the same trick the section editor on the canvas uses. */
+   two jobs, the same trick the section editor on the canvas uses. */
 let editingId = null;
 let sheetId   = null;
 
@@ -185,7 +185,7 @@ function chartCard(c) {
   const stat = c.tasks
     ? `${pct}% of ${c.tasks} task${c.tasks === 1 ? '' : 's'}
        <span class="bar"><i style="width:${pct}%"></i></span>`
-    : 'empty — nothing added yet';
+    : 'empty, nothing added yet';
   return `
     <div class="chart ${c.archived ? 'is-archived' : ''}">
       <div class="chart-icon">${UCDFS.esc(c.icon || '🗺️')}</div>
@@ -312,7 +312,7 @@ async function setArchived(id, archived) {
 async function removeChart(id) {
   const c = CHARTS.find(x => x.id === id);
   if (!c) return;
-  if (!confirm(`Delete "${c.name}"? It is empty, so nothing is lost — but this cannot be undone.`)) return;
+  if (!confirm(`Delete "${c.name}"? It is empty, so nothing is lost, but this cannot be undone.`)) return;
   try {
     const r = await fetch('/api/plans/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

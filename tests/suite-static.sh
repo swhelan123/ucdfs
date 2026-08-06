@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Static checks — no container needed, run first because they are instant.
+# Static checks: no container needed, run first because they are instant.
 #   - Python parses
 #   - every inline <script> parses
 #   - every CSS class used in markup or JS is defined somewhere
@@ -20,7 +20,7 @@ PAGES="dashboard login attendance comp pt harness profiles admin flowcharts"
 #
 # macOS ships bash 3.2, which splits a multi-line "$(node -e "…\"…\"")" into
 # several arguments. ck then received five and compared two empty strings, so ten
-# of these checks printed ok having never run — green here, red on the bash 5
+# of these checks printed ok having never run: green here, red on the bash 5
 # runner, with nothing on screen to say which. A heredoc with a quoted delimiter
 # does no interpolation at all, so both shells see identical bytes. ck also
 # refuses a wrong argument count now, so the same mistake cannot be silent twice.

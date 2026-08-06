@@ -1,7 +1,7 @@
 -- 008: favourite tools.
 --
 -- Which cards someone wants at the top of their dashboard. A text[] of applet
--- ids on profile_details, which is where per-person detail already lives —
+-- ids on profile_details, which is where per-person detail already lives,
 -- profiles is loaded by the auth middleware on every single request, so this
 -- does not belong on that row.
 --

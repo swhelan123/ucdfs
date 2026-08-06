@@ -13,7 +13,7 @@ else to set up.
 Puppeteer is there for visual work: jsdom has no layout, so anything about how
 the canvas actually *looks* (bundle casings, dimensions, label tags) has to be
 screenshotted and looked at rather than asserted. Drive it the same way
-`suite-harness.js` does — stub `/harness/api/save` first.
+`suite-harness.js` does: stub `/harness/api/save` first.
 
 ## How it works
 
@@ -21,7 +21,7 @@ A throwaway container is built from the working tree and served on **:3979**.
 The live container on **:3978 is never touched**.
 
 **The suites run against `ucdfs-nonprod`, not production.** `load_env` reads
-`.env.nonprod` and refuses any file labelled `UCDFS_ENV=prod` — these tests sign
+`.env.nonprod` and refuses any file labelled `UCDFS_ENV=prod`. These tests sign
 up accounts, write attendance and assert that deletion works, which against the
 live database is real people's history. Overriding it takes both
 `UCDFS_ENV_FILE` and `UCDFS_ALLOW_PROD_TESTS=1`, deliberately, because "just
@@ -37,8 +37,8 @@ GoTrue admin API. Cleanup is guarded twice: the prefix filter, then a per-user
 re-check. It reports what it removed and how many other accounts it left alone.
 
 Feed lines are cleaned up too. `activity_log` stores the actor as text captured
-at write time — on purpose, so a line still reads correctly after the account it
-names is gone — which means deleting the test *accounts* would otherwise leave
+at write time, on purpose, so a line still reads correctly after the account it
+names is gone, which means deleting the test *accounts* would otherwise leave
 their lines sitting on the dashboard, pushing real activity off the homepage.
 `cleanup_activity_log()` removes rows written **during this run** by the known
 test display names; both conditions are required. Add a name to `TEST_ACTORS` in
@@ -70,18 +70,18 @@ Each of these was a real bug found during development, not a hypothetical:
   device states.
 - **The harness BOM ordered parts that don't fit.** DTM connectors emitted
   Deutsch DT part numbers (different series, size-16 vs size-20 contacts), and
-  12 of 34 connector types produced no BOM lines at all — silently. `harness`
+  12 of 34 connector types produced no BOM lines at all, silently. `harness`
   covers both, and asserts every type yields a line.
 - **A subteam tag that names nothing.** `"subteams": ["powertrain"]` instead of
   `["pt"]` removes an applet from every filter chip including its own, and
-  nothing errors — the card simply stops appearing. `profiles` asserts every tag
+  nothing errors. The card simply stops appearing. `profiles` asserts every tag
   resolves and that every applet is reachable under some chip.
 - **A filter that hid something.** Tags are relevance, not permission. `profiles`
   checks that an `all`-tagged tool survives every chip and that a member of one
   subteam can still open another's applet.
 - **Hiding a control is not a permission.** `/api/log` and `/api/log/delete`
   took a name from the request body, so any signed-in member could delete
-  anybody's attendance with one fetch — the page just didn't draw the button.
+  anybody's attendance with one fetch. The page just didn't draw the button.
   `admin` asserts ownership is enforced server-side.
 - **A one-way door out of your own admin rights.** God mode gates everything
   except its own toggle; if that endpoint ever starts requiring god mode, an
@@ -96,7 +96,7 @@ Each of these was a real bug found during development, not a hypothetical:
 knowing before you add a browser test:
 
 - **Seed cookies before the page loads.** `beforeParse` runs *after* the response
-  arrives, so a session set there is too late — the server has already redirected
+  arrives, so a session set there is too late. The server has already redirected
   to `/login`. Pass raw `Set-Cookie` strings via `open({ setCookies })`; `signUp()`
   returns them ready to use.
 - **Click the button, don't dispatch a `submit` event.** jsdom does not reliably
@@ -106,7 +106,7 @@ A third, specific to `harness`: the page's top-level `let DOC` / `const wmap`
 are global **lexical** bindings, not properties of `window`. Assigning
 `w.DOC = …` silently creates an unrelated property and every later assertion
 passes vacuously against the real document. Drive that page through `w.eval()`.
-And never let it save — `/harness/api/save` overwrites the team's single live
+And never let it save: `/harness/api/save` overwrites the team's single live
 harness; the suite stubs it and asserts the stub held.
 
 Always assert you are on the page you think you are. A test that silently ends up

@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  UCDFS — subteams + team profiles
+--  UCDFS: subteams + team profiles
 --
 --  Two features in one migration because they are one feature in practice: the
 --  first-sign-in flow asks for a subteam and a profile in the same sequence,
@@ -8,7 +8,7 @@
 --
 --  Safe to run on the live database at any time. Every statement is additive:
 --  two new tables and two new columns on profiles. Nothing existing is altered
---  or dropped, and the app works before it is applied — the profiles page and
+--  or dropped, and the app works before it is applied. The profiles page and
 --  the subteam picker degrade to "not set up yet" rather than erroring.
 --
 --  Run this AFTER 002. Nothing here depends on activity_log, but the by-hand
@@ -22,7 +22,7 @@
 -- and _public_profile() reads it straight off the row it already loaded.
 --
 -- Primary + extras rather than a single list. Powertrain people do mechanical
--- work constantly, so one value is a lie — but something has to drive defaults
+-- work constantly, so one value is a lie, but something has to drive defaults
 -- and the filter, so the primary is what does that and the extras are for
 -- "also find me under".
 --
@@ -33,7 +33,7 @@ alter table public.profiles
   add column if not exists subteams_extra text[] not null default '{}';
 
 comment on column public.profiles.subteam is
-  'Primary subteam: pt | mech | ops, or null for "not sure yet". Relevance, never permission — see requires_role for that.';
+  'Primary subteam: pt | mech | ops, or null for "not sure yet". Relevance, never permission. See requires_role for that.';
 
 
 -- The existing bridge view from an account to the name-keyed tables. Recreated
@@ -68,7 +68,7 @@ create table if not exists public.profile_details (
   -- without this the browser shows the old one until the cache expires.
   photo_rev    int         not null default 0,
 
-  -- What this person can be asked about — 'can bus', 'welding', 'catia'. The
+  -- What this person can be asked about: 'can bus', 'welding', 'catia'. The
   -- reason this page still matters in November: it turns a fun grid into a
   -- directory you search when something breaks.
   tags         text[]      not null default '{}',
@@ -115,7 +115,7 @@ create table if not exists public.profile_prompts (
 );
 
 comment on table public.profile_prompts is
-  'Answers to the fixed prompt list. Three per person by convention, not enforced — the cap is a UI decision and will change.';
+  'Answers to the fixed prompt list. Three per person by convention, not enforced. The cap is a UI decision and will change.';
 
 create index if not exists profile_prompts_profile_idx
   on public.profile_prompts (profile_id, position);
@@ -130,7 +130,7 @@ alter table public.profile_prompts enable row level security;
 
 
 -- ── Backfill (optional) ────────────────────────────────────────────────────
--- Nothing needs it — profile_details rows are created lazily on first save and
+-- Nothing needs it, since profile_details rows are created lazily on first save and
 -- every read copes with a missing one. Run this only if you would rather see
 -- every existing member in the directory immediately, greyed out and empty,
 -- instead of them appearing as they fill it in.

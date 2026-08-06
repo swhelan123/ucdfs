@@ -132,12 +132,12 @@
     <div class="card" id="people"></div>
 
     <div class="note">
-      <b>member</b> — the default. <b>committee</b> — Competition Hub admin
-      actions: roster, shop runs, marking things bought.
-      <b>admin</b> — can open this page and switch on admin override.
+      <b>member</b> is the default. <b>committee</b> gets the Competition Hub
+      admin actions: roster, shop runs, marking things bought.
+      <b>admin</b> can open this page and switch on admin override.
       <br><br>
-      <b>Delete</b> removes an account for good — sign-in, profile, photo and
-      prompts — for the wrong-email signup that can't be merged. It appears with
+      <b>Delete</b> removes an account for good (sign-in, profile, photo and
+      prompts) for the wrong-email signup that can't be merged. It appears with
       admin override on, never for yourself, and never for another admin: demote
       them first. Attendance and activity history stay behind, under the name
       that was typed; tidy those on the attendance page and the dashboard feed.
@@ -158,8 +158,8 @@ function renderGod() {
   sw.classList.toggle('on', on);
   sw.setAttribute('aria-checked', on ? 'true' : 'false');
   document.getElementById('god-sub').textContent = on
-    ? 'On — you can edit anyone\'s profile and attendance, and every admin action is open.'
-    : "Off — you're using the site as an ordinary member.";
+    ? 'On. You can edit anyone\'s profile and attendance, and every admin action is open.'
+    : "Off. You're using the site as an ordinary member.";
 }
 
 async function toggleGod() {
@@ -184,14 +184,14 @@ async function toggleGod() {
 }
 
 /* Elevated right now? Read from the people list, which is the database row,
-   rather than from UCDFS.user() — the cookie is display data and is stale for a
+   rather than from UCDFS.user(). The cookie is display data and is stale for a
    whole page load after a change lands elsewhere. */
 function elevated() {
   const me = PEOPLE.find(p => p.id === ME);
   return !!(me && me.god_mode);
 }
 
-/* Drawing the button is not the permission — the server refuses all three of
+/* Drawing the button is not the permission. The server refuses all three of
    these cases too (see /api/admin/user/delete). This just avoids offering
    somebody a control that can only ever answer "no". */
 function mayDelete(p) {
@@ -230,7 +230,7 @@ async function deleteUser(btn, id) {
 
   /* Typing the address is the confirmation, not an OK button. The reason this
      control exists is a wrong email address, so the address is exactly the
-     thing worth reading twice — and the server checks it again, which is what
+     thing worth reading twice, and the server checks it again, which is what
      actually stops a stale id from deleting the wrong person. */
   const typed = prompt(
     `Delete ${who.name} permanently?\n\n` +

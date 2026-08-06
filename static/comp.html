@@ -190,7 +190,7 @@
       <div id="runner-wrap"></div>
 
       <div class="section-label">Add a request</div>
-      <div class="sched-note" id="cutoff-banner">🕙 Requests in by <strong>10:00pm</strong> go on the next shop — after 10pm they roll onto the day after.</div>
+      <div class="sched-note" id="cutoff-banner">🕙 Requests in by <strong>10:00pm</strong> go on the next shop. After 10pm they roll onto the day after.</div>
       <div class="rform">
         <textarea id="req-item" rows="2" placeholder="What do you need? e.g. 24 pack Moretti"></textarea>
         <div class="qty-row">
@@ -229,7 +229,7 @@
 
     <!-- Schedule -->
     <div id="tab-schedule" style="display:none">
-      <div class="sched-note">📌 Highlighted <span class="ev-badge">key</span> events are Design, Cost &amp; Manufacturing and Business Plan Presentation (BPP) — check these carefully.</div>
+      <div class="sched-note">📌 Highlighted <span class="ev-badge">key</span> events are Design, Cost &amp; Manufacturing and Business Plan Presentation (BPP). Check these carefully.</div>
       <div id="schedule-content"></div>
     </div>
   </div>
@@ -266,14 +266,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 /* ── Name setup ──
    Identity is shared.js's job now; this page just reacts once we have a user.
-   Anyone who set their name here before is carried over automatically — the
+   Anyone who set their name here before is carried over automatically. The
    old comp_fn/comp_ln keys are one of the legacy pairs shared.js migrates. */
 function cShowMain(user){
   cName=user.name;
   UCDFS.renderPill();
   loadUsers();
   const lastTab=localStorage.getItem('comp_active_tab') || 'roster';
-  /* Ask first, then draw — otherwise the admin controls flash in a moment
+  /* Ask first, then draw. Otherwise the admin controls flash in a moment
      after the roster and everything jumps. */
   checkAdmin().then(()=>cTab(lastTab));
 }
@@ -497,7 +497,7 @@ async function addEvent(){
 
 /* ── Admin ── */
 /* Admin actions used to need a shared password typed into a box. They need a
-   role now — committee, or an admin with god mode on — so there is nothing to
+   role now (committee, or an admin with god mode on), so there is nothing to
    unlock: we just ask the server whether this account qualifies, and the
    controls appear or they don't. The endpoint is still the authority; this only
    decides what to draw. */
@@ -593,7 +593,7 @@ async function loadRunner(){
 function renderRunnerBanner(){
   const el=document.getElementById('runner-wrap'), isMe=currentRunner===cName;
   if(currentRunner){
-    el.innerHTML=`<div class="rbanner on"><div class="ri">🛒</div><div class="rt"><div class="rt-name">${esc(currentRunner)} is shopping</div><div class="rt-sub">${isMe?"That's you — enter prices below":"They'll be back soon"}</div></div>${isMe?`<button class="btn btn-ghost btn-sm" onclick="clearRunner()">Done</button>`:adminUnlocked?`<button class="btn btn-ghost btn-sm" onclick="adminUnassignRunner()">Unassign</button>`:''}</div>`;
+    el.innerHTML=`<div class="rbanner on"><div class="ri">🛒</div><div class="rt"><div class="rt-name">${esc(currentRunner)} is shopping</div><div class="rt-sub">${isMe?"That's you. Enter prices below":"They'll be back soon"}</div></div>${isMe?`<button class="btn btn-ghost btn-sm" onclick="clearRunner()">Done</button>`:adminUnlocked?`<button class="btn btn-ghost btn-sm" onclick="adminUnassignRunner()">Unassign</button>`:''}</div>`;
   }else{
     el.innerHTML=`<div class="rbanner off"><div class="ri">🛒</div><div class="rt"><div class="rt-name">No shop runner yet</div><div class="rt-sub">Heading to the shops?</div></div><button class="btn btn-purple btn-sm" onclick="declareRunner()">I'm going</button></div>`;
   }
@@ -620,9 +620,9 @@ async function loadCutoffBanner(){
     const fmt=new Date(d.target_shop_date+'T12:00:00').toLocaleDateString('en-IE',{weekday:'long',day:'numeric',month:'short'});
     const cutoffTxt=d.cutoff_hour===12?'12:00pm':(d.cutoff_hour>12?`${d.cutoff_hour-12}:00pm`:`${d.cutoff_hour}:00am`);
     if(d.is_same_day){
-      el.innerHTML=`⏰ It's before <strong>${cutoffTxt}</strong>${d.is_extended_cutoff?' (extended cutoff today)':''} — requests now still get <strong>same-day</strong> delivery. After ${cutoffTxt} they move to tomorrow's shop.`;
+      el.innerHTML=`⏰ It's before <strong>${cutoffTxt}</strong>${d.is_extended_cutoff?' (extended cutoff today)':''}, so requests now still get <strong>same-day</strong> delivery. After ${cutoffTxt} they move to tomorrow's shop.`;
     }else{
-      el.innerHTML=`🕙 Requests need to be in by <strong>${cutoffTxt}</strong> for same-day delivery — you've missed today's cutoff, so this will go on the shop for <strong>${fmt}</strong>.`;
+      el.innerHTML=`🕙 Requests need to be in by <strong>${cutoffTxt}</strong> for same-day delivery. You've missed today's cutoff, so this will go on the shop for <strong>${fmt}</strong>.`;
     }
   }catch(e){}
 }
@@ -638,9 +638,9 @@ function reqDayLabel(isoDate){
   const tom   = new Date(Date.now()+86400000).toISOString().split('T')[0];
   const yest  = new Date(Date.now()-86400000).toISOString().split('T')[0];
   const fmt   = new Date(isoDate+'T12:00:00').toLocaleDateString('en-IE',{weekday:'long',day:'numeric',month:'short'});
-  if(isoDate===today) return 'Today — '+fmt;
-  if(isoDate===tom)   return 'Tomorrow — '+fmt;
-  if(isoDate===yest)  return 'Yesterday — '+fmt;
+  if(isoDate===today) return 'Today, '+fmt;
+  if(isoDate===tom)   return 'Tomorrow, '+fmt;
+  if(isoDate===yest)  return 'Yesterday, '+fmt;
   return fmt;
 }
 function fmtTime(ts){
@@ -760,7 +760,7 @@ async function addRequest(btn){
   splitWith=[]; renderSplitChips();
   if(d.shop_date){
     const fmt=new Date(d.shop_date+'T12:00:00').toLocaleDateString('en-IE',{weekday:'short',day:'numeric',month:'short'});
-    cToast(`Added — on the list for ${fmt}`);
+    cToast(`Added. On the list for ${fmt}`);
   }else cToast('Added!');
   loadRequests();
 }

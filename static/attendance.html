@@ -312,7 +312,7 @@
 
 <script src="/static/shared.js"></script>
 <script>
-/* The floating plans launcher that used to live here is gone — the dashboard
+/* The floating plans launcher that used to live here is gone. The dashboard
    at / is the launcher now, and links to other tools come from the APPLETS
    registry in main.py (including the Canva mech plan). */
 let selectedDate = '';
@@ -387,7 +387,7 @@ function buildDayPicker() {
 function selectDay(iso) {
   selectedDate = iso;
   document.getElementById('header-sub').textContent  = fmtLong(iso);
-  document.getElementById('list-label').textContent  = "Who's in — " +
+  document.getElementById('list-label').textContent  = "Who's in: " +
     new Date(iso + 'T12:00:00').toLocaleDateString('en-IE', {weekday:'long', day:'numeric', month:'short'});
   document.getElementById('arrival-input').value = '';
   document.getElementById('depart-input').value  = '';
@@ -402,7 +402,7 @@ function setStatus(s) {
   document.getElementById('times-wrap').classList.toggle('hidden', s === 'absent');
 }
 
-/* Identity now lives in shared.js — UCDFS.gate() shows #setup or #main and
+/* Identity now lives in shared.js. UCDFS.gate() shows #setup or #main and
    hands us the user once we have one. */
 function showMain(user) {
   UCDFS.renderPill();
@@ -410,8 +410,8 @@ function showMain(user) {
   buildDayPicker();
   selectDay(selectedDate);
 
-  /* Faces, once. These rows key people by the name they typed — which predates
-     accounts — so the lookup is by name, and a name nobody matches just keeps
+  /* Faces, once. These rows key people by the name they typed, which predates
+     accounts, so the lookup is by name, and a name nobody matches just keeps
      its initials. Renders immediately without them and redraws when they land,
      so a slow fetch never holds up the list. */
   UCDFS.photos().then(map => {
@@ -454,7 +454,7 @@ function renderTimeline(rows) {
     return;
   }
 
-  const COL_W = 90; // px per hour — must match CSS
+  const COL_W = 90; // px per hour, must match CSS
   const allArr = arriving.map(r => timeToMins(r.time));
   const allDep = arriving.filter(r => r.departure_time).map(r => timeToMins(r.departure_time));
   const TL_START = Math.floor(Math.min(...allArr) / 60);
@@ -568,7 +568,7 @@ function editEntry(status, arrival, departure, name) {
   document.querySelector('.panel-form').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
-/* The form normally logs you, so when it isn't going to, it has to say so —
+/* The form normally logs you, so when it isn't going to, it has to say so,
    the whole row of controls looks identical either way. */
 function renderTargetBar() {
   const bar = document.getElementById('admin-target');

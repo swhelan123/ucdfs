@@ -21,7 +21,7 @@ pass=0; fail=0
 
 ck() { # ck <label> <got> <want>
   # Guard the arity before comparing anything. macOS ships bash 3.2, which
-  # splits a multi-line "$(node -e "…\"…\"")" into several arguments — so ck was
+  # splits a multi-line "$(node -e "…\"…\"")" into several arguments, so ck was
   # called with five, compared two empty strings, and printed ok for ten static
   # checks that had in fact never run. Locally green, red on the bash 5 runner,
   # and nothing on screen to say which. A harness that cannot check something
@@ -46,8 +46,8 @@ ck() { # ck <label> <got> <want>
 # of that was load-bearing. Now it is a second line of defence behind a database
 # nobody real is in.
 #
-# Overriding the file is possible and deliberately awkward — you have to name it
-# AND set UCDFS_ALLOW_PROD_TESTS=1 — because "just this once against prod" is how
+# Overriding the file is possible and deliberately awkward. You have to name it
+# AND set UCDFS_ALLOW_PROD_TESTS=1, because "just this once against prod" is how
 # somebody's attendance history gets deleted by a test that asserts deletion works.
 load_env() {
   ENV_FILE="${UCDFS_ENV_FILE:-$ROOT/.env.nonprod}"
@@ -70,7 +70,7 @@ load_env() {
   fi
 
   if [ -z "${SUPABASE_SERVICE_KEY:-}" ]; then
-    echo "SUPABASE_SERVICE_KEY is empty in $ENV_FILE — the suites need it." >&2
+    echo "SUPABASE_SERVICE_KEY is empty in $ENV_FILE. The suites need it." >&2
     exit 1
   fi
 
@@ -148,8 +148,8 @@ PY
 }
 
 # Display names the suites sign up as. activity_log stores the actor as text
-# captured at write time — deliberately, so a feed line still reads correctly
-# after the thing it names is gone — which means deleting the test *accounts*
+# captured at write time, deliberately, so a feed line still reads correctly
+# after the thing it names is gone, which means deleting the test *accounts*
 # leaves their feed lines behind on the live dashboard. Without this, every run
 # pushes real activity further down the homepage.
 #
@@ -188,7 +188,7 @@ PY
 }
 
 # Same idea for pt_done_log: suite-plans ticks a node on the 26/27 plan, and
-# that audit line is append-only by design — nothing in the app removes it when
+# that audit line is append-only by design. Nothing in the app removes it when
 # the node goes. Same double guard as above, name AND time window.
 cleanup_pt_done_log() {
   local since="${1:-}"

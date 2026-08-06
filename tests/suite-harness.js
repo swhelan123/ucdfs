@@ -13,7 +13,7 @@
  *    end. Never remove that stub.
  *
  * 2. The page's top-level `let DOC` / `const wmap` are global *lexical*
- *    bindings — they are NOT properties of window, so `w.DOC = …` silently
+ *    bindings. They are NOT properties of window, so `w.DOC = …` silently
  *    creates an unrelated property and every assertion afterwards passes
  *    vacuously against the real document. Drive the page through w.eval(),
  *    which resolves those bindings properly. Learned the hard way.
@@ -93,7 +93,7 @@ const PROBE = `(() => {
     TYPES.every(ty => connParts({ id:'x', type:ty.id, pins:ty.pins, cols:ty.cols, gender:'M' }).length > 0),
     JSON.stringify(TYPES.filter(ty => !connParts({ id:'x', type:ty.id, pins:ty.pins, cols:ty.cols, gender:'M' }).length).map(ty => ty.id)));
   t('DT emits size-16 contacts', bom.some(b => b.pn === '0460-202-16141'));
-  t('DTM emits its own housing, wedge and size-20 contacts — not DT parts',
+  t('DTM emits its own housing, wedge and size-20 contacts, not DT parts',
     (() => { const p = connParts({ id:'x', type:'dtm4', pins:4, cols:2, gender:'M' }).map(x => x.pn);
              return p.includes('DTM04-4P') && p.includes('WM-4P') && p.includes('0460-202-20141'); })(),
     JSON.stringify(connParts({ id:'x', type:'dtm4', pins:4, cols:2, gender:'M' }).map(x => x.pn)));
@@ -226,7 +226,7 @@ const PROBE = `(() => {
   DOC = normalizeDoc({ ...TOPO, nodes: [], segments: [] });
   rebuildAll();
   const dt = deriveTopology();
-  // t1 and t3 both run src→dst, so they share one segment — the count is per
+  // t1 and t3 both run src→dst, so they share one segment. The count is per
   // distinct anchor pair, not per wire. That sharing is the whole point: it is
   // what makes them one bundle.
   t('deriveTopology builds one segment per distinct run, not per wire', dt.created === 2,
@@ -284,7 +284,7 @@ const TOPO = {
   const { setCookies } = await signUp('Harness', 'Check');
   const { w, errors } = await open('/harness', { setCookies });
 
-  // SAFETY — stub the save endpoint before anything touches state. The live
+  // SAFETY: stub the save endpoint before anything touches state. The live
   // harness document is a single row; a real save from here would overwrite
   // whatever the team last drew.
   let saveAttempts = 0;

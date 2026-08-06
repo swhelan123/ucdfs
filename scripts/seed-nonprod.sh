@@ -11,7 +11,7 @@
 #
 # ── What is copied, and what is deliberately not ───────────────────────────
 #
-# Copied — structure and content the team authored, describing the car and the
+# Copied: structure and content the team authored, describing the car and the
 # season rather than the people:
 #
 #   pt_sections, pt_nodes, pt_edges   the manufacturing plan graph
@@ -20,7 +20,7 @@
 #   comp_meta                         a single settings row
 #   harness_doc                       the wiring design document
 #
-# NOT copied — every table that is about a person:
+# NOT copied: every table that is about a person:
 #
 #   profiles, profile_details,        names, emails, courses, photo filenames,
 #   profile_prompts                   and answers people wrote about themselves
@@ -32,7 +32,7 @@
 # The rule is not "is it sensitive" but "is it about a person". A staging
 # environment is something you hand to a new committee member to break. Real
 # names and faces should not be in it, and there is no version of this script
-# that copies them — adding one would defeat the reason the two databases were
+# that copies them. Adding one would defeat the reason the two databases were
 # separated in the first place.
 #
 # Photos are not copied either. They are files on disk under data/uploads, and
@@ -64,8 +64,8 @@ DST_ENV="$(read_env "$DST_FILE" UCDFS_ENV)"
 # The direction is the whole safety property. Reading from prod is harmless;
 # writing to it from here would overwrite the live manufacturing plan with
 # whatever state a staging environment had drifted into.
-[ "$SRC_ENV" = "prod" ]    || die "source $SRC_FILE is '$SRC_ENV', expected prod — this script only ever reads from production"
-[ "$DST_ENV" = "nonprod" ] || die "destination $DST_FILE is '$DST_ENV', expected nonprod — REFUSING to write to a production database"
+[ "$SRC_ENV" = "prod" ]    || die "source $SRC_FILE is '$SRC_ENV', expected prod. This script only ever reads from production"
+[ "$DST_ENV" = "nonprod" ] || die "destination $DST_FILE is '$DST_ENV', expected nonprod. REFUSING to write to a production database"
 
 SRC_URL="$(read_env "$SRC_FILE" SUPABASE_URL)"
 SRC_KEY="$(read_env "$SRC_FILE" SUPABASE_SERVICE_KEY)"
@@ -78,7 +78,7 @@ DST_KEY="$(read_env "$DST_FILE" SUPABASE_SERVICE_KEY)"
 
 echo "  from  $SRC_URL  ($SRC_ENV)"
 echo "  to    $DST_URL  ($DST_ENV)"
-[ "$DRY" = "1" ] && echo "  DRY RUN — nothing will be written"
+[ "$DRY" = "1" ] && echo "  DRY RUN: nothing will be written"
 echo
 
 # ── Tables, in dependency order ────────────────────────────────────────────
@@ -88,14 +88,14 @@ echo
 #
 # The second field strips columns the destination generates itself.
 # schedule_events.id is `generated always as identity`, and PostgREST has no way
-# to say OVERRIDING SYSTEM VALUE — sending an explicit id is a hard 400.
+# to say OVERRIDING SYSTEM VALUE. Sending an explicit id is a hard 400.
 TABLES=(
   # plans first, for the same reason sections come before nodes: a chart's rows
-  # are unreachable until the chart itself exists — _plan_or_400 checks this
+  # are unreachable until the chart itself exists. _plan_or_400 checks this
   # table, so a seeded graph with no plans row is a 400 on every request.
   #
-  # created_by is stripped. A chart is reference data — the shape of a build
-  # plan — but the name of whoever made it is about a person, and the rule here
+  # created_by is stripped. A chart is reference data, the shape of a build
+  # plan, but the name of whoever made it is about a person, and the rule here
   # has no exceptions.
   "plans:created_by"
   "pt_sections:"
@@ -126,12 +126,12 @@ for entry in "${TABLES[@]}"; do
   fi
 
   if [ "$n" = "0" ]; then
-    printf "  %-16s %4s rows — nothing to copy\n" "$table" "$n"
+    printf "  %-16s %4s rows, nothing to copy\n" "$table" "$n"
     continue
   fi
 
   if [ "$DRY" = "1" ]; then
-    printf "  %-16s %4s rows — would copy%s\n" "$table" "$n" \
+    printf "  %-16s %4s rows, would copy%s\n" "$table" "$n" \
       "$([ -n "$strip" ] && echo " (without $strip)")"
     total=$((total + n))
     continue
@@ -160,9 +160,9 @@ done
 
 echo
 if [ "$DRY" = "1" ]; then
-  echo "  $total rows would be copied. No personal data is included — see the header."
+  echo "  $total rows would be copied. No personal data is included. See the header."
 else
-  echo "  $total rows copied. No personal data was included — see the header."
+  echo "  $total rows copied. No personal data was included. See the header."
   echo "  Sign up in the non-prod environment to get an account; then make yourself"
   echo "  admin with the UPDATE at the bottom of migrations/000_baseline.sql."
 fi

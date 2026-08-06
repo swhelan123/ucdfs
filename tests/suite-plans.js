@@ -1,19 +1,19 @@
-/* Flowcharts — many charts, one canvas, sections drawn by whoever owns them.
+/* Flowcharts: many charts, one canvas, sections drawn by whoever owns them.
  *
  * Guards three seams, oldest first:
  *
- *   the chart seam (migrations/007) — charts are rows, so the whitelist that
+ *   the chart seam (migrations/007): charts are rows, so the whitelist that
  *   used to be a literal dict is now "does this row exist". A chart id reaches
  *   supabase.table() filters, so an id naming no chart has to be refused, and
  *   ids have to be minted server-side. Plus the two rails on destroying one:
  *   deleting is refused unless the chart is empty, and the caller has to echo
  *   the name back so a stale list cannot delete the wrong chart.
  *
- *   the plan seam (migrations/005) — isolation. A task created, ticked or
+ *   the plan seam (migrations/005): isolation. A task created, ticked or
  *   deleted on one chart must never appear on another. That is what catches the
  *   classic failure: a forgotten .eq() quietly acting across every chart.
  *
- *   the section seam (migrations/006) — sections are rows, so the legacy plan's
+ *   the section seam (migrations/006): sections are rows, so the legacy plan's
  *   seven boxes have to survive the move out of Python with their geometry
  *   intact, and create/rename/move/delete has to hold. The refusal to delete a
  *   section that still holds tasks matters most: nothing in the app can put an
@@ -218,7 +218,7 @@ const LEGACY_SECTIONS = ['lv', 'tdp', 'tsac', 'cc', 'bp', 'sw', 'hv'];
     check('now-empty chart deleted', gone.ok, 'status ' + gone.status);
     if (gone.ok) chart = null;   // nothing left for the finally block to tidy
     plans = (await get('/api/plans')).plans || [];
-    // Against deletedId, not chart — chart is null by now, and `p.id === null`
+    // Against deletedId, not chart: chart is null by now, and `p.id === null`
     // is a check that can only ever pass.
     check('and it is out of the list', !plans.some(p => p.id === deletedId));
   } finally {

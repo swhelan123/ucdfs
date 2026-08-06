@@ -21,7 +21,7 @@ const OLD_CLASSES = '.hi, .ht, .npill, .sc, .nr, .ti, .slabel, .srow, .ctabs, .c
   check('name pill renamed',         !!d.querySelector('.name-pill .pill-avatar'));
   // Source-level, not DOM-level. Every remaining input on this page is built
   // inside a JS template literal and only rendered for the tab and role that
-  // needs it — the last one in the static markup was the admin password box,
+  // needs it. The last one in the static markup was the admin password box,
   // which went when the shared password did. The check is about the class
   // rename holding, so it should look where the classes are written.
   check('inputs use .text-input',

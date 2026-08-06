@@ -11,7 +11,7 @@
 -- anyone: they make one.
 --
 -- The whitelist property that PLANS provided is kept, just moved. A plan id
--- still reaches supabase.table() filters, so it is still validated before use —
+-- still reaches supabase.table() filters, so it is still validated before use,
 -- against this table rather than against a literal dict. Ids are minted
 -- server-side (chart_…), never taken from the client, so a caller cannot name
 -- a row into existence.
@@ -24,7 +24,7 @@ create table if not exists public.plans (
   -- Archived is the soft, reversible action: last season's plan stops being in
   -- the way without anybody having to decide whether to destroy it. Deleting is
   -- refused unless the plan is empty, so the destructive path cannot be taken
-  -- by accident — see /api/plans/delete.
+  -- by accident. See /api/plans/delete.
   archived   boolean     not null default false,
   created_at timestamptz not null default now(),
   -- The name that was typed, captured at write time, like activity subjects and
@@ -32,8 +32,8 @@ create table if not exists public.plans (
   created_by text
 );
 
--- The two plans that existed as PLANS entries. 'pt' is last season's — the
--- 25/26 build, finished — so it arrives archived, which is what puts it under
+-- The two plans that existed as PLANS entries. 'pt' is last season's, the
+-- 25/26 build, finished, so it arrives archived, which is what puts it under
 -- "Last season" on the dashboard and in the picker rather than at the top of
 -- both. 'pt-2627' was created as an empty 26/27 starter and is the live one.
 insert into public.plans (id, name, icon, blurb, archived) values
@@ -45,7 +45,7 @@ on conflict (id) do nothing;
 
 -- Anything that already has rows but no plan of its own. There should be
 -- nothing here, but a plan id that exists only in pt_nodes would be a chart
--- holding real work that the picker cannot list and the whitelist now rejects —
+-- holding real work that the picker cannot list and the whitelist now rejects,
 -- silently unreachable, which is the worst of the options. Adopt it instead.
 insert into public.plans (id, name, icon, blurb, archived)
 select distinct plan_id, plan_id, '📋', 'Adopted by migration 007', false

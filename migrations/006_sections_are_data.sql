@@ -1,7 +1,7 @@
 -- 006: sections are data, not code.
 --
--- 005 made the plan graph multi-plan but left the *sections* — the labelled
--- boxes tasks sit in — defined in the PLANS registry in main.py, with
+-- 005 made the plan graph multi-plan but left the *sections* (the labelled
+-- boxes tasks sit in) defined in the PLANS registry in main.py, with
 -- pt_sections holding nothing but a size override. That made a new plan's
 -- layout a code change and a deploy, which is exactly the thing a subteam
 -- wanting their own flowchart cannot do for themselves.
@@ -20,7 +20,7 @@ alter table public.pt_sections add column if not exists y     double precision;
 
 
 -- 1. The legacy PT plan's seven sections were only ever in Python. Write them
--- in at exactly the geometry the old hardcoded layout computed — get this
+-- in at exactly the geometry the old hardcoded layout computed. Get this
 -- wrong and the 25/26 plan opens with its tasks scattered outside their boxes,
 -- so these are derived, not eyeballed:
 --
@@ -31,7 +31,7 @@ alter table public.pt_sections add column if not exists y     double precision;
 --
 -- A row already here is a size someone dragged. Those win: keep the larger of
 -- the two and re-derive y from it, because the old canvas grew a box upward
--- from that same fixed bottom edge. The coalesce is belt and braces — Postgres
+-- from that same fixed bottom edge. The coalesce is belt and braces: Postgres
 -- greatest() ignores nulls rather than propagating them, unlike most dialects,
 -- and this is not the file to make a reader look that up.
 insert into public.pt_sections (plan_id, sec, label, x, y, w, h) values
@@ -51,7 +51,7 @@ on conflict (plan_id, sec) do update set
 
 
 -- 2. Rows for any *other* plan can only have come from someone resizing a
--- registry-defined section before this migration — an id and a size, nothing
+-- registry-defined section before this migration: an id and a size, nothing
 -- else. Give them a label and somewhere to stand rather than dropping them: a
 -- deleted box takes its tasks' home with it, and these are trivially draggable.
 -- The 550 step is the default width plus the gap, so defaults land side by
@@ -75,7 +75,7 @@ where s.plan_id = st.plan_id and s.sec = st.sec;
 
 
 -- 3. A section the registry used to supply, that nobody ever resized, has no
--- row at all — but tasks still name it. Without this they would load into a
+-- row at all, but tasks still name it. Without this they would load into a
 -- plan with no box to sit in: still on the canvas, still counted, but outside
 -- everything and impossible to tidy, since the app only ever deletes an empty
 -- section. Draw the box around where those tasks already are, so nothing
@@ -101,5 +101,5 @@ on conflict (plan_id, sec) do nothing;
 
 
 -- 4. An unlabelled box is confusing rather than broken, but after the three
--- statements above there should be none — so say so out loud.
+-- statements above there should be none, so say so out loud.
 alter table public.pt_sections alter column label set not null;

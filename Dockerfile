@@ -10,7 +10,7 @@ COPY static/ ./static/
 
 # Profile photos. docker-compose mounts a host directory over this; the mkdir is
 # so the app still starts (and uploads still work, if not persistently) when it
-# is run without the mount — which is exactly what tests/run.sh does.
+# is run without the mount, which is exactly what tests/run.sh does.
 RUN mkdir -p /app/uploads/avatars
 
 EXPOSE 3978

@@ -207,11 +207,15 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .fav-btn:disabled { cursor: wait; }
 
 /* The empty state carries its weight: it is the only thing on the page that
-   says the star exists, so it stays put rather than collapsing the section. */
+   says the star exists, so it stays put rather than collapsing the section.
+   A quiet line of text, not a card — it is an instruction, and dressing it up
+   as a tile makes the section look like it holds one thing already.
+   The bottom margin matches .applet-grid so the block below sits where it
+   would if there were favourites here. */
 .fav-empty {
-  border: 1px dashed var(--border); border-radius: 16px;
-  padding: 16px 18px; font-size: 0.82rem; color: var(--muted);
-  background: var(--card);
+  text-align: center; font-style: italic;
+  font-size: 0.82rem; color: var(--muted);
+  padding: 2px 0 6px; margin-bottom: 30px;
 }
 
 .tag {
@@ -661,8 +665,12 @@ function render() {
   const favCards = FAVOURITES
     .map(id => APPLETS.find(a => a.id === id))
     .filter(Boolean);
-  document.getElementById('applet-favourites').innerHTML =
-    favCards.map(a => appletCard(a, TILES[a.id])).join('');
+  const favGrid = document.getElementById('applet-favourites');
+  favGrid.innerHTML = favCards.map(a => appletCard(a, TILES[a.id])).join('');
+  /* Hidden rather than left empty: .applet-grid keeps its 30px bottom margin
+     with no children in it, which opened a hole between the heading and the
+     line of text below it. */
+  favGrid.style.display = favCards.length ? '' : 'none';
   document.getElementById('fav-empty').style.display = favCards.length ? 'none' : '';
 
   document.getElementById('applet-grid').innerHTML = shown

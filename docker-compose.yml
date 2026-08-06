@@ -1,5 +1,5 @@
 # One compose file, three tiers. Everything that differs between them is a
-# variable, and every default is production — so a bare `docker compose up -d`
+# variable, and every default is production, so a bare `docker compose up -d`
 # still does exactly what it did before this file grew variables.
 #
 # Do not run compose directly to deploy. Use ./deploy.sh, which sets these and
@@ -32,7 +32,7 @@ services:
 
     # Profile photos. This has to be a mount: the image is rebuilt on every
     # deploy, so anything written inside the container and not mounted out is
-    # gone the next time we ship. Kept out of static/ deliberately — the
+    # gone the next time we ship. Kept out of static/ deliberately. The
     # Dockerfile COPYs static/ into the image, and StaticFiles would serve these
     # to anyone with the URL. They go out through /media/avatars/… instead,
     # which sits behind the auth middleware.

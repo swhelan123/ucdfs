@@ -160,7 +160,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 
 /* ── First-run tour ──
    Styles live here, not in shared.css: this page deliberately does not load it
-   (see the note in CLAUDE.md about shared.js carrying its own CSS — the same
+   (see the note in CLAUDE.md about shared.js carrying its own CSS, the same
    trap applies to anything a canvas tool draws for itself). */
 #tour-bg{
   position:fixed;inset:0;background:rgba(20,30,48,.55);z-index:600;
@@ -238,7 +238,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 .edgepop-actions button{padding:7px 13px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;}
 #edgepop-del{background:var(--gate);color:#fff;}
 #edgepop-cancel{background:#eef2fb;color:var(--ink);}
-/* rename popover — shared with the section editor, same shape and behaviour */
+/* rename popover, shared with the section editor, same shape and behaviour */
 #renpop,#secpop{
   position:fixed;z-index:400;background:#fff;border:1.5px solid var(--card-border);
   border-radius:13px;box-shadow:0 12px 32px rgba(29,43,69,.28);padding:13px;width:260px;
@@ -386,7 +386,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 <div class="modal-bg" id="modal">
   <div class="modal">
     <h3>Add Task</h3>
-    <div class="msub">It'll drop into the chosen section — drag to reposition.</div>
+    <div class="msub">It'll drop into the chosen section. Drag to reposition.</div>
     <div class="fld">
       <label for="m-name">Task name</label>
       <input type="text" id="m-name" placeholder="e.g. Mount cooling fan" autocomplete="off">
@@ -436,7 +436,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
   <div class="inner">
     <h4>Nothing here yet</h4>
     <p>Add a section to start laying this plan out. Sections are the labelled
-       boxes tasks live in — drag one by its name to move it, or by its
+       boxes tasks live in. Drag one by its name to move it, or by its
        top-right corner to resize.</p>
   </div>
 </div>
@@ -466,7 +466,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 const CW=150, CH=95, NW=128, NH=48, GW=46, GH=26, SP=24, SG=52, SBOT=1066;
 
 // ── PLAN & SECTIONS ───────────────────────────────────────────────────
-// One page, many plans. Which plan this tab shows comes from its own URL —
+// One page, many plans. Which plan this tab shows comes from its own URL,
 // /pt is the legacy alias for the original PT plan, everything newer routes
 // as /plan/<id>.
 //
@@ -498,7 +498,7 @@ const progressSet=new Set();
 const detailsMap={};
 const doneLogMap={};  // node_id → [{done, user_name, created_at}, …]
 
-// Original labels for built-in nodes — used by "clear to restore" in rename
+// Original labels for built-in nodes, used by "clear to restore" in rename
 const BUILTIN_LABELS={
   lv_pcbs:'PCBs ordered',lv_part:'Parts order',lv_ship:'Ship to\nEurocircuits',
   lv_test:'Test PCBs',lv_inst:'Install PCBs',lv_cut:'Cut wires',
@@ -579,7 +579,7 @@ function initPlan(meta){
   document.querySelector('#hdr .ttl').textContent=(meta.icon||'🏎')+' '+meta.name;
 }
 
-// The canvas is whatever contains the sections, plus a margin — recomputed
+// The canvas is whatever contains the sections, plus a margin, recomputed
 // after every move, resize, add and delete rather than fixed up front.
 function recomputeCanvas(){
   let right=0, bottom=0;
@@ -664,7 +664,7 @@ function refreshSecOptions(){
   if(keep&&S[keep]) mSec.value=keep;
   const none=!SDEFS.length;
   addTaskBtn.disabled=none;
-  addTaskBtn.title=none?'Add a section first — tasks live inside one':'';
+  addTaskBtn.title=none?'Add a section first. Tasks live inside one':'';
 }
 
 // A plan with no sections is a blank grey page that looks broken. Say what to
@@ -682,7 +682,7 @@ function buildSections(rows){
 
 // Where a new box goes: to the right of everything already there, standing on
 // the same baseline, so a plan built one section at a time reads left to right.
-// SBOT is only the baseline for the very first box on an empty plan — once
+// SBOT is only the baseline for the very first box on an empty plan. Once
 // there are others, theirs wins, or a new box lands adrift of a layout someone
 // has already dragged somewhere else.
 function nextSectionSpot(){
@@ -984,7 +984,7 @@ function relayout(){
   applyTransform();
 }
 
-// Apply geometry from any source — a local drag, or someone else's. Bottom
+// Apply geometry from any source: a local drag, or someone else's. Bottom
 // stays put while resizing (the handle is at the top-right), which is how this
 // canvas has always grown a box.
 function applySecGeom(secId,g){
@@ -1020,7 +1020,7 @@ function attachSecResize(s,handle,box){
 
 // Dragging the label moves the box *and* its tasks. Tasks hold absolute canvas
 // coordinates, so without this they would stay behind while their box walks
-// off — see /pt/api/nodes/move-bulk.
+// off. See /pt/api/nodes/move-bulk.
 function attachSecMove(s,handle){
   handle.addEventListener('mousedown',e=>{
     if(e.detail>1) return;                // let dblclick open the editor
@@ -1391,7 +1391,7 @@ function openRename(id,anchor){
   const n=NM[id];
   const inp=document.getElementById('renpop-in');
   inp.value=n.lbl.replace(/\n/g,' ');
-  // gates never reach here; 'c' has no toggle — treat as 'm' visually
+  // gates never reach here; 'c' has no toggle, so treat as 'm' visually
   setRenType(TYPE_COLORS[n.t]?n.t:'m');
   renPop.style.display='block';
   const r=anchor.getBoundingClientRect();
@@ -1740,7 +1740,7 @@ async function loadState(){
   (d.done_log||[]).forEach(e=>pushLog(e.node_id, e.done, e.user_name, e.created_at));
   Object.assign(detailsMap, d.details||{});
 
-  // Render all nodes (no dep edges here — those come from d.edges)
+  // Render all nodes (no dep edges here; those come from d.edges)
   Object.values(NM).forEach(n=>renderNode(n, false));
 
   // Draw all edges
@@ -1757,7 +1757,7 @@ async function loadState(){
 
 // ── FIRST-RUN TOUR ────────────────────────────────────────────────────
 // Five cards on what this canvas is and how to drive it. It runs once and then
-// stays out of the way, but the ? in the header brings it back — a tutorial you
+// stays out of the way, but the ? in the header brings it back. A tutorial you
 // can only ever see once is one people dismiss by accident and then can't find.
 //
 // "Seen" is in localStorage because it is a per-browser preference and not
@@ -1775,7 +1775,7 @@ const TOUR=[
   },
   {
     t:'Sections group the work',
-    p:'The big labelled boxes are sections — a subsystem, a stage, however you want to '+
+    p:'The big labelled boxes are sections: a subsystem, a stage, however you want to '+
       'cut it. Use ＋ Section to make one. Drag it by its name to move it (its tasks '+
       'come along), or by the top-right corner to resize. Double-click the name to '+
       'rename or delete it.',
@@ -1784,14 +1784,14 @@ const TOUR=[
   {
     t:'Add a task',
     p:'＋ Add Task drops one into the section you pick. Choose manufacturing, assembly '+
-      'or milestone, and name anything it depends on while you are there — you can also '+
+      'or milestone, and name anything it depends on while you are there. You can also '+
       'draw a dependency later by dragging from the small handle at the top of a card.',
     art:'＋', sub:'Drag a card to reposition it at any time',
   },
   {
     t:'Track progress',
     p:'✓ marks a task complete and ◐ marks it in progress, so "someone is on it" is a '+
-      'state rather than a guess. 📝 holds notes — a supplier, a measurement, why it '+
+      'state rather than a guess. 📝 holds notes: a supplier, a measurement, why it '+
       'stalled. Every tick is logged with who did it and when.',
     art:'✓ ◐ 📝', sub:'Ticks appear in the dashboard activity feed',
   },
@@ -1814,7 +1814,7 @@ function tourRender(){
   // Built as elements rather than by splicing an expression into a class
   // attribute. suite-static reads those attributes with a regex to check every
   // class is defined somewhere, and an expression inside one parses as two
-  // nonsense class names — so the check fails on markup that is perfectly fine.
+  // nonsense class names, so the check fails on markup that is perfectly fine.
   // Cheaper to write it this way than to teach the checker to read JavaScript.
   const dots=document.getElementById('tour-dots');
   dots.innerHTML='';

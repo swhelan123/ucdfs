@@ -7,14 +7,14 @@
  *     <link rel="stylesheet" href="/static/shared.css">
  *     <style> ...page-specific only... </style>
  *
- * The canvas tools (pt, harness) deliberately do NOT use this — they are
+ * The canvas tools (pt, harness) deliberately do NOT use this. They are
  * full-screen editors with their own visual language. They share shared.js only.
  *
  * Pages set their own content width with --page-max (default 1100px).
  * ========================================================================== */
 
 :root {
-  /* brand — sampled from ucdfs_logo.png */
+  /* brand, sampled from ucdfs_logo.png */
   --ucd-navy:#15386e; --ucd-gold:#f6ca45;
 
   /* accents */
@@ -176,7 +176,7 @@ a.logo:hover { transform:translateY(-2px); }
       font-weight:800; flex-shrink:0; }
 /* Applied by UCDFS.avatar() when a person has a photo. The element keeps its
    own sizing class and just swaps its fill, so a face and a set of initials
-   occupy exactly the same space — a list must not reflow as photos load. */
+   occupy exactly the same space. A list must not reflow as photos load. */
 .has-photo { background-size:cover; background-position:center; color:transparent; }
 .av28 { width:28px; height:28px; font-size:.6rem; }
 .av32 { width:32px; height:32px; font-size:.65rem; }
@@ -200,7 +200,7 @@ a.logo:hover { transform:translateY(-2px); }
    dashboard's subteam filter and the profiles directory, which is why it lives
    here rather than in either page.
 
-   Chips FILTER, they never gate. Nothing a chip hides is unreachable — clearing
+   Chips FILTER, they never gate. Nothing a chip hides is unreachable. Clearing
    the filter always brings it back. A filter that permanently hides something
    someone needs is worse than no filter at all. */
 .chips {

@@ -2,7 +2,7 @@
 #
 # Everything runs on a self-hosted runner on the homeserver. There is no cloud
 # runner step, for two reasons: the deploy target is behind NAT and only
-# reachable from inside the house, and the secrets are already on that machine —
+# reachable from inside the house, and the secrets are already on that machine,
 # a GitHub-hosted runner would mean copying the service_role key into GitHub so
 # it could hand it back to us over the internet.
 #
@@ -18,7 +18,7 @@
 name: CI
 
 on:
-  # main only. Branch pushes are covered by the pull_request trigger — running
+  # main only. Branch pushes are covered by the pull_request trigger. Running
   # both meant every commit on a PR branch tested twice, and this box has two
   # cores shared with the live site.
   push:
@@ -61,7 +61,7 @@ jobs:
 
   # ── Build the artefact ───────────────────────────────────────────────────
   # Built once, on main only, and tagged with the sha. Stage and prod both
-  # deploy THIS image — prod is a promotion of something already proven on
+  # deploy THIS image. Prod is a promotion of something already proven on
   # stage, not a second build from the same source that might not agree.
   build:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -98,7 +98,7 @@ jobs:
 
   # ── Production ───────────────────────────────────────────────────────────
   # Manual, and gated. Configure the "production" environment in the repo
-  # settings with yourself as a required reviewer — that is what turns this into
+  # settings with yourself as a required reviewer. That is what turns this into
   # an approval prompt on your phone rather than a job that just runs.
   #
   # deploy.sh refuses a tag that is not an ancestor of origin/main unless

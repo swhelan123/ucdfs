@@ -1,11 +1,11 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  UCDFS — accounts + row-level security
+--  UCDFS: accounts + row-level security
 --
 --  Run PART 1 first, deploy the app with SUPABASE_SERVICE_KEY set, confirm
 --  you can sign in, and only then run PART 2. Doing PART 2 first would cut
 --  the running app off from its own data.
 --
---  Why this shape: the browser never talks to Supabase directly — every query
+--  Why this shape: the browser never talks to Supabase directly. Every query
 --  goes through FastAPI, which holds the service_role key and enforces its own
 --  authorization. So the correct policy set for the anon/authenticated roles is
 --  *no policies at all*: RLS on, nothing granted, PostgREST returns nothing.
@@ -13,7 +13,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
--- ── PART 1 — accounts ──────────────────────────────────────────────────────
+-- ── PART 1: accounts ──────────────────────────────────────────────────────
 -- Safe to run on a live database: purely additive, touches no existing table.
 
 create table if not exists public.profiles (
@@ -34,7 +34,7 @@ create index if not exists profiles_email_idx on public.profiles (lower(email));
 
 -- The existing tables key people by full name text (attendance.name,
 -- comp_roster.person_name, comp_requests.requester). This view is the bridge
--- from an account back to those rows — no data migration required.
+-- from an account back to those rows, with no data migration required.
 create or replace view public.profile_names as
   select id,
          trim(first_name || ' ' || last_name) as full_name,
@@ -42,16 +42,16 @@ create or replace view public.profile_names as
          role
   from public.profiles;
 
--- NOTE: RLS on profiles is deliberately NOT enabled here — it belongs with the
+-- NOTE: RLS on profiles is deliberately NOT enabled here. It belongs with the
 -- rest of the lockdown in PART 2. Enabling it before the app has the service key
 -- makes signup fail on the profile write, which is exactly the trap PART 2 warns
 -- about. PART 1 stays runnable at any time, with or without the key.
 
 
--- ── PART 2 — close the door ────────────────────────────────────────────────
+-- ── PART 2: close the door ────────────────────────────────────────────────
 -- ⚠️  Only run this once the app is deployed with SUPABASE_SERVICE_KEY set and
 --     you have signed in successfully. It revokes all anon-key access, which is
---     the entire point — but it is also what breaks a mis-configured deploy.
+--     the entire point, but it is also what breaks a mis-configured deploy.
 --
 --     To undo: ALTER TABLE <name> DISABLE ROW LEVEL SECURITY;
 
@@ -74,7 +74,7 @@ alter table public.schedule_events enable row level security;
 -- anon and authenticated get nothing; service_role bypasses RLS entirely.
 
 
--- ── PART 3 — make yourself admin ───────────────────────────────────────────
+-- ── PART 3: make yourself admin ───────────────────────────────────────────
 -- Run AFTER you have signed up, with the address you actually signed up with.
 -- Roles are 'member' | 'committee' | 'admin'. committee and admin both satisfy
 -- the Competition Hub gate, so they get in without the shared password.
@@ -91,7 +91,7 @@ update public.profiles
 --   select email, first_name, last_name, role from public.profiles order by role, email;
 
 
--- ── PART 4 — tidy-up (optional) ────────────────────────────────────────────
+-- ── PART 4: tidy-up (optional) ────────────────────────────────────────────
 -- Clears the "function search_path mutable" warning in the Supabase linter.
 
 alter function public.update_updated_at() set search_path = public, pg_temp;

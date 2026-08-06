@@ -34,11 +34,11 @@ cookies.txt
 
 # ── Uploaded files ────────────────────────────────────────────────────────────
 # Profile photos, mounted into the container at /app/uploads. Real people's
-# faces — they belong on the server and in the backup, not in git.
+# faces. They belong on the server and in the backup, not in git.
 data/
 
 # ── Not part of the webapp ────────────────────────────────────────────────────
 # circuits/ is a separate 239 MB git repo (KiCad projects, BMS, LTspice). It
-# lives here for convenience only — keep it versioned in its own repo, not
+# lives here for convenience only. Keep it versioned in its own repo, not
 # vendored into this one.
 circuits/

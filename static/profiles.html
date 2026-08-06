@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/static/shared.css">
 <style>
 /* Profiles-only styles. Cards, chips, buttons and the toast come from
-   shared.css — see the top of that file for the split. */
+   shared.css. See the top of that file for the split. */
 :root { --page-max: 1000px; }
 
 /* ── Head of the page ── */
@@ -69,7 +69,7 @@
   letter-spacing: 0.06em; padding: 2px 7px; border-radius: 6px;
   background: var(--dark); color: #fff;
 }
-/* Team Principal / Technical Director — across all three divisions, so they get
+/* Team Principal / Technical Director: across all three divisions, so they get
    the team's own colours rather than a division's. */
 .p-lead {
   font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
@@ -139,10 +139,10 @@
 
 /* ── Crop ──
    Square, because every place a face is shown is a circle. Panning is on the
-   canvas itself rather than on a draggable frame — you move the photo under a
+   canvas itself rather than on a draggable frame. You move the photo under a
    fixed hole, which is what every phone does. */
 /* Above the editor, which is also a .sheet. Equal z-index would leave it to DOM
-   order, and the editor comes later — so the cropper would open behind the form
+   order, and the editor comes later, so the cropper would open behind the form
    that launched it. It is opened *from* the editor, so it has to outrank it. */
 #cropper { z-index: 80; }
 
@@ -422,7 +422,7 @@ function accentVars(subteamId) {
   return `--p-accent:${a};--p-accent-bg:${bg}`;
 }
 
-/* A card is "bare" when there is nothing on it but a name — no photo, no
+/* A card is "bare" when there is nothing on it but a name: no photo, no
    prompts, no tags. Worth marking, because it is the thing the September
    nudge is trying to fix. */
 function isBare(p) {
@@ -451,7 +451,7 @@ function metaLine(p) {
 }
 
 /* The badge on a card. A Team Principal or Technical Director leads with the
-   role, because "Operations" would be wrong — they sit across all three. */
+   role, because "Operations" would be wrong. They sit across all three. */
 function badgeFor(p) {
   if (p.role_scope === 'team') {
     return `<span class="p-lead">${UCDFS.esc(p.role_name)}</span>`;
@@ -499,7 +499,7 @@ function renderChips() {
     TEAM_FILTER = b.dataset.id; render();
   }));
 
-  /* Tag chips are built from what people actually wrote, most-used first —
+  /* Tag chips are built from what people actually wrote, most-used first,
      a fixed list would go stale the week someone starts on a new subsystem. */
   const counts = {};
   PEOPLE.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
@@ -511,7 +511,7 @@ function renderChips() {
   tagsEl.innerHTML = top.map(t =>
     chip(t, t, counts[t], '', TAG_FILTER === t)).join('');
   tagsEl.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
-    /* Tapping the active tag clears it — the only way out otherwise would be
+    /* Tapping the active tag clears it. The only way out otherwise would be
        hunting for a "clear" button. */
     TAG_FILTER = (TAG_FILTER === b.dataset.id) ? null : b.dataset.id;
     render();
@@ -539,7 +539,7 @@ function personCard(p) {
              <div class="p-qlabel">${UCDFS.esc(q.label)}</div>
              ${UCDFS.esc(q.answer)}
            </div>`
-        : `<div class="p-empty">${p.id === ME ? 'Your profile is empty — tap to fill it in.'
+        : `<div class="p-empty">${p.id === ME ? 'Your profile is empty. Tap to fill it in.'
                                               : 'Hasn\'t filled this in yet.'}</div>`}
     ${tags ? `<div class="p-tags">${tags}</div>` : ''}
   </button>`;
@@ -648,7 +648,7 @@ function canEditOthers() { return !!(UCDFS.user() || {}).god_mode; }
 function openEditor(targetId) {
   EDITING = targetId || ME;
   const mine = PEOPLE.find(p => p.id === EDITING);
-  /* Deep-ish copy so Cancel really cancels — the grid must not change until a
+  /* Deep-ish copy so Cancel really cancels. The grid must not change until a
      save actually lands. */
   DRAFT = JSON.parse(JSON.stringify(mine || {
     id: EDITING, name: '', subteam: null, subteams_extra: [], tags: [], prompts: [],
@@ -688,7 +688,7 @@ function fillEditor() {
   }
 
   /* value/label option list, with an em-dash for "not set". */
-  const opts = (list, sel) => ['<option value="">—</option>'].concat(
+  const opts = (list, sel) => ['<option value="">None</option>'].concat(
     list.map(o => `<option value="${UCDFS.esc(o.value)}"
       ${String(sel || '') === String(o.value) ? 'selected' : ''}>${UCDFS.esc(o.label)}</option>`)
     ).join('');
@@ -701,7 +701,7 @@ function fillEditor() {
   for (let y = thisYear + 1; y >= thisYear - 7; y--) years.push({ value: y, label: y });
   document.getElementById('f-joined').innerHTML = opts(years, DRAFT.joined_year);
 
-  /* Division — hidden for the team-wide roles, which sit across all three. */
+  /* Division: hidden for the team-wide roles, which sit across all three. */
   const role = ROLES.find(r => r.value === DRAFT.role_label);
   const teamWide = role && role.scope === 'team';
   document.getElementById('team-field').style.display = teamWide ? 'none' : '';
@@ -745,7 +745,7 @@ function addTag(raw) {
 function renderTags() {
   const box   = document.getElementById('tag-box');
   const entry = document.getElementById('f-tags');
-  /* Rebuild the bubbles in front of the input rather than replacing the box —
+  /* Rebuild the bubbles in front of the input rather than replacing the box,
      re-creating the input would drop focus on every keystroke. */
   [...box.querySelectorAll('.tag-bubble')].forEach(n => n.remove());
 
@@ -826,10 +826,10 @@ function renderSlots() {
 
 /* ── Photo ──
    Resized in the browser, not on the server. A 4 MB phone photo per person adds
-   up fast, and this container has no image library — so the canvas that has to
+   up fast, and this container has no image library, so the canvas that has to
    draw the preview anyway does the shrinking too. Square-cropped from the
    centre because every place it is displayed is a circle. */
-const CROP_VIEW = 300;    /* the canvas, in px — matches the stage in CSS */
+const CROP_VIEW = 300;    /* the canvas in px, matching the stage in CSS */
 const CROP_OUT  = 512;    /* what gets uploaded */
 
 let CROP = null;          /* { img, zoom, x, y, min } while the cropper is open */
@@ -966,7 +966,7 @@ function wireCropper() {
   stage.addEventListener('pointermove', e => {
     if (!dragging || !CROP) return;
     /* The canvas is displayed at CSS width, which may differ from its 300px
-       backing store on a narrow phone — scale the drag to match. */
+       backing store on a narrow phone, so scale the drag to match. */
     const k = CROP_VIEW / (stage.clientWidth || CROP_VIEW);
     CROP.x += (e.clientX - lastX) * k;
     CROP.y += (e.clientY - lastY) * k;
@@ -1015,7 +1015,7 @@ async function save() {
 
   const roleValue = document.getElementById('f-role').value;
   const role      = ROLES.find(r => r.value === roleValue);
-  /* Anything still sitting in the tag box counts — nobody should lose a skill
+  /* Anything still sitting in the tag box counts. Nobody should lose a skill
      because they hit Save instead of Enter. */
   addTag(document.getElementById('f-tags').value);
   document.getElementById('f-tags').value = '';
@@ -1046,7 +1046,7 @@ async function save() {
     if (!r.ok) throw new Error(j.detail || 'Save failed');
 
     /* The server rewrites the profile cookie only when you edited yourself, so
-       this is a no-op otherwise — but it must still run for the self case,
+       this is a no-op otherwise, but it must still run for the self case,
        because subteam lives in that cookie. */
     UCDFS.refreshUser();
     await load();
@@ -1123,7 +1123,7 @@ async function boot(user) {
   });
 
   /* Click the backdrop to dismiss, but not a click that started inside the
-     card — otherwise dragging to select text and releasing outside closes the
+     card. Otherwise dragging to select text and releasing outside closes the
      form and loses the lot. */
   [['sheet', closeEditor], ['viewer', closeViewer]].forEach(([id, close]) => {
     const el = document.getElementById(id);
@@ -1146,7 +1146,7 @@ async function boot(user) {
     return;
   }
 
-  /* The dashboard's onboarding step sends people here with ?edit=1 — one
+  /* The dashboard's onboarding step sends people here with ?edit=1. One
      continuous flow rather than "now go and find the edit button". */
   if (/[?&]edit=1/.test(window.location.search)) openEditor();
 }

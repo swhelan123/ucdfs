@@ -1,4 +1,4 @@
-# UCDFS webapp — what to build next
+# UCDFS webapp: what to build next
 
 Written 2026-07-28, a week after FSUK 2026. Target for most of this is the
 **start of the 2026/27 season in September**.
@@ -10,7 +10,7 @@ Written 2026-07-28, a week after FSUK 2026. Target for most of this is the
 We already have Teams (chat + all our files on SharePoint) and Outlook. This app
 should not compete with any of that. The dividing line that has held up so far:
 
-> **Teams holds conversation and files. This app holds _state_ — anything with a
+> **Teams holds conversation and files. This app holds _state_: anything with a
 > status, an owner, a dependency, or a deadline.**
 
 Teams is bad at structured data and has no concept of "this task is blocked by
@@ -20,7 +20,7 @@ belongs in Teams, linked from here.
 
 ## The lesson from the Notion tracker
 
-The Notion tasks/epics build died in **March** — peak manufacturing crunch, the
+The Notion tasks/epics build died in **March**: peak manufacturing crunch, the
 month it should have been most useful. That timing is the whole diagnosis: it
 wasn't a discipline problem, it was that the tool was never load-bearing. When
 people got busy they routed around it, and nothing broke, so it stayed routed
@@ -31,7 +31,7 @@ still being ticked off. Same team, same year, opposite outcome. The differences:
 
 | Notion tasks DB | PT plan |
 |---|---|
-| generic — could hold anything | shaped like one real job |
+| generic, could hold anything | shaped like one real job |
 | a list you must read | a picture you can see |
 | creating a task = filling a form | ticking a node = one click |
 | no shared view of "where are we" | the whole build at a glance |
@@ -48,59 +48,59 @@ that will die next March for the same reasons.
 Small things, mostly reusing data we already store. Worth doing before any new
 applet because they make the homepage worth opening daily.
 
-### 1. Days to competition — ✅ done
+### 1. Days to competition (✅ done)
 Navy/gold strip at the top of the dashboard. The season calendar
 (`FSUK_DATE`, `SEASON_MILESTONES`) is one editable block at the top of `main.py`
 and is the only input.
 
 Two things still open:
-- **The date is provisional** — `date(2027, 7, 13)`, extrapolated from the 2026
+- **The date is provisional**: `date(2027, 7, 13)`, extrapolated from the 2026
   pattern. The card says "provisional" until `FSUK_PROVISIONAL` is cleared.
   Update both the day IMechE announce.
 - `SEASON_MILESTONES` is empty. The machinery renders "Next: design freeze in 42
   days" as soon as there are dates to put in it.
 
-### 2. Activity feed — ✅ done
+### 2. Activity feed (✅ done)
 Bottom of the dashboard, newest eight. Merges two sources: `pt_done_log` (the PT
 plan's existing audit log, adapted rather than duplicated) and the
-`activity_log` table — `migrations/002`, **applied**, written to via
+`activity_log` table: `migrations/002`, **applied**, written to via
 `log_activity()`. Profiles writes one line the first time someone fills theirs
 in, and none for later edits.
 
-Attendance deliberately doesn't write to it — twenty people logging a day each
+Attendance deliberately doesn't write to it. Twenty people logging a day each
 morning would bury everything else, and the nowbar covers it. Worth revisiting
 when there are more applets writing: eight items is thin now and will be noisy
 later, so the feed probably wants its own page and a "load more".
 
-### 3. Who's in the workshop right now — ✅ done
-*"4 in the workshop now — Shane, Aoife, Cian +1 · until 17:00"*, with real
+### 3. Who's in the workshop right now (✅ done)
+*"4 in the workshop now: Shane, Aoife, Cian +1 · until 17:00"*, with real
 profile photos where people have uploaded one, in a bar under the headline. Only rendered when someone actually is in; the
 headline drops its own workshop line in that case so the two never duplicate.
 
-Someone who logged no departure time counts as still here — we can't know, and
+Someone who logged no departure time counts as still here. We can't know, and
 showing a present person as gone is the worse error.
 
 Watch for: it's a snapshot at page load, not live. If people start leaving the
 dashboard open on the workshop TV it wants a poll or the existing websocket.
 
-### 4. Your own stuff — *small*
+### 4. Your own stuff (*small*)
 "3 tasks assigned to you", "you owe Aoife £14.20". Personalises the homepage,
 which is the single biggest driver of repeat visits.
 
 ---
 
-## Tier 1 — build these first
+## Tier 1: build these first
 
-### Team Profiles  🧑‍🔧 — ✅ built 2026-07-28, ship in September
+### Team Profiles  🧑‍🔧 (✅ built 2026-07-28, ship in September)
 *The idea from the chat, and I think it's the right one to do first.*
 
-**Shipped:** `/profiles` — directory grid, croppable photo, year/course/joined,
+**Shipped:** `/profiles`: directory grid, croppable photo, year/course/joined,
 role, division badges, skill tags typed as bubbles, three prompts from a list of
 fifteen, search, and filter chips for division and tag. `migrations/003`
 (**applied**), `tests/suite-profiles.js` (83 checks). Photos are on this
 server's disk under
 `./data/uploads`, served through `/media/avatars/…` behind the auth middleware,
-so profiles are members-only by default — and they show up in the header pill,
+so profiles are members-only by default, and they show up in the header pill,
 the "who's in now" bar and the attendance log, not just here. `is_public` is
 stored per profile but nothing reads it yet; the sponsor page is deliberately
 deferred, see below.
@@ -118,20 +118,20 @@ because nobody on the team is one.
   before September so the grid doesn't look abandoned when 30 people first
   open it.
 - The prompt list has never met a real user. Expect to swap two or three out
-  after the first week — that costs one line in `PROMPTS`, no migration.
+  after the first week. That costs one line in `PROMPTS`, no migration.
 
-~~**Two rough edges in the first-run flow**~~ — ✅ both fixed 2026-07-28:
+~~**Two rough edges in the first-run flow**~~ (✅ both fixed 2026-07-28):
 
-- ~~A deep link skips the division question~~ — the step moved out of
+- ~~A deep link skips the division question~~. The step moved out of
   `dashboard.html` into `shared.js`, which builds the overlay itself and raises
   it on whatever page you land on. It is idempotent: the dashboard also calls
   `UCDFS.onboard(cb)` to hear the answer and move its filter, and the second
   call only registers the callback.
-- ~~Name spelling is load-bearing~~ — both the page and the new server-side
+- ~~Name spelling is load-bearing~~. Both the page and the new server-side
   ownership check fold case and collapse whitespace, so "shane whelan" and
   "Shane  Whelan" are the same person.
 
-Not because it's the most useful — because it's the only one with a **social**
+Not because it's the most useful, but because it's the only one with a **social**
 reason to open the site. Adoption is the thing that killed the last attempt, and
 a tool nobody opens in October is a tool nobody trusts in March. Ship this in
 **September during recruitment** when 30 new people need to learn who everyone
@@ -144,11 +144,11 @@ choosing is easier than composing.
 **Fixed fields** (auto-fill name + email from their account):
 - Photo
 - Year (1st–5th / MSc / PhD) and course
-- **Subteam** — Powertrain / Mechanical / Operations (see next section)
+- **Subteam**: Powertrain / Mechanical / Operations (see next section)
 - Role (member / lead / committee)
 - Joined (year)
 
-**Chosen prompts** — pick any 3 from a list of ~15:
+**Chosen prompts**: pick any 3 from a list of ~15:
 - Why I joined UCDFS
 - Favourite team memory
 - The part I'm proudest of
@@ -162,15 +162,15 @@ choosing is easier than composing.
 
 **The bit that makes it matter in November, not just September:** add
 **skills/subsystem tags** and make the grid filterable. Then it stops being a
-fun page and becomes *"who do I ask about CAN bus?"* — a directory. That's what
+fun page and becomes *"who do I ask about CAN bus?"*, a directory. That's what
 gives it a reason to exist after the novelty wears off.
 
 Notes:
-- Photos need **Supabase Storage** — first time we'd use it. Bucket with the
+- Photos need **Supabase Storage**, the first time we'd use it. Bucket with the
   service key, same as the DB. Resize on upload; a 4 MB phone photo per person
   adds up fast.
 - Privacy: members-only by default, with a per-profile "show on public page"
-  toggle. That gives us a **recruitment / sponsor page** for free — a real
+  toggle. That gives us a **recruitment / sponsor page** for free, a real
   external win, and a reason for the business side to care.
 - I'd skip **age**. Year + course already says it, and some people won't want it
   on a page sponsors might see. Easy to add later if people ask.
@@ -179,7 +179,7 @@ Notes:
 
 ---
 
-### Subteams — self-assignment + applet filtering  🏷️ — ✅ done 2026-07-28
+### Subteams: self-assignment + applet filtering  🏷️ (✅ done 2026-07-28)
 People pick **Powertrain**, **Mechanical** or **Operations**, applets get tagged
 with the same three, and the dashboard filters to what's relevant to you.
 
@@ -187,7 +187,7 @@ with the same three, and the dashboard filters to what's relevant to you.
 every registry entry carries a `subteams` tag, the dashboard has filter chips
 that remember your choice per device and default to your own subteam, and the
 first-sign-in step asks the question with **Not sure yet** as a real answer.
-Picking a subteam hands straight over to "set up your profile" — one onboarding
+Picking a subteam hands straight over to "set up your profile", one onboarding
 sequence, as intended. The suite asserts both invariants: no applet is
 unreachable under any chip, and a tag never gates a route.
 
@@ -196,14 +196,14 @@ registry, the dashboard, Build Plans and Teams notification routing. Cheap now,
 annoying to retrofit once there are ten applets.
 
 **Where to ask.** Not on the signup form. That screen has one job and every extra
-field costs completions — and during September recruitment half of them genuinely
+field costs completions, and during September recruitment half of them genuinely
 don't know their subteam yet. Instead:
 
 - A **one-time onboarding step on first sign-in**: three big cards, *"Which
   subteam are you on?"*, plus a **Not sure yet** option that doesn't block them.
 - Editable afterwards from their profile, because people move around.
 
-That also merges cleanly with the Team Profiles "finish your profile" flow —
+That also merges cleanly with the Team Profiles "finish your profile" flow,
 one onboarding sequence, not two.
 
 **Let people be on more than one.** Powertrain people do mechanical work all the
@@ -215,7 +215,7 @@ alter table profiles add column subteam       text,          -- 'pt' | 'mech' | 
                      add column subteams_extra text[] default '{}';
 ```
 
-**Applet tagging** — one more field in the `APPLETS` registry, so it stays the
+**Applet tagging**: one more field in the `APPLETS` registry, so it stays the
 single source of truth:
 
 ```python
@@ -234,16 +234,16 @@ Current applets would map:
 | Mech Manufacturing Plan | mech |
 | Competition Hub | ops |
 
-**Filter, never hide.** Filter chips along the top of the dashboard —
-*All · Powertrain · Mechanical · Operations* — defaulting to your subteam, with
+**Filter, never hide.** Filter chips along the top of the dashboard,
+*All · Powertrain · Mechanical · Operations*, defaulting to your subteam, with
 `all`-tagged applets always shown. Nothing ever becomes unreachable; a filter
 that hides something someone needs is worse than no filter at all. Remember the
 last choice per device.
 
 **Tags are not permissions.** Worth keeping these separate in our heads:
 
-- `subteams` — *relevance*. Soft, user-facing, changeable, purely presentational.
-- `requires_role` — *permission*. Hard, server-enforced, not a display concern.
+- `subteams`: *relevance*. Soft, user-facing, changeable, purely presentational.
+- `requires_role`: *permission*. Hard, server-enforced, not a display concern.
 
 An Operations member must still be able to open the PT plan; it just shouldn't be
 the first thing they see. If we ever conflate the two we'll end up locking people
@@ -252,24 +252,24 @@ out of things they need at 2am before a deadline.
 **Downstream wins once subteam exists:**
 - Build Plans open your subteam's plan by default
 - Teams notifications route to the right channel instead of spamming everyone
-- Profiles filter by subteam — *"who's on Powertrain?"*
+- Profiles filter by subteam: *"who's on Powertrain?"*
 - Dashboard headline can prioritise your subteam's blockers
 
 ---
 
-### Flowcharts  🗺️  *(done — was "generalise the PT plan")*
+### Flowcharts  🗺️  *(done, was "generalise the PT plan")*
 The replacement for the Notion tracker, built from the thing that already worked.
 
 Landed in three steps, each one moving a layer out of code and into the database:
 
-- **`migrations/005` — data belongs to a plan.** Every `pt_*` table carries a
+- **`migrations/005`: data belongs to a plan.** Every `pt_*` table carries a
   `plan_id`; one canvas serves any plan at `/plan/<id>`; `/pt` stays the legacy
   alias so nothing saved before the change moved.
-- **`migrations/006` — sections are rows.** They spent one release as
+- **`migrations/006`: sections are rows.** They spent one release as
   `cols`/`rows` definitions in code, which meant a new plan's *layout* was still
   a deploy. Now: `＋ Section`, drag the name to move it (tasks come with it),
   drag the top-right corner to resize, double-click to rename or delete.
-- **`migrations/007` — charts are rows.** The last hardcoded thing was the list
+- **`migrations/007`: charts are rows.** The last hardcoded thing was the list
   of plans itself. `/flowcharts` is the picker: every chart, task counts,
   `＋ New chart`, and rename / archive / delete per chart. Archiving is the
   reversible action; deleting only works on an empty chart.
@@ -289,40 +289,57 @@ reopen it, because a canvas with no instructions is a canvas people open once.
 Still to do, roughly in order:
 
 - Add per node:
-  - **Assignee** (from `profiles` — we have accounts now)
+  - **Assignee** (from `profiles`, we have accounts now)
   - **Due date**, so the countdown can flag what's late
-  - **Blocked** flag distinct from not-started — "waiting on a part" is the
+  - **Blocked** flag distinct from not-started: "waiting on a part" is the
     single most common real state and neither Notion nor the current plan can
     express it
 - Then the dashboard can say *"Chassis is 12% behind, 3 tasks blocked on
   parts"*, which is the sentence a team lead actually wants. (Today the tile
-  follows one chart — `DASHBOARD_PLAN` — which is the right shape until there
+  follows one chart (`DASHBOARD_PLAN`), which is the right shape until there
   is per-chart data worth a sentence each.)
 - **Duplicate a chart.** Rebuilding a 60-task plan by hand every September is
-  the obvious next paper cut, and the graph is already chart-scoped — "copy this
+  the obvious next paper cut, and the graph is already chart-scoped: "copy this
   chart's sections and tasks into a new one, tick state cleared" is one endpoint
   and a menu item on `/flowcharts`. Probably the single highest-value thing left
   on this list, and it is what makes the September rollover a five-second job.
 - At season rollover: archive last season's chart from the picker and point
-  `DASHBOARD_PLAN` at the new one. The 25/26 data stays in the tables untouched —
+  `DASHBOARD_PLAN` at the new one. The 25/26 data stays in the tables untouched,
   never wipe `pt_*` for a new season, `pt_done_log` is the feed's history.
 - **Per-chart subteam tag**, so `/flowcharts` and the dashboard can put a
   Mechanical chart in front of Mechanical first. Same rule as everywhere else in
-  here: relevance, never permission — filter, don't hide.
+  here: relevance, never permission. Filter, don't hide.
+
+---
+
+### Favourites  ⭐ (✅ done)
+Star any card and a copy appears in a Favourites block at the top of the
+dashboard; the original stays where it is. Per account
+(`profile_details.favourites`, `migrations/008`), not per browser. See the note
+in CLAUDE.md for why that is the opposite call to the subteam chip.
+
+Worth doing next, in rough order of value:
+
+- **Favourite a chart, not just an applet.** Charts are rows now, so "star this
+  build plan" is the same idea one level down and probably what people actually
+  want once there are five charts. Needs a second column, or a `kind` on the
+  existing one.
+- **Reorder favourites by dragging.** The column is an ordered array already and
+  the server keeps click order, so this is a UI change and one endpoint.
 
 ---
 
 ### `/api/dashboard` is a dozen round trips  🐌
 Not urgent, but worth knowing about. Every tile does its own Supabase queries,
 sequentially, and the endpoint now waits on roughly a dozen before it answers.
-Independence is deliberate — one failing table nulls one tile instead of blanking
-the page — but the calls are independent too, and nothing makes them wait for
+Independence is deliberate: one failing table nulls one tile instead of blanking
+the page, but the calls are independent too, and nothing makes them wait for
 each other.
 
 This surfaced as a *test* failure rather than a complaint: `suite-pages` asserted
 on the dashboard after a fixed 1.75s and started reading an undrawn page on a
 busy runner. The suite waits for the page's own signal now (`waitFor` in
-`tests/lib.js`), so it is honest either way — but the endpoint is genuinely slow
+`tests/lib.js`), so it is honest either way, but the endpoint is genuinely slow
 on a cold connection and the fix is small: gather the tiles concurrently
 (`asyncio.to_thread` per tile, or one `Promise.all`-shaped batch) and keep the
 per-tile isolation. Worth doing before the feed or the tiles grow again.
@@ -332,11 +349,11 @@ per-tile isolation. Worth doing before the feed or the tiles grow again.
 ### Teams notifications  🔔
 *Highest value per line of code on this list.*
 
-Everything above assumes people visit the site. They won't, reliably — but they
+Everything above assumes people visit the site. They won't, reliably, but they
 are in Teams all day. An **Incoming Webhook** (or Power Automate) per channel and
 the app can push:
 
-- "🛒 Shop run closes in 1 hour — 3 requests pending"
+- "🛒 Shop run closes in 1 hour: 3 requests pending"
 - "🔴 Chassis task blocked: waiting on M6 bolts"
 - "📋 Nobody has logged attendance for tomorrow"
 - "✅ Aoife finished the accumulator container"
@@ -348,7 +365,7 @@ It's one webhook URL in an env var and a small `notify()` helper.
 
 ---
 
-## Tier 2 — once Tier 1 has stuck
+## Tier 2: once Tier 1 has stuck
 
 ### Inventory & Orders  📦
 Extend the comp-hub shop-run idea to the whole year. Every FS team loses parts
@@ -359,12 +376,12 @@ and re-buys things it already owns.
 - Link to the supplier order + tracking
 - Low-stock flags for consumables
 
-`comp_requests` is already 80% of the request half of this — generalise rather
+`comp_requests` is already 80% of the request half of this. Generalise rather
 than start fresh.
 
 ### Budget  💷
 Per-subsystem season budget vs spend-to-date. The treasurer needs it, and the
-**FS Cost Event** requires the data anyway, so it's not overhead — it's a
+**FS Cost Event** requires the data anyway, so it's not overhead. It's a
 deliverable we currently assemble by hand at the end.
 
 `comp_expenses` already does splitting and GBP→EUR. Same shape.
@@ -379,31 +396,31 @@ design. A checklist built from the FSUK rules (we already keep
 - evidence link (photo, test result, Teams doc)
 - who signed it off
 
-EV items especially — TSAL, BSPD, IMD, shutdown circuit, precharge, accumulator
-— which map directly onto the `circuits/` KiCad projects already in the repo.
+EV items especially: TSAL, BSPD, IMD, shutdown circuit, precharge, accumulator,
+which map directly onto the `circuits/` KiCad projects already in the repo.
 Turning "we think we comply" into "here is the evidence" is worth real points.
 
 ---
 
-## Tier 3 — good ideas, no rush
+## Tier 3: good ideas, no rush
 
-- **Design decision log** — what we chose, what we rejected, why. Judges ask
+- **Design decision log**: what we chose, what we rejected, why. Judges ask
   "why" at Design Event and we currently reconstruct it from memory in June.
   Lightweight: title, options, decision, rationale, date, who.
-- **Testing log** — test sessions, what ran, faults found, links to attendance
+- **Testing log**: test sessions, what ran, faults found, links to attendance
   (who was there) and build plans (what it unblocks).
-- **Onboarding trail** — a "start here" for September: safety induction, tools
+- **Onboarding trail**, a "start here" for September: safety induction, tools
   training, who's who, first task. Pairs naturally with Team Profiles.
-- **Sponsor tracker** — contacted / in talks / signed, tier, deliverables owed
+- **Sponsor tracker**: contacted / in talks / signed, tier, deliverables owed
   (logo placement, social posts). Gives the business side a tool of their own.
-- **Car status board** — one page aggregating subsystem readiness. "Is the car
+- **Car status board**: one page aggregating subsystem readiness. "Is the car
   drivable this weekend?" answered without asking five people.
 
 ---
 
 ## Finish before starting
 
-**The Wiring Harness Mapper — audited and fixed, 2026-07-28.** The "incomplete"
+**The Wiring Harness Mapper: audited and fixed, 2026-07-28.** The "incomplete"
 label was wrong, and worth correcting because it was steering the roadmap. The
 tool is feature-complete (canvas, splices, nets, DRC, BOM, KiCad import, four
 CSV/YAML exports, five print reports, live multiplayer, revisions, library).
@@ -412,7 +429,7 @@ What it had instead was **defects in the numbers people would have ordered from*
 - **DTM connectors emitted Deutsch DT part numbers.** DTM is the smaller
   sibling with its own housings, its own wedgelock and size-20 contacts.
   Ordering from that BOM got you parts that do not physically fit.
-- **12 of 34 connector types produced no BOM lines at all**, silently —
+- **12 of 34 connector types produced no BOM lines at all**, silently,
   Superseal (all 6), AMPSEAL, Micro-Fit, stud, splice, header, custom. You'd
   have ordered wire and nothing to crimp it into.
 
@@ -420,10 +437,10 @@ Both fixed. `connParts()` now guarantees every connector yields at least one
 line; where a part number can't be derived it emits `(specify)` and the rule
 check lists it, rather than the connector vanishing. Two new rule-check
 categories: **Contacts** (wire gauge vs the contact's crimp range) and
-**Parts** (connectors with no number). `tests/suite-harness.js` — 40 checks —
+**Parts** (connectors with no number). `tests/suite-harness.js` (40 checks)
 pins all of it.
 
-**Topology model landed 2026-07-28.** The tool was wire-centric — a wire went
+**Topology model landed 2026-07-28.** The tool was wire-centric: a wire went
 pin→pin and its bezier waypoints were decoration. Professional harness tools are
 topology-centric, and that difference is what separates a drawing *of* the
 design from the design itself. Added, additively:
@@ -432,7 +449,7 @@ design from the design itself. Added, additively:
   `route: [segmentId]` and are drawn *through* their segments.
 - **Lengths are derived.** `wireLenMm()` sums the route; change a branch and
   every wire through it updates. `lenManual` pins a measured value. This is the
-  correctness win — hand-typed lengths drift and produce wrong cut lists.
+  correctness win: hand-typed lengths drift and produce wrong cut lists.
 - BFS auto-router, plus **Build topology from wires** which gives an existing
   design a formboard in one action.
 - Bundle casings that branch, drafting dimensions with terminators, wire label
@@ -447,45 +464,45 @@ so this stuff can be screenshot-verified rather than guessed at.
 1. **Clips, sleeving and tape at a distance along a segment.** The model now has
    somewhere to attach them; the BOM already lists them as untargeted
    consumables. This is the cheapest remaining win.
-2. **Connector face views** — the cavity diagram beside each connector. Half of
+2. **Connector face views**: the cavity diagram beside each connector. Half of
    it exists in `repPinout()` already.
 3. **It still holds exactly one harness.** `HARNESS_DOC_ID="main"` is hardcoded,
    so there can never be an LV harness *and* an HV harness. Same `plan_id`
-   generalisation as Build Plans — do both at once.
+   generalisation as Build Plans. Do both at once.
 4. **Versions out of the document.** Revisions live *inside* the doc JSON, so
    the blob grows without bound and every save rewrites the whole history. Wants
-   an append-only `harness_version` table. (Supabase, not the homeserver — the
+   an append-only `harness_version` table. (Supabase, not the homeserver, since the
    SD card is the least reliable component in the stack.)
-5. **Library is `localStorage`** — templates never reach a teammate. This is the
+5. **Library is `localStorage`**: templates never reach a teammate. This is the
    one thing Harness Hive genuinely has that we don't: a shared parts library.
 6. **No cost field**, so the BOM can't total a spend (pairs with Budget, Tier 2).
-7. **Docs viewer** — a document mode with live-embedded views of the BOM and
+7. **Docs viewer**: a document mode with live-embedded views of the BOM and
    drawing. The cleverest idea in Harness Hive: the embed is the live object,
    not a screenshot of one.
 
-~~Also outstanding from the auth work~~ — ✅ all three done 2026-07-28:
-- ~~Assign `committee`/`admin` roles, then drop `COMP_ADMIN_PASSWORD`~~ — the
+~~Also outstanding from the auth work~~ (✅ all three done 2026-07-28):
+- ~~Assign `committee`/`admin` roles, then drop `COMP_ADMIN_PASSWORD`~~. The
   password is gone from the code, the config and the Comp Hub UI. Roles are
   handed out from **`/admin`**, so granting access no longer means an UPDATE in
   the SQL editor, which is why nobody did it.
-- ~~Add `requires_role` to registry entries~~ — `_may_open()` enforces it on the
+- ~~Add `requires_role` to registry entries~~. `_may_open()` enforces it on the
   page route *and* `/api/applets`, so a gated applet is omitted rather than
   shown as a tile that refuses you. `/admin` is the first entry to use it.
-- ~~Move the Supabase keys out of `docker-compose.yml`~~ — `env_file: .env`,
+- ~~Move the Supabase keys out of `docker-compose.yml`~~. Now `env_file: .env`,
   and `tests/suite-static.sh` asserts no key ever reappears inline.
 
-**God mode** (`migrations/004`, applied) — the site calls it **Admin override**;
+**God mode** (`migrations/004`, applied). The site calls it **Admin override**;
 "god mode" is the name in the code and schema. `profiles.role = 'admin'` is the
 capability; `profiles.god_mode` is whether it is switched on. Elevated you can
 edit anyone's profile, remove anyone's photo and write or delete anyone's
 attendance row; switched off you are an ordinary member, which is the only way
 to check what the team actually sees. A banner sits on every page while it is
-on, with a one-click way out. `tests/suite-admin.js` — 48 checks, mostly
+on, with a one-click way out. `tests/suite-admin.js` has 48 checks, mostly
 negatives.
 
 **While wiring that up: attendance had no server-side ownership check at all.**
 `/api/log` and `/api/log/delete` took a name from the request body and wrote it.
-The page only drew edit buttons on your own row, so it looked enforced — but any
+The page only drew edit buttons on your own row, so it looked enforced, but any
 signed-in member could delete anybody's day with one fetch. Fixed, case-folded,
 with god mode as the only override.
 
@@ -493,30 +510,30 @@ with god mode as the only override.
 
 ## Explicitly not building
 
-- **Chat** — Teams.
-- **File storage / wiki** — Teams and SharePoint. Link into them, don't mirror
+- **Chat**: Teams.
+- **File storage / wiki**: Teams and SharePoint. Link into them, don't mirror
   them. Mirrored files go stale and then actively mislead.
-- **Calendar** — Outlook. A read-only "next 3 events" strip on the dashboard is
+- **Calendar**: Outlook. A read-only "next 3 events" strip on the dashboard is
   fine; owning the calendar is not.
-- **A generic task tracker** — see the Notion post-mortem above. Domain-shaped
+- **A generic task tracker**: see the Notion post-mortem above. Domain-shaped
   build plans instead.
 
 ---
 
 ## Suggested order
 
-1. ~~Dashboard wins — countdown, activity feed, who's in now~~ ✅
+1. ~~Dashboard wins: countdown, activity feed, who's in now~~ ✅
    *(set the real FSUK date to finish)*
-2. ~~**Subteams** — profile field + registry tags + dashboard filter~~ ✅
-3. ~~**Team Profiles** — ship for September recruitment~~ ✅ built; the
-   remaining work is content, not code — seed a few real profiles before
+2. ~~**Subteams**: profile field + registry tags + dashboard filter~~ ✅
+3. ~~**Team Profiles**: ship for September recruitment~~ ✅ built; the
+   remaining work is content, not code. Seed a few real profiles before
    September so the grid isn't empty on day one
-4. **Teams notifications** — make everything else visible  *(days)*
+4. **Teams notifications**: make everything else visible  *(days)*
    *Now the highest-value thing left: profiles only pay off if people open the
    site, and this is what makes them.*
-5. ~~Finish the Wiring Harness Mapper~~ ✅ audited + BOM/rule-check defects fixed
-   — remaining: multiple harnesses, server-side library, cost
-6. **Build Plans** — generalise PT, land it before the design phase ends so it's
+5. ~~Finish the Wiring Harness Mapper~~ ✅ audited + BOM/rule-check defects fixed.
+   Remaining: multiple harnesses, server-side library, cost
+6. **Build Plans**: generalise PT, land it before the design phase ends so it's
    in place *before* the March crunch that killed the last one
 7. Inventory & Orders, then Budget
-8. Scrutineering checklist — start it by January, not May
+8. Scrutineering checklist: start it by January, not May

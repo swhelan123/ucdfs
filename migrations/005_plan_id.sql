@@ -2,14 +2,14 @@
 --
 -- The pt_* tables were hardcoded to a single plan (the 25/26 PT manufacturing
 -- plan). Every table gains a plan_id, defaulting to 'pt' so every existing row
--- keeps meaning exactly what it meant — the legacy plan keeps its data without
+-- keeps meaning exactly what it meant. The legacy plan keeps its data without
 -- a backfill step.
 --
 -- Primary keys become composite (plan_id, <old key>): node ids are generated
 -- client-side per plan, so two plans could otherwise collide on the same id.
--- pt_done_log keeps its bigserial — it is an append-only log, not keyed data.
+-- pt_done_log keeps its bigserial. It is an append-only log, not keyed data.
 --
--- Which plans exist, and their section layouts, is NOT in the database — that
+-- Which plans exist, and their section layouts, is NOT in the database. That
 -- is the PLANS registry in main.py, same philosophy as APPLETS. The database
 -- only ever holds rows for plan ids the backend accepted (unknown ids are 400).
 --

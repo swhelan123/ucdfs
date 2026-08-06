@@ -127,7 +127,7 @@ body { display: flex; align-items: center; justify-content: center;
  * The previous version guessed from a name in localStorage, which broke the
  * moment you opened the site on a second device: the phone had the old name but
  * no account record, so it pushed an existing user through signup. localStorage
- * is per-device and says nothing about whether an account exists — only the
+ * is per-device and says nothing about whether an account exists. Only the
  * server knows that, so we ask it.
  * ──────────────────────────────────────────────────────────────────────────── */
 const NEXT       = new URLSearchParams(location.search).get('next') || '/';
@@ -163,7 +163,7 @@ function render() {
   } else if (isSignup) {
     $('auth-title').textContent = knownFirst ? `Hey ${knownFirst} 👋` : 'Create your account';
     $('auth-sub').textContent   = knownFirst
-      ? "UCDFS is moving to proper accounts. We've still got your name — just pick a password."
+      ? "UCDFS is moving to proper accounts. We've still got your name. Just pick a password."
       : 'No account on this email yet. Pick a password and you\'re in.';
     $('password').setAttribute('autocomplete', 'new-password');
     $('submit-label').textContent = 'Create my account';
@@ -198,7 +198,7 @@ async function busy(fn) {
   }
 }
 
-/* Step 1 — does this email have an account? */
+/* Step 1: does this email have an account? */
 async function checkEmail() {
   const value = $('email').value.trim().toLowerCase();
   if (!value) return;
@@ -225,7 +225,7 @@ async function checkEmail() {
   $(step === 'signup' && !$('first').value ? 'first' : 'password').focus();
 }
 
-/* Step 2 — sign in or create. */
+/* Step 2: sign in or create. */
 async function submitCredentials() {
   const body = step === 'signup'
     ? { first_name: $('first').value, last_name: $('last').value,
@@ -243,11 +243,11 @@ async function submitCredentials() {
     // was made elsewhere since. Drop them into sign-in rather than dead-ending.
     if (step === 'signup' && /already/i.test(data.detail || '')) {
       step = 'login'; render();
-      showError('You already have an account — enter your password.');
+      showError('You already have an account. Enter your password.');
       $('password').focus();
       return;
     }
-    showError(data.detail || 'Something went wrong — try again.');
+    showError(data.detail || 'Something went wrong. Try again.');
     return;
   }
   // Only remember it once it actually worked, so a typo doesn't stick to the
@@ -262,7 +262,7 @@ $('auth-form').addEventListener('submit', e => {
   e.preventDefault();
   clearMsg();
   busy(step === 'email' ? checkEmail : submitCredentials)
-    .catch(() => showError('Could not reach the server — check your connection.'));
+    .catch(() => showError('Could not reach the server. Check your connection.'));
 });
 
 (async function init() {

@@ -32,7 +32,7 @@ needs_container=0
 for s in "${SUITES[@]}"; do [ "$s" != "static" ] && needs_container=1; done
 
 # Only the suites that touch a database need credentials. `static` parses files
-# and greps for secrets — it should keep working on a machine that has no env
+# and greps for secrets. It should keep working on a machine that has no env
 # file at all, which is also what makes it the useful first thing to run.
 [ "$needs_container" = "1" ] && load_env
 

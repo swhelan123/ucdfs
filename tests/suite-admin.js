@@ -9,7 +9,7 @@
  *
  *   1. **Hiding a control is not a permission.** /api/log and /api/log/delete
  *      took a name from the request body and wrote it, so any signed-in member
- *      could delete anybody's attendance with one fetch — the page just didn't
+ *      could delete anybody's attendance with one fetch. The page just didn't
  *      draw the button. Ownership is enforced server-side now.
  *
  *   2. **The switch has to be re-flippable.** God mode gates everything except
@@ -19,7 +19,7 @@
  *
  * The elevated half promotes the suite's own throwaway account with the service
  * key rather than asking for a real admin's password, so it runs everywhere.
- * Note that its profile cookie still says "member" throughout — the checks
+ * Note that its profile cookie still says "member" throughout. The checks
  * passing anyway is the proof that authorization comes from the database.
  */
 const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
@@ -67,7 +67,7 @@ const today = new Date().toISOString().slice(0, 10);
   check('signed out is 401, not 403', anon.status === 401, 'status ' + anon.status);
 
   // The privileged profile write. The self-service /api/profile has no id
-  // parameter at all, so this is the only route that can name a target — and it
+  // parameter at all, so this is the only route that can name a target, and it
   // has to refuse anyone unelevated.
   const meB0 = (await json(await fetch(BASE + '/api/profile/me', { headers: hdrB }))).person;
   const steal = await post('/api/admin/profile',
@@ -82,7 +82,7 @@ const today = new Date().toISOString().slice(0, 10);
     JSON.stringify(untouched.course));
 
   console.log('\nattendance ownership is enforced, not just hidden');
-  // Probe logs their own day — allowed.
+  // Probe logs their own day, which is allowed.
   const own = await post('/api/log', {
     first_name: 'Admin', last_name: 'Probe', date: today,
     status: 'arriving', arrival_time: '09:00',
@@ -127,7 +127,7 @@ const today = new Date().toISOString().slice(0, 10);
     const { w, d } = await open('/', { setCookies: a.setCookies, failOnPrompt: true });
     check('a member never sees it', !d.getElementById('ucdfs-override-bar'));
     // Both halves matter. "No card called Admin" is satisfied by a grid with
-    // nothing in it, which is what an undrawn dashboard looks like — so the
+    // nothing in it, which is what an undrawn dashboard looks like, so the
     // cards have to be there before their absence means anything.
     await waitFor(() => w.eval('TILES_LOADED') === true);
     const memberCards = [...d.querySelectorAll('#applet-grid .applet, #applet-groups .applet')];
@@ -138,7 +138,7 @@ const today = new Date().toISOString().slice(0, 10);
     w.close();
   }
   {
-    // The banner is drawn from the cookie, so a forged one draws it — and must
+    // The banner is drawn from the cookie, so a forged one draws it, and must
     // still grant nothing. This is the same property the profile cookie has
     // had a test for since auth landed; god_mode must not be the exception.
     const forged = a.setCookies
@@ -174,14 +174,14 @@ const today = new Date().toISOString().slice(0, 10);
 
     const hdrForged = { Cookie: forged.map(c => c.split(';')[0]).join('; ') };
     const r = await fetch(BASE + '/api/admin/people', { headers: hdrForged });
-    check('but grants nothing — the server reads the database', r.status === 403,
+    check('but grants nothing: the server reads the database', r.status === 403,
       'status ' + r.status);
   }
 
   console.log('\nelevated');
   /* Promote our own throwaway account rather than asking for a real admin's
      password. run.sh exports the service key, and this is a ucdfs-test- account
-     that cleanup deletes on the way out — so the elevated half runs on every
+     that cleanup deletes on the way out, so the elevated half runs on every
      machine instead of only where someone exported credentials.
 
      Note the profile cookie still says "member": it was written at signup. That
@@ -220,7 +220,7 @@ const today = new Date().toISOString().slice(0, 10);
       date: today, status: 'arriving', arrival_time: '10:00' })).status === 403);
 
   // Deleting is the most destructive thing on the site, so it asks for the
-  // override as well as the role — the same rule as every other cross-user
+  // override as well as the role, the same rule as every other cross-user
   // write. An admin reading the people list with the switch off cannot erase
   // anybody by mis-clicking.
   const doomedRow = (await json(await fetch(BASE + '/api/admin/people', { headers: hdrA })))
@@ -247,7 +247,7 @@ const today = new Date().toISOString().slice(0, 10);
     (await fetch(BASE + '/admin', { headers: hdrA, redirect: 'manual' })).status === 200);
 
   // The page as rendered, not just the API. Note the profile cookie still says
-  // "member" — the delete buttons appear because the *people list* says the
+  // "member". The delete buttons appear because the *people list* says the
   // override is on, which is the database row. Reading elevation from the
   // cookie here would draw them for a forged one.
   {
@@ -314,7 +314,7 @@ const today = new Date().toISOString().slice(0, 10);
 
   console.log('\nerasing an account');
   /* The wrong-email signup: a duplicate nothing can merge, that demoting does
-     not hide. Every rail is checked against the server — the page simply not
+     not hide. Every rail is checked against the server, the page simply not
      drawing a button is what "hiding a control is not a permission" is about. */
   const doomed = ((await json(await fetch(BASE + '/api/admin/people', { headers: hdrA })))
     .people || []).find(x => /Doomed/.test(x.name)) || {};
@@ -331,7 +331,7 @@ const today = new Date().toISOString().slice(0, 10);
 
   // An admin has to be demoted first. Deleting one outright is a keystroke away
   // from locking the team out, and the demotion path already refuses to remove
-  // the last admin — this keeps deletion behind that same rail rather than
+  // the last admin. This keeps deletion behind that same rail rather than
   // giving it a second, weaker one of its own.
   await post('/api/admin/role', { id: doomed.id, role: 'admin' });
   check('an admin account cannot be deleted outright',
@@ -356,7 +356,7 @@ const today = new Date().toISOString().slice(0, 10);
 
   // The login itself, not just the profile. Leaving the auth user behind would
   // let them sign in again, and auth_login() re-creates a missing profile from
-  // the token's metadata — the account would come back from the dead.
+  // the token's metadata. The account would come back from the dead.
   const authGone = await fetch(`${SB}/auth/v1/admin/users/${doomed.id}`,
     { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } });
   check('and the sign-in is gone from GoTrue', authGone.status === 404,
@@ -386,7 +386,7 @@ const today = new Date().toISOString().slice(0, 10);
   }
 
   // The source name reaches supabase.table(), so anything not on the list has
-  // to be refused before it gets there — not merely fail to match a row.
+  // to be refused before it gets there, not merely fail to match a row.
   check('an unknown feed source is refused',
     (await post('/api/admin/activity/delete', { source: 'profiles', id: 1 })).status === 400);
   check('and a non-numeric id is refused',
@@ -403,7 +403,7 @@ const today = new Date().toISOString().slice(0, 10);
   check('an un-elevated admin loses the committee gate',
     (await post('/comp/api/admin/verify', {})).status === 403);
   // But keeps the admin page. requires_role is satisfied by the *role*, not by
-  // elevation — and it has to be, because the switch to turn god mode back on
+  // elevation, and it has to be, because the switch to turn god mode back on
   // lives on that page. Gate it on god mode and switching off becomes a
   // one-way door.
   check('but keeps the admin page, which is the way back in',
@@ -426,7 +426,7 @@ const today = new Date().toISOString().slice(0, 10);
   // This used to be implicit: the suite ran against production, which always
   // contains a real admin, so there was always a second one and the demotion
   // simply worked. Against a fresh database the probe was the only admin, the
-  // last-admin rail fired, and three checks failed — the app being right and
+  // last-admin rail fired, and three checks failed. The app being right and
   // the test being coupled to ambient production data. Anything a suite needs
   // it has to create.
   check('a second admin can be appointed',
@@ -450,7 +450,7 @@ const today = new Date().toISOString().slice(0, 10);
 
   // ── The last admin cannot be demoted ─────────────────────────────────────
   // Never exercised before, because it can only fire on a database whose only
-  // admin is one the suite is allowed to demote — which production, by
+  // admin is one the suite is allowed to demote, which production, by
   // definition, is not. On the non-prod database the victim is now the sole
   // admin, so the rail is reachable for the first time.
   //
@@ -473,7 +473,7 @@ const today = new Date().toISOString().slice(0, 10);
     check('and is still an admin afterwards', (still[0] || {}).role === 'admin',
       JSON.stringify(still[0] || {}));
   } else {
-    console.log(`  (${admins.length} admins in this database — rail not reachable here)`);
+    console.log(`  (${admins.length} admins in this database, rail not reachable here)`);
   }
 
   process.exit(summary('admin') ? 1 : 0);

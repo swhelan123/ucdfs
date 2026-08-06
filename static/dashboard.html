@@ -17,14 +17,14 @@
    This page is assembled from three requests, and it used to show its work:
    the tools grid appeared first, then the headline and the feed a beat later,
    with a "…" in every tile in between. Hidden until boot() has drawn it once,
-   then faded in as a whole — see reveal() in the script.
+   then faded in as a whole. See reveal() in the script.
 
    Deliberately here and not in shared.css. .page is every card page, and the
    others do not fetch the same way; hiding all of them from one rule would
    mean a page that never calls reveal() never appears at all.
 
    visibility, not opacity alone. An element at opacity:0 is still laid out,
-   still hit-tested and still in the tab order — so for the second or so before
+   still hit-tested and still in the tab order, so for the second or so before
    .ready lands you could tab into, or click, a dashboard you cannot see.
    visibility:hidden takes it out of all three, and still animates, because the
    flip to visible is instant while the fade is not. */
@@ -104,7 +104,7 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .feed-text  { flex: 1; min-width: 0; }
 .feed-actor { font-weight: 700; }
 .feed-when  { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
-/* Only drawn with admin override on. Faint until hovered — it sits on a feed
+/* Only drawn with admin override on. Faint until hovered. It sits on a feed
    everybody reads and it deletes somebody else's line. */
 .feed-x {
   flex-shrink: 0; border: none; background: none; cursor: pointer; padding: 0 2px;
@@ -146,12 +146,19 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
   background: var(--accent, var(--indigo));
   opacity: 0; transition: opacity 0.14s;
 }
-.applet:hover {
+/* Hover lives on the slot, not the card. The star is a sibling of the <a>
+   rather than a child. A <button> inside an <a> is invalid and browsers split
+   the anchor around it, so hovering the star would otherwise drop the card
+   back down while the pointer was still over it. */
+.applet-slot:hover > .applet {
   transform: translateY(-3px);
   box-shadow: var(--shadow-lg); border-color: var(--accent, var(--indigo));
 }
-.applet:hover::before { opacity: 1; }
+.applet-slot:hover > .applet::before { opacity: 1; }
 .applet:active { transform: scale(0.985); transition-duration: 0.05s; }
+
+.applet-slot { position: relative; display: flex; }
+.applet-slot > .applet { flex: 1; min-width: 0; padding-right: 46px; }
 
 .applet-icon {
   width: 46px; height: 46px; border-radius: 13px; flex-shrink: 0;
@@ -179,9 +186,37 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .applet.soon {
   cursor: default; border-style: dashed; box-shadow: none; background: transparent;
 }
-.applet.soon:hover { transform: none; box-shadow: none; border-color: var(--border); }
-.applet.soon:hover::before { opacity: 0; }
+.applet-slot:hover > .applet.soon { transform: none; box-shadow: none; border-color: var(--border); }
+.applet-slot:hover > .applet.soon::before { opacity: 0; }
 .applet.soon .applet-icon { opacity: 0.5; }
+
+/* ── Favourite star ──
+   Always drawn, faint when off, rather than revealed on hover. Half the team
+   opens this on a phone, and a control that only exists on hover does not
+   exist on a touch screen. */
+.fav-btn {
+  position: absolute; top: 12px; right: 12px; z-index: 2;
+  width: 30px; height: 30px; border-radius: 9px; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 0.92rem; line-height: 1; color: var(--muted);
+  opacity: 0.3; transition: opacity 0.14s, background 0.14s, transform 0.14s;
+}
+.applet-slot:hover .fav-btn { opacity: 0.75; }
+.fav-btn:hover { background: var(--bg); opacity: 1 !important; transform: scale(1.12); }
+.fav-btn.on, .applet-slot:hover .fav-btn.on { opacity: 1; color: var(--amber); }
+.fav-btn:disabled { cursor: wait; }
+
+/* The empty state carries its weight: it is the only thing on the page that
+   says the star exists, so it stays put rather than collapsing the section.
+   A quiet line of text, not a card. It is an instruction, and dressing it up
+   as a tile makes the section look like it holds one thing already.
+   The bottom margin matches .applet-grid so the block below sits where it
+   would if there were favourites here. */
+.fav-empty {
+  text-align: center; font-style: italic;
+  font-size: 0.82rem; color: var(--muted);
+  padding: 2px 0 6px; margin-bottom: 30px;
+}
 
 .tag {
   font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
@@ -196,7 +231,7 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 </style>
 
 <!-- No CSS fallback here on purpose. #main is display:none until the script
-     shows it, and every tile, chip and feed row is built by JS from an API —
+     shows it, and every tile, chip and feed row is built by JS from an API,
      so revealing .page without scripting would uncover an empty shell, not a
      readable page. Say so instead. -->
 <noscript><style>
@@ -254,6 +289,17 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 
     <div class="nowbar" id="nowbar" style="display:none"></div>
 
+    <!-- Starred cards, copied to the top. The heading stays even when there are
+         none: it is where the empty state tells you the star exists at all,
+         which is the only place anybody would find out. -->
+    <div id="fav-block">
+      <div class="section-label">Favourites</div>
+      <div class="applet-grid" id="applet-favourites"></div>
+      <div class="fav-empty" id="fav-empty">
+        Nothing pinned yet. Tap the ☆ on any tool to keep it up here.
+      </div>
+    </div>
+
     <div class="section-label">Tools</div>
     <div class="chips" id="subteam-chips"></div>
     <div class="applet-grid" id="applet-grid"></div>
@@ -310,7 +356,7 @@ function appletCard(a, tile) {
 
   // The placeholder means "the answer is still coming", so it must only ever
   // appear while that is true. There is one paint now, after /api/dashboard has
-  // settled — so a tile still missing at that point is missing for good, and
+  // settled, so a tile still missing at that point is missing for good, and
   // showing "…" for it would be a spinner that never resolves. Worse than no
   // stat at all, and exactly the case /api/dashboard produces when one table
   // fails and nulls a single tile.
@@ -332,21 +378,36 @@ function appletCard(a, tile) {
   const cls = `applet ${a.status === 'quiet' ? 'quiet' : ''} ${soon ? 'soon' : ''}`;
   const style = `--accent:${accent};--accent-bg:${accentBg}`;
 
-  if (!clickable) {
-    return `<div class="${cls}" style="${style}">${inner}</div>`;
-  }
-  const target = a.external ? ' target="_blank" rel="noopener"' : '';
-  return `<a class="${cls}" style="${style}" href="${UCDFS.esc(a.route)}"${target}>${inner}</a>`;
+  const card = clickable
+    ? `<a class="${cls}" style="${style}" href="${UCDFS.esc(a.route)}"${
+        a.external ? ' target="_blank" rel="noopener"' : ''}>${inner}</a>`
+    : `<div class="${cls}" style="${style}">${inner}</div>`;
+
+  /* The star is a sibling of the card, never a child: a <button> inside an <a>
+     is invalid markup and browsers break the anchor around it. A "soon" card
+     cannot be opened, so there is nothing to pin. */
+  const on  = FAVOURITES.indexOf(a.id) >= 0;
+  const star = soon ? '' :
+    `<button class="fav-btn ${on ? 'on' : ''}" type="button" data-fav="${UCDFS.esc(a.id)}"
+       title="${on ? 'Remove from favourites' : 'Add to favourites'}"
+       aria-pressed="${on}" aria-label="${on ? 'Remove' : 'Add'} ${UCDFS.esc(a.name)} ${
+         on ? 'from' : 'to'} favourites">${on ? '★' : '☆'}</button>`;
+
+  return `<div class="applet-slot">${card}${star}</div>`;
 }
 
-/* Which applets the dashboard API reports on — drives the "…" placeholder so
+/* Which applets the dashboard API reports on. Drives the "…" placeholder so
    cards without a tile don't sit there looking like they failed to load. */
 const HAS_TILE = { attendance: 1, flowcharts: 1, pt: 1, harness: 1, comp: 1 };
 
 let APPLETS  = [];
-/* Dashboard blocks, in order, from /api/applets. Empty is fine — render() then
+/* Dashboard blocks, in order, from /api/applets. Empty is fine: render() then
    draws the Tools grid and nothing else. */
 let GROUPS   = [];
+/* Applet ids this account has starred, newest last, straight from the server.
+   Per account rather than per browser, unlike the subteam chip below. These
+   are "my tools", and they should be the same on the workshop PC and a phone. */
+let FAVOURITES = [];
 let TILES    = {};
 /* Set once /api/dashboard has settled, successfully or not. It is the
    difference between "no number yet" and "no number", which is the difference
@@ -360,7 +421,7 @@ let FILTER   = 'all';
 
 /* ── Subteam filter ──
    Filter, never hide. An `all`-tagged applet is shown under every chip, and
-   clearing the filter always brings everything back — nothing on this page can
+   clearing the filter always brings everything back. Nothing on this page can
    become unreachable because of a chip. Relevance, not permission: an Ops
    member can still open the PT plan, it just isn't the first thing they see. */
 const FILTER_KEY = 'ucdfs_dash_subteam';   /* remembered per device, not per account */
@@ -421,8 +482,8 @@ function renderCountdown(cd) {
     main = cd.name + ' is today';
     sub  = 'Good luck.';
   } else if (cd.state === 'past') {
-    // Not a negative countdown — a past date means the calendar needs updating.
-    num  = '—';
+    // Not a negative countdown: a past date means the calendar needs updating.
+    num  = '-';
     main = cd.name + ' has been and gone';
     sub  = 'Season calendar needs updating';
   } else {
@@ -457,12 +518,12 @@ function renderNow(att) {
 
   const shown = here.slice(0, 5);
   const extra = here.length - shown.length;
-  /* Photos come from the tile itself — the server already looked them up by
+  /* Photos come from the tile itself. The server already looked them up by
      name, so there is nothing extra to fetch here. */
   const avs = shown.map(p => UCDFS.avatar(p.name, p.photo, 'now-av')).join('') +
     (extra > 0 ? `<div class="now-av now-more">+${extra}</div>` : '');
 
-  // First names only — everyone here knows everyone, and it fits on a phone.
+  // First names only: everyone here knows everyone, and it fits on a phone.
   const firsts = here.slice(0, 3).map(p => p.name.split(' ')[0]);
   const rest   = here.length - firsts.length;
   const who    = firsts.join(', ') + (rest > 0 ? ' +' + rest : '');
@@ -495,7 +556,7 @@ function renderFeed(items) {
     return;
   }
   /* The × is drawn from the profile cookie, which is display data and grants
-     nothing — /api/admin/activity/delete re-checks the database row. A forged
+     nothing. /api/admin/activity/delete re-checks the database row. A forged
      cookie gets a button that 403s. */
   const me  = UCDFS.user() || {};
   const god = !!me.god_mode;
@@ -529,7 +590,7 @@ async function deleteFeedItem(btn, item) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || 'Failed');
     /* Re-fetch rather than splice the row out. The feed is the newest eight of
-       two merged tables, so removing one should pull the ninth up — a spliced
+       two merged tables, so removing one should pull the ninth up. A spliced
        list quietly gets shorter every time you tidy it. */
     const data = await fetch('/api/dashboard').then(x => x.json()).catch(() => null);
     if (data) renderFeed(data.activity || []);
@@ -541,9 +602,41 @@ async function deleteFeedItem(btn, item) {
   }
 }
 
+/* Star or unstar one card.
+ *
+ * Drawn first, saved second. Pinning a tool is a preference, not a transaction,
+ * and waiting on a round trip to move a card is the kind of lag that makes
+ * people click twice. If the save fails the card goes back where it was and the
+ * toast says why. The page never keeps a star the server rejected. */
+async function toggleFavourite(btn) {
+  const id = btn.dataset.fav;
+  if (!id) return;
+  const wasOn  = FAVOURITES.indexOf(id) >= 0;
+  const before = FAVOURITES.slice();
+
+  FAVOURITES = wasOn ? FAVOURITES.filter(x => x !== id) : FAVOURITES.concat([id]);
+  render();
+
+  try {
+    const r = await fetch('/api/profile/favourites', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, on: !wasOn }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || "Couldn't save that");
+    /* Take the server's list, not the optimistic one: it owns the order and
+       the cap, so a second tab or a rejected twelfth star settles here. */
+    if (Array.isArray(j.favourites)) { FAVOURITES = j.favourites; render(); }
+  } catch (e) {
+    FAVOURITES = before;
+    render();
+    UCDFS.toast(e.message || "Couldn't save that");
+  }
+}
+
 /* Which block a card belongs to.
 
-   No "group" means the main Tools grid — and so does a group nobody declared.
+   No "group" means the main Tools grid, and so does a group nobody declared.
    Same rule as the subteam filter: an entry that forgets to tag itself, or
    names a block that does not exist, must stay visible rather than quietly
    vanishing. Rendering it nowhere would be a card that exists on the server and
@@ -555,13 +648,39 @@ function appletGroup(a) {
 
 function render() {
   const shown = APPLETS.filter(a => visibleUnder(a, FILTER));
+
+  /* A starred card is *copied* to the top, not moved: it stays where it lives
+     so the layout of the site never changes shape under you, and Favourites is
+     a shortcut rather than somewhere things disappear to.
+
+     Built from FAVOURITES rather than by filtering APPLETS, so they sit in the
+     order they were starred (the only order anybody could predict), and an id
+     naming a card that has since been retired simply drops out.
+
+     Deliberately not filtered by the subteam chip. You pinned these on purpose;
+     a chip hiding your own shortcuts would be the one place on this page where
+     filtering costs you something. It also keeps the empty state honest, since
+     "nothing pinned" then means exactly that rather than "nothing pinned that
+     is also Operations". */
+  const favCards = FAVOURITES
+    .map(id => APPLETS.find(a => a.id === id))
+    .filter(Boolean);
+  const favGrid = document.getElementById('applet-favourites');
+  favGrid.innerHTML = favCards.map(a => appletCard(a, TILES[a.id])).join('');
+  /* Hidden rather than left empty: .applet-grid keeps its 30px bottom margin
+     with no children in it, which opened a hole between the heading and the
+     line of text below it. */
+  favGrid.style.display = favCards.length ? '' : 'none';
+  document.getElementById('fav-empty').style.display = favCards.length ? 'none' : '';
+
   document.getElementById('applet-grid').innerHTML = shown
     .filter(a => appletGroup(a) === 'tools')
     .map(a => appletCard(a, TILES[a.id])).join('');
 
-  /* Every block after Tools — its own heading and grid, and rendered only if
+  /* Every block after Tools: its own heading and grid, and rendered only if
      the filter left anything in it. A heading over an empty space reads as a
-     page that failed to load. */
+     page that failed to load. (Favourites is the exception, above: its heading
+     stays because its empty state is the only thing that explains the star.) */
   document.getElementById('applet-groups').innerHTML = GROUPS
     .filter(g => g.id !== 'tools')
     .map(g => {
@@ -573,9 +692,12 @@ function render() {
               </div>`;
     }).join('');
 
+  document.querySelectorAll('.fav-btn').forEach(b =>
+    b.addEventListener('click', () => toggleFavourite(b)));
+
   renderChips();
 
-  /* The count is of everything, not of what the filter is showing — it is a
+  /* The count is of everything, not of what the filter is showing. It is a
      statement about the site, and it would be alarming for it to drop when you
      tapped a chip. */
   const live = APPLETS.filter(a => a.status !== 'soon').length;
@@ -595,7 +717,7 @@ function renderHeadline() {
     main = `${comp.pending} shop request${comp.pending === 1 ? '' : 's'} still pending`;
     sub  = 'Competition Hub · waiting to be bought';
   } else if (att && att.in > 0 && !att.now) {
-    // Only when nobody is in *right now* — otherwise the nowbar below says it
+    // Only when nobody is in *right now*. Otherwise the nowbar below says it
     // better, and the headline would be repeating itself.
     icon = '🔧';
     main = `${att.in} ${att.in === 1 ? 'person is' : 'people are'} in the workshop today`;
@@ -626,7 +748,7 @@ function renderHeadline() {
    reveal() is idempotent and called from exactly two places, because the only
    thing worse than a page that flickers is a page that never arrives. boot()
    calls it in a finally, which covers both a clean draw and a thrown one; the
-   timeout covers the case where boot never returns at all — fetch has no
+   timeout covers the case where boot never returns at all. Fetch has no
    timeout of its own, so a request that never settles would otherwise leave a
    permanently blank page. Failures degrade, they do not blank.
 
@@ -653,7 +775,7 @@ async function draw(user) {
   renderGreeting(user);
 
   /* Default the filter to your own subteam, unless this device has a
-     preference — someone who deliberately switched to All meant it. */
+     preference. Someone who deliberately switched to All meant it. */
   let saved = null;
   try { saved = localStorage.getItem(FILTER_KEY); } catch (e) { /* private mode */ }
   FILTER = saved || user.subteam || 'all';
@@ -663,26 +785,28 @@ async function draw(user) {
      painted the grid, so the page assembled itself in front of you: tools
      first, then the headline and feed a beat later, with a "…" in every tile
      in between. Nothing in /api/dashboard depends on the other two, so there
-     was never a reason for it to wait its turn — this is one round trip now
+     was never a reason for it to wait its turn. This is one round trip now
      rather than two, so it is also simply faster.
 
      Each request swallows its own failure. A dashboard that cannot reach the
      feed should still draw its tools, which is the same rule /api/dashboard
      already follows server-side when one table is unhappy. */
-  const [applets, groups, subteams, data] = await Promise.all([
+  const [applets, groups, favourites, subteams, data] = await Promise.all([
     UCDFS.applets().catch(() => []),
-    /* Same cached request as the line above, not a second round trip. */
+    /* All three share the one cached request, not three round trips. */
     UCDFS.appletGroups().catch(() => []),
+    UCDFS.favourites().catch(() => []),
     fetch('/api/subteams').then(r => r.json()).then(j => j.subteams || []).catch(() => []),
     fetch('/api/dashboard').then(r => r.json()).catch(() => ({})),
   ]);
-  APPLETS  = applets;
-  GROUPS   = groups;
-  SUBTEAMS = subteams;
+  APPLETS    = applets;
+  GROUPS     = groups;
+  FAVOURITES = favourites;
+  SUBTEAMS   = subteams;
   TILES    = data.tiles || {};
-  TILES_LOADED = true;   // settled — see the placeholder rule in appletCard()
+  TILES_LOADED = true;   // settled. See the placeholder rule in appletCard()
   /* A subteam that no longer exists must not leave the grid filtered to
-     nothing — fall back to All. */
+     nothing, so fall back to All. */
   if (FILTER !== 'all' && !SUBTEAMS.some(s => s.id === FILTER)) FILTER = 'all';
 
   /* One paint. Everything below reads state that is already in hand, so the
@@ -695,7 +819,7 @@ async function draw(user) {
   renderFeed(data.activity);
 
   /* The subteam step lives in shared.js now, so it fires wherever someone
-     lands — a bookmarked /harness, not just here. This page cares because
+     lands: a bookmarked /harness, not just here. This page cares because
      picking a subteam should move the filter it just drew. */
   UCDFS.onboard(picked => {
     if (picked) setFilter(picked);

@@ -6,7 +6,7 @@
 #
 # Why only dev. Labelling a PR "deploy to prod" would put unmerged code on the
 # site the team uses daily, and prod would then be running something that is not
-# on main — so after the next merge nobody can say what is actually live without
+# on main, so after the next merge nobody can say what is actually live without
 # checking the container. The need behind wanting it ("I want to see this working
 # on something real before I merge") is what this workflow is for.
 #
@@ -41,7 +41,7 @@ jobs:
       PR: ${{ github.event.pull_request.number }}
       # Labels go through the REST issues API, never `gh pr edit`. That command
       # resolves the PR over GraphQL and asks for projectCards, which GitHub has
-      # deprecated — it returns an error and exits 1 even though the label
+      # deprecated: it returns an error and exits 1 even though the label
       # change itself would have been fine. It cost a green deploy being
       # reported as a failure.
       REPO: ${{ github.repository }}
@@ -74,7 +74,7 @@ jobs:
           # REST for the same reason as the labels: `gh pr comment` resolves the
           # PR over GraphQL and trips the same deprecated projectCards field.
           gh api --silent -X POST "/repos/$REPO/issues/$PR/comments" -f body="$(cat <<EOF
-          **Deployed to dev** — \`ucdfs:${{ steps.build.outputs.tag }}\`
+          **Deployed to dev**: \`ucdfs:${{ steps.build.outputs.tag }}\`
 
           https://dev.shane-whelan.ie
 
@@ -106,7 +106,7 @@ jobs:
         run: |
           gh api --silent -X DELETE "/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deployed%3A%20dev" || true
 
-  # Free the tier when the PR goes away — but only if dev is actually running
+  # Free the tier when the PR goes away, but only if dev is actually running
   # this PR's image. Someone else's preview should survive your merge.
   teardown:
     if: github.event.action == 'closed'
@@ -121,9 +121,9 @@ jobs:
           running="$(docker inspect -f '{{.Config.Image}}' ucdfs-dev 2>/dev/null || true)"
           case "$running" in
             ucdfs:pr${{ github.event.pull_request.number }}-*)
-              echo "dev is on $running — stopping it"
+              echo "dev is on $running, stopping it"
               docker rm -f ucdfs-dev || true ;;
             *)
-              echo "dev is on '${running:-nothing}', not this PR — leaving it alone" ;;
+              echo "dev is on '${running:-nothing}', not this PR, leaving it alone" ;;
           esac
           gh api --silent -X DELETE "/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/deployed%3A%20dev" || true

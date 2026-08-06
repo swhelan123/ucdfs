@@ -146,12 +146,19 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
   background: var(--accent, var(--indigo));
   opacity: 0; transition: opacity 0.14s;
 }
-.applet:hover {
+/* Hover lives on the slot, not the card. The star is a sibling of the <a>
+   rather than a child — a <button> inside an <a> is invalid and browsers split
+   the anchor around it — so hovering the star would otherwise drop the card
+   back down while the pointer was still over it. */
+.applet-slot:hover > .applet {
   transform: translateY(-3px);
   box-shadow: var(--shadow-lg); border-color: var(--accent, var(--indigo));
 }
-.applet:hover::before { opacity: 1; }
+.applet-slot:hover > .applet::before { opacity: 1; }
 .applet:active { transform: scale(0.985); transition-duration: 0.05s; }
+
+.applet-slot { position: relative; display: flex; }
+.applet-slot > .applet { flex: 1; min-width: 0; padding-right: 46px; }
 
 .applet-icon {
   width: 46px; height: 46px; border-radius: 13px; flex-shrink: 0;
@@ -179,9 +186,25 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .applet.soon {
   cursor: default; border-style: dashed; box-shadow: none; background: transparent;
 }
-.applet.soon:hover { transform: none; box-shadow: none; border-color: var(--border); }
-.applet.soon:hover::before { opacity: 0; }
+.applet-slot:hover > .applet.soon { transform: none; box-shadow: none; border-color: var(--border); }
+.applet-slot:hover > .applet.soon::before { opacity: 0; }
 .applet.soon .applet-icon { opacity: 0.5; }
+
+/* ── Favourite star ──
+   Always drawn, faint when off, rather than revealed on hover. Half the team
+   opens this on a phone, and a control that only exists on hover does not
+   exist on a touch screen. */
+.fav-btn {
+  position: absolute; top: 12px; right: 12px; z-index: 2;
+  width: 30px; height: 30px; border-radius: 9px; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 0.92rem; line-height: 1; color: var(--muted);
+  opacity: 0.3; transition: opacity 0.14s, background 0.14s, transform 0.14s;
+}
+.applet-slot:hover .fav-btn { opacity: 0.75; }
+.fav-btn:hover { background: var(--bg); opacity: 1 !important; transform: scale(1.12); }
+.fav-btn.on, .applet-slot:hover .fav-btn.on { opacity: 1; color: var(--amber); }
+.fav-btn:disabled { cursor: wait; }
 
 .tag {
   font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
@@ -253,6 +276,13 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
     </div>
 
     <div class="nowbar" id="nowbar" style="display:none"></div>
+
+    <!-- Starred cards, pulled to the top. Hidden entirely until there are
+         some — a heading over nothing reads as a page that failed to load. -->
+    <div id="fav-block" style="display:none">
+      <div class="section-label">Favourites</div>
+      <div class="applet-grid" id="applet-favourites"></div>
+    </div>
 
     <div class="section-label">Tools</div>
     <div class="chips" id="subteam-chips"></div>
@@ -332,11 +362,22 @@ function appletCard(a, tile) {
   const cls = `applet ${a.status === 'quiet' ? 'quiet' : ''} ${soon ? 'soon' : ''}`;
   const style = `--accent:${accent};--accent-bg:${accentBg}`;
 
-  if (!clickable) {
-    return `<div class="${cls}" style="${style}">${inner}</div>`;
-  }
-  const target = a.external ? ' target="_blank" rel="noopener"' : '';
-  return `<a class="${cls}" style="${style}" href="${UCDFS.esc(a.route)}"${target}>${inner}</a>`;
+  const card = clickable
+    ? `<a class="${cls}" style="${style}" href="${UCDFS.esc(a.route)}"${
+        a.external ? ' target="_blank" rel="noopener"' : ''}>${inner}</a>`
+    : `<div class="${cls}" style="${style}">${inner}</div>`;
+
+  /* The star is a sibling of the card, never a child: a <button> inside an <a>
+     is invalid markup and browsers break the anchor around it. A "soon" card
+     cannot be opened, so there is nothing to pin. */
+  const on  = FAVOURITES.indexOf(a.id) >= 0;
+  const star = soon ? '' :
+    `<button class="fav-btn ${on ? 'on' : ''}" type="button" data-fav="${UCDFS.esc(a.id)}"
+       title="${on ? 'Remove from favourites' : 'Add to favourites'}"
+       aria-pressed="${on}" aria-label="${on ? 'Remove' : 'Add'} ${UCDFS.esc(a.name)} ${
+         on ? 'from' : 'to'} favourites">${on ? '★' : '☆'}</button>`;
+
+  return `<div class="applet-slot">${card}${star}</div>`;
 }
 
 /* Which applets the dashboard API reports on — drives the "…" placeholder so
@@ -347,6 +388,10 @@ let APPLETS  = [];
 /* Dashboard blocks, in order, from /api/applets. Empty is fine — render() then
    draws the Tools grid and nothing else. */
 let GROUPS   = [];
+/* Applet ids this account has starred, newest last, straight from the server.
+   Per account rather than per browser, unlike the subteam chip below — these
+   are "my tools", and they should be the same on the workshop PC and a phone. */
+let FAVOURITES = [];
 let TILES    = {};
 /* Set once /api/dashboard has settled, successfully or not. It is the
    difference between "no number yet" and "no number", which is the difference
@@ -541,6 +586,38 @@ async function deleteFeedItem(btn, item) {
   }
 }
 
+/* Star or unstar one card.
+ *
+ * Drawn first, saved second. Pinning a tool is a preference, not a transaction,
+ * and waiting on a round trip to move a card is the kind of lag that makes
+ * people click twice. If the save fails the card goes back where it was and the
+ * toast says why — the page never keeps a star the server rejected. */
+async function toggleFavourite(btn) {
+  const id = btn.dataset.fav;
+  if (!id) return;
+  const wasOn  = FAVOURITES.indexOf(id) >= 0;
+  const before = FAVOURITES.slice();
+
+  FAVOURITES = wasOn ? FAVOURITES.filter(x => x !== id) : FAVOURITES.concat([id]);
+  render();
+
+  try {
+    const r = await fetch('/api/profile/favourites', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, on: !wasOn }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || "Couldn't save that");
+    /* Take the server's list, not the optimistic one: it owns the order and
+       the cap, so a second tab or a rejected twelfth star settles here. */
+    if (Array.isArray(j.favourites)) { FAVOURITES = j.favourites; render(); }
+  } catch (e) {
+    FAVOURITES = before;
+    render();
+    UCDFS.toast(e.message || "Couldn't save that");
+  }
+}
+
 /* Which block a card belongs to.
 
    No "group" means the main Tools grid — and so does a group nobody declared.
@@ -555,8 +632,19 @@ function appletGroup(a) {
 
 function render() {
   const shown = APPLETS.filter(a => visibleUnder(a, FILTER));
+
+  /* A starred card is pulled out of whatever block it would normally sit in
+     and shown once, at the top. Listing it in both places would make the page
+     say the same thing twice; leaving it in place would make the Favourites
+     block decoration. Clearing every star restores the ordinary layout. */
+  const isFav  = a => FAVOURITES.indexOf(a.id) >= 0;
+  const favCards = shown.filter(isFav);
+  document.getElementById('fav-block').style.display = favCards.length ? '' : 'none';
+  document.getElementById('applet-favourites').innerHTML =
+    favCards.map(a => appletCard(a, TILES[a.id])).join('');
+
   document.getElementById('applet-grid').innerHTML = shown
-    .filter(a => appletGroup(a) === 'tools')
+    .filter(a => !isFav(a) && appletGroup(a) === 'tools')
     .map(a => appletCard(a, TILES[a.id])).join('');
 
   /* Every block after Tools — its own heading and grid, and rendered only if
@@ -565,13 +653,16 @@ function render() {
   document.getElementById('applet-groups').innerHTML = GROUPS
     .filter(g => g.id !== 'tools')
     .map(g => {
-      const cards = shown.filter(a => appletGroup(a) === g.id);
+      const cards = shown.filter(a => !isFav(a) && appletGroup(a) === g.id);
       if (!cards.length) return '';
       return `<div class="section-label" style="margin-top:26px">${UCDFS.esc(g.label)}</div>
               <div class="applet-grid">
                 ${cards.map(a => appletCard(a, TILES[a.id])).join('')}
               </div>`;
     }).join('');
+
+  document.querySelectorAll('.fav-btn').forEach(b =>
+    b.addEventListener('click', () => toggleFavourite(b)));
 
   renderChips();
 
@@ -669,16 +760,18 @@ async function draw(user) {
      Each request swallows its own failure. A dashboard that cannot reach the
      feed should still draw its tools, which is the same rule /api/dashboard
      already follows server-side when one table is unhappy. */
-  const [applets, groups, subteams, data] = await Promise.all([
+  const [applets, groups, favourites, subteams, data] = await Promise.all([
     UCDFS.applets().catch(() => []),
-    /* Same cached request as the line above, not a second round trip. */
+    /* All three share the one cached request, not three round trips. */
     UCDFS.appletGroups().catch(() => []),
+    UCDFS.favourites().catch(() => []),
     fetch('/api/subteams').then(r => r.json()).then(j => j.subteams || []).catch(() => []),
     fetch('/api/dashboard').then(r => r.json()).catch(() => ({})),
   ]);
-  APPLETS  = applets;
-  GROUPS   = groups;
-  SUBTEAMS = subteams;
+  APPLETS    = applets;
+  GROUPS     = groups;
+  FAVOURITES = favourites;
+  SUBTEAMS   = subteams;
   TILES    = data.tiles || {};
   TILES_LOADED = true;   // settled — see the placeholder rule in appletCard()
   /* A subteam that no longer exists must not leave the grid filtered to

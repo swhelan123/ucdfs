@@ -289,6 +289,11 @@
     return appletsPayload().then(function (j) { return (j && j.groups) || []; });
   }
 
+  /** Applet ids this account has starred, in the order they were starred. */
+  function favourites() {
+    return appletsPayload().then(function (j) { return (j && j.favourites) || []; });
+  }
+
   // ── Runtime styles ───────────────────────────────────────────────────────
 
   /**
@@ -568,6 +573,7 @@
     renderPill: renderPill,
     applets: applets,
     appletGroups: appletGroups,
+    favourites: favourites,
     onboard: onboard,
     godBar: godBar,
     photos: photos,

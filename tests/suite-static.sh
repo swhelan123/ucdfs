@@ -6,6 +6,12 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Nothing in here reads input, so nothing in here should hold a handle on it.
+# A child that inherits an open stdin can sit on it forever, and a suite that
+# hangs is worse than one that fails: CI waits out its whole timeout and the log
+# stops mid-run with no reason given.
+exec </dev/null
+
 # Every page this suite knows about. One list, so adding a page is one edit.
 PAGES="dashboard login attendance comp pt harness profiles admin flowcharts"
 

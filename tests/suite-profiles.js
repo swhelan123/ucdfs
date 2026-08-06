@@ -495,6 +495,48 @@ const STARTED = Date.now() - 1000;
     w.close();
   }
 
+  console.log('\nfavourite tools');
+  {
+    // Stored against the account, not the browser — that is the whole reason
+    // this lives in profile_details and not in localStorage beside the subteam
+    // chip. So the test reads it back from the API, not from a rendered page.
+    const favs = async (hdr = hdrA) =>
+      (await json(await fetch(BASE + '/api/applets', { headers: hdr }))).favourites;
+
+    const start = await favs();
+    check('/api/applets reports favourites', Array.isArray(start),
+      JSON.stringify(start));
+
+    const on = await post('/api/profile/favourites', { id: 'harness', on: true });
+    const afterOn = await favs();
+    check('a card can be starred', on.status === 200, 'status ' + on.status);
+    check('and it comes back on the next load', afterOn.includes('harness'),
+      JSON.stringify(afterOn));
+
+    // The id is read back and rendered, so junk must never reach the column.
+    const junk = await post('/api/profile/favourites', { id: 'not-an-applet', on: true });
+    check('an unknown id is refused', junk.status === 400, 'got ' + junk.status);
+    // A gated card is not on your dashboard to star, so a request to star one
+    // did not come from the UI. Alpha is a member; admin requires the role.
+    const gated = await post('/api/profile/favourites', { id: 'admin', on: true });
+    check('a card you may not open is refused', gated.status === 403,
+      'got ' + gated.status);
+    const afterJunk = await favs();
+    check('neither one landed in the column',
+      !afterJunk.some(f => f === 'not-an-applet' || f === 'admin'),
+      JSON.stringify(afterJunk));
+
+    // Per account, not per browser: Bravo must not inherit Alpha's list.
+    const bravoFavs = (await favs(hdrB)) || [];
+    check("another account's list is its own", !bravoFavs.includes('harness'),
+      JSON.stringify(bravoFavs));
+
+    const off = await post('/api/profile/favourites', { id: 'harness', on: false });
+    const afterOff = await favs();
+    check('a card can be un-starred',
+      off.status === 200 && !afterOff.includes('harness'), JSON.stringify(afterOff));
+  }
+
   console.log('\nremoving a photo');
   // Last, because every page check above needs Alpha to still have one.
   const removed = await post('/api/profile/photo/remove', {});

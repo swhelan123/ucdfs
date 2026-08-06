@@ -117,6 +117,55 @@ const PAGES = [
     check('external applet opens in a new tab',
       [...cards].some(c => (c.getAttribute('href') || '').startsWith('http') &&
                             c.getAttribute('target') === '_blank'));
+    // Off-site shortcuts must carry rel=noopener with target=_blank, or the
+    // page they open gets a handle on this one through window.opener.
+    check('and does so without handing over window.opener',
+      [...cards].filter(c => c.getAttribute('target') === '_blank')
+        .every(c => /noopener/.test(c.getAttribute('rel') || '')),
+      [...cards].filter(c => c.getAttribute('target') === '_blank')
+        .map(c => c.getAttribute('rel') || '(none)').join(' | '));
+
+    // ── Favourites ──
+    // The star is a sibling of the card, never a child: a <button> inside an
+    // <a> is invalid and browsers split the anchor around it, which breaks the
+    // card as a link in ways that do not show up until someone clicks it.
+    check('every openable card has a star, outside its anchor',
+      d.querySelectorAll('.fav-btn').length > 0 &&
+      d.querySelectorAll('a.applet .fav-btn, .applet.soon ~ .fav-btn').length === 0,
+      `${d.querySelectorAll('.fav-btn').length} stars, ` +
+      `${d.querySelectorAll('a.applet .fav-btn').length} nested`);
+
+    // Driven through the client's own state rather than by clicking, so this
+    // stays a test of how the dashboard lays favourites out and does not also
+    // depend on migration 008 being applied. The round trip is covered in
+    // suite-profiles, where it belongs.
+    const favBlock = d.getElementById('fav-block');
+    check('the favourites block is hidden until there are some',
+      favBlock.style.display === 'none', `display="${favBlock.style.display}"`);
+    let favShape = {};
+    try {
+      favShape = w.eval(`(function () {
+        var id = APPLETS.filter(function (a) { return a.status !== 'soon'; })[0].id;
+        FAVOURITES = [id]; render();
+        var inFav = !!document.querySelector('#applet-favourites [data-fav="' + id + '"]');
+        var elsewhere = !!document.querySelector(
+          '#applet-grid [data-fav="' + id + '"], #applet-groups [data-fav="' + id + '"]');
+        var shown = document.getElementById('fav-block').style.display !== 'none';
+        FAVOURITES = []; render();
+        var restored = document.getElementById('fav-block').style.display === 'none' &&
+          !!document.querySelector('#applet-grid [data-fav="' + id + '"]');
+        return { id: id, inFav: inFav, elsewhere: elsewhere, shown: shown, restored: restored };
+      })()`);
+    } catch (e) { favShape = { error: e.message }; }
+    check('a starred card moves into Favourites and shows the block',
+      favShape.inFav === true && favShape.shown === true, JSON.stringify(favShape));
+    check('and is not also left in its old block',
+      favShape.elsewhere === false, JSON.stringify(favShape));
+    // Un-starring everything has to put the page back exactly as it was — a
+    // favourite that cannot be undone is a card you have lost track of.
+    check('clearing the last star restores the ordinary layout',
+      favShape.restored === true, JSON.stringify(favShape));
+
     check('no page errors', errors.length === 0, errors.join('; '));
 
     // ── Countdown ──

@@ -237,6 +237,19 @@ APPLETS = [
         "subteams": ["pt"],
     },
     {
+        "id":     "vcu",
+        "name":   "VCU Firmware",
+        "icon":   "🧠",
+        "route":  "https://github.com/UCDFS/TEENSY",
+        "blurb":  "Vehicle control unit code for the Teensy 4.1 (GitHub)",
+        "accent": "indigo",
+        "status": "live",
+        "external": True,
+        # Next to the harness mapper on purpose: both are the electronics side
+        # of Powertrain, and someone tracing a signal usually wants both open.
+        "subteams": ["pt"],
+    },
+    {
         "id":     "comp",
         "name":   "Competition Hub",
         "icon":   "🏁",
@@ -396,6 +409,24 @@ async def pt_page_legacy():
     return await plan_page(LEGACY_PLAN)
 
 
+MAX_FAVOURITES = 12   # a bound on a star button, not a considered limit
+
+
+def _favourites_for(profile: Optional[dict]) -> list:
+    """Which cards this person has starred, as ids the dashboard can match.
+
+    Filtered against the live registry on the way out as well as on the way in,
+    so a card that has since been retired quietly stops being a favourite rather
+    than leaving a gap where a tile used to be. Missing table (008 not applied
+    yet) reads as "no favourites", never as an error — this is a convenience on
+    a page that has to render regardless.
+    """
+    if not profile:
+        return []
+    stored = _get_details(profile["id"]).get("favourites") or []
+    return [f for f in stored if f in APPLETS_BY_ID]
+
+
 @app.get("/api/applets")
 async def api_applets(request: Request):
     """What the dashboard renders. Public fields only — no file paths.
@@ -413,6 +444,10 @@ async def api_applets(request: Request):
             for a in APPLETS if _may_open(a, profile)
         ],
         "groups": APPLET_GROUPS,
+        # Sent with the cards rather than fetched separately: the dashboard
+        # paints once, and a favourites list that arrived afterwards would
+        # reorder the grid under the cursor.
+        "favourites": _favourites_for(profile),
     }
 
 
@@ -1654,6 +1689,52 @@ async def api_profile_subteam(request: Request):
     response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
     _set_profile_cookie(response, fresh)
     return response
+
+
+@app.post("/api/profile/favourites")
+async def api_profile_favourites(request: Request):
+    """Star or unstar one card. Takes no id but its own — see /api/profile.
+
+    A toggle rather than a whole list, so two tabs starring different cards do
+    not overwrite each other with a stale array. Order is kept as clicked, which
+    is the only ordering anybody could predict.
+    """
+    me  = current_profile(request)
+    uid = me["id"]
+    b   = await request.json()
+
+    applet_id = (b.get("id") or "").strip()
+    # Checked against the registry, not stored as sent: this array is read back
+    # and rendered, and an id naming no card is junk that never cleans itself up.
+    if applet_id not in APPLETS_BY_ID:
+        raise HTTPException(400, "unknown applet")
+    # You cannot favourite what you cannot open — the card is not on your
+    # dashboard to star, so a request to star it did not come from the UI.
+    if not _may_open(APPLETS_BY_ID[applet_id], me):
+        raise HTTPException(403, "You don't have access to that")
+
+    current = [f for f in (_get_details(uid).get("favourites") or []) if f in APPLETS_BY_ID]
+    on = bool(b.get("on"))
+    if on and applet_id not in current:
+        if len(current) >= MAX_FAVOURITES:
+            raise HTTPException(400, f"That's the most you can pin ({MAX_FAVOURITES})")
+        current.append(applet_id)
+    elif not on:
+        current = [f for f in current if f != applet_id]
+
+    try:
+        supabase.table("profile_details").upsert({
+            "id":         uid,
+            "favourites": current,
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+        }).execute()
+    except Exception as e:
+        logger.error(f"[profiles] favourite toggle failed for {uid}: {e}")
+        raise HTTPException(503, "Couldn't save that — has migration 008 been applied?")
+
+    # Deliberately not written to the activity feed. Which tools someone likes
+    # is nobody else's business and would bury the things that are.
+    return {"ok": True, "favourites": current}
 
 
 @app.get("/api/profile/me")

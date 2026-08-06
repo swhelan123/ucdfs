@@ -312,6 +312,22 @@ Still to do, roughly in order:
 
 ---
 
+### Favourites  ⭐ — ✅ done
+Star any card and it moves to a Favourites block at the top of the dashboard.
+Per account (`profile_details.favourites`, `migrations/008`), not per browser —
+see the note in CLAUDE.md for why that is the opposite call to the subteam chip.
+
+Worth doing next, in rough order of value:
+
+- **Favourite a chart, not just an applet.** Charts are rows now, so "star this
+  build plan" is the same idea one level down and probably what people actually
+  want once there are five charts. Needs a second column, or a `kind` on the
+  existing one.
+- **Reorder favourites by dragging.** The column is an ordered array already and
+  the server keeps click order, so this is a UI change and one endpoint.
+
+---
+
 ### `/api/dashboard` is a dozen round trips  🐌
 Not urgent, but worth knowing about. Every tile does its own Supabase queries,
 sequentially, and the endpoint now waits on roughly a dozen before it answers.

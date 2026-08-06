@@ -73,7 +73,9 @@ the dashboard to add a tool.**
 
 - `status`: `live` | `quiet` (dimmed, off-season) | `soon` (placeholder, not clickable)
 - `accent`: a colour token from `shared.css`
-- `external: True` with a URL in `route` for off-site links (e.g. the Canva mech plan)
+- `external: True` with a URL in `route` for off-site links — the VCU firmware
+  repo on GitHub, last season's Canva mech plan. These open in a new tab with
+  `rel="noopener"`; there is a test that every `_blank` card carries it.
 - `subteams`: ids from `SUBTEAMS`, or `["all"]`. Drives the dashboard filter
   chips and nothing else — see "Subteams" below. Omitting it means everyone.
 - `requires_role`: the permission field. `_may_open()` enforces it on both the
@@ -85,7 +87,7 @@ the dashboard to add a tool.**
   `APPLET_GROUPS`; omitting it means the main `tools` grid. See "Dashboard
   layout" below.
 
-Current ids: `attendance`, `profiles`, `flowcharts`, `harness`, `comp`,
+Current ids: `attendance`, `profiles`, `flowcharts`, `harness`, `vcu`, `comp`,
 `admin`, and under `archive`: `pt`, `mech`.
 
 ## Dashboard layout
@@ -100,8 +102,35 @@ empty space reads as a page that failed to load, and the subteam filter can
 easily empty a block. `tests/suite-pages.js` covers the dashboard drawing clean;
 the grouping logic is `render()` in `dashboard.html`.
 
-`UCDFS.applets()` and `UCDFS.appletGroups()` share one cached `/api/applets`
-response, so asking for both is still a single request.
+`UCDFS.applets()`, `UCDFS.appletGroups()` and `UCDFS.favourites()` share one
+cached `/api/applets` response, so asking for all three is still a single
+request.
+
+### Favourites
+
+A starred card is pulled to a **Favourites** block at the top of the dashboard
+and removed from the block it would otherwise sit in — shown once, not twice.
+Clearing every star restores the ordinary layout exactly.
+
+- **Stored per account** (`profile_details.favourites`, `migrations/008`), not
+  in localStorage. That is the opposite call to the subteam chip and the
+  flowchart tour, and deliberately: those are per-browser preferences, whereas
+  "these are my tools" should be the same on the workshop PC and on a phone.
+- Ids are checked against the registry on the way **in and out**, so a retired
+  card stops being a favourite instead of leaving a hole, and junk can never
+  accumulate in the column. Starring a card you may not open is a 403 —
+  `_may_open()` again, since it was never on your dashboard to star.
+- The star is a **sibling of the card, never a child**. A `<button>` inside an
+  `<a>` is invalid and browsers split the anchor around it, so each card is
+  wrapped in `.applet-slot` and the hover lift lives on the slot.
+- It is drawn faint rather than revealed on hover: half the team opens this on
+  a phone, and a control that only exists on hover does not exist on a touch
+  screen.
+- Toggling paints first and saves second, then takes the server's list back —
+  the server owns the order and the cap, so a second tab settles here. A
+  rejected save puts the card back and says why.
+- Deliberately **not** written to the activity feed. Which tools somebody likes
+  is nobody else's business and would bury the things that are.
 
 ## Flowcharts
 

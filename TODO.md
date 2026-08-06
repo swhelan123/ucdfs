@@ -313,9 +313,10 @@ Still to do, roughly in order:
 ---
 
 ### Favourites  ⭐ — ✅ done
-Star any card and it moves to a Favourites block at the top of the dashboard.
-Per account (`profile_details.favourites`, `migrations/008`), not per browser —
-see the note in CLAUDE.md for why that is the opposite call to the subteam chip.
+Star any card and a copy appears in a Favourites block at the top of the
+dashboard; the original stays where it is. Per account
+(`profile_details.favourites`, `migrations/008`), not per browser — see the note
+in CLAUDE.md for why that is the opposite call to the subteam chip.
 
 Worth doing next, in rough order of value:
 

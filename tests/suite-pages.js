@@ -135,35 +135,54 @@ const PAGES = [
       `${d.querySelectorAll('.fav-btn').length} stars, ` +
       `${d.querySelectorAll('a.applet .fav-btn').length} nested`);
 
+    // The section is always on the page. Its empty state is the only thing that
+    // tells anybody the star exists, so collapsing it would hide the feature
+    // from exactly the people who have not found it yet.
+    check('the favourites section is always present',
+      !!d.getElementById('fav-block') && d.getElementById('fav-block').style.display !== 'none');
+    check('and explains itself while empty',
+      d.getElementById('fav-empty').style.display !== 'none' &&
+      /☆/.test(d.getElementById('fav-empty').textContent),
+      d.getElementById('fav-empty').textContent.replace(/\s+/g, ' ').trim());
+
     // Driven through the client's own state rather than by clicking, so this
     // stays a test of how the dashboard lays favourites out and does not also
     // depend on migration 008 being applied. The round trip is covered in
     // suite-profiles, where it belongs.
-    const favBlock = d.getElementById('fav-block');
-    check('the favourites block is hidden until there are some',
-      favBlock.style.display === 'none', `display="${favBlock.style.display}"`);
     let favShape = {};
     try {
       favShape = w.eval(`(function () {
         var id = APPLETS.filter(function (a) { return a.status !== 'soon'; })[0].id;
+        var sel = '[data-fav="' + id + '"]';
         FAVOURITES = [id]; render();
-        var inFav = !!document.querySelector('#applet-favourites [data-fav="' + id + '"]');
-        var elsewhere = !!document.querySelector(
-          '#applet-grid [data-fav="' + id + '"], #applet-groups [data-fav="' + id + '"]');
-        var shown = document.getElementById('fav-block').style.display !== 'none';
+        var out = {
+          id:        id,
+          inFav:     !!document.querySelector('#applet-favourites ' + sel),
+          stillHome: !!document.querySelector('#applet-grid ' + sel +
+                       ', #applet-groups ' + sel),
+          copies:    document.querySelectorAll(sel).length,
+          emptyGone: document.getElementById('fav-empty').style.display === 'none',
+          bothOn:    [].slice.call(document.querySelectorAll(sel))
+                       .every(function (b) { return b.classList.contains('on'); })
+        };
         FAVOURITES = []; render();
-        var restored = document.getElementById('fav-block').style.display === 'none' &&
-          !!document.querySelector('#applet-grid [data-fav="' + id + '"]');
-        return { id: id, inFav: inFav, elsewhere: elsewhere, shown: shown, restored: restored };
+        out.restored = document.getElementById('fav-empty').style.display !== 'none' &&
+          document.querySelectorAll('#applet-favourites .applet').length === 0 &&
+          !!document.querySelector('#applet-grid ' + sel);
+        return out;
       })()`);
     } catch (e) { favShape = { error: e.message }; }
-    check('a starred card moves into Favourites and shows the block',
-      favShape.inFav === true && favShape.shown === true, JSON.stringify(favShape));
-    check('and is not also left in its old block',
-      favShape.elsewhere === false, JSON.stringify(favShape));
-    // Un-starring everything has to put the page back exactly as it was — a
-    // favourite that cannot be undone is a card you have lost track of.
-    check('clearing the last star restores the ordinary layout',
+
+    check('a starred card is copied into Favourites',
+      favShape.inFav === true && favShape.emptyGone === true, JSON.stringify(favShape));
+    // Copied, not moved: the card stays where it lives, so the shape of the
+    // site does not change under someone who pins something.
+    check('and is still in its own block too',
+      favShape.stillHome === true && favShape.copies === 2, JSON.stringify(favShape));
+    check('both copies show as starred', favShape.bothOn === true, JSON.stringify(favShape));
+    // Un-starring has to put the page back exactly as it was — a favourite that
+    // cannot be undone is a card you have lost track of.
+    check('clearing the last star restores the empty state',
       favShape.restored === true, JSON.stringify(favShape));
 
     check('no page errors', errors.length === 0, errors.join('; '));

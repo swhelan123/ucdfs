@@ -108,9 +108,23 @@ request.
 
 ### Favourites
 
-A starred card is pulled to a **Favourites** block at the top of the dashboard
-and removed from the block it would otherwise sit in — shown once, not twice.
-Clearing every star restores the ordinary layout exactly.
+A starred card is **copied** to a **Favourites** block at the top of the
+dashboard and stays where it lives. Pinning something must not change the shape
+of the site underneath you — Favourites is a shortcut, not somewhere cards
+disappear to.
+
+The block **keeps its heading when empty** and shows "nothing pinned yet"
+instead. This is the one exception to the rule that an empty block renders
+nothing: that empty state is the only thing on the page that says the star
+exists, so collapsing it would hide the feature from exactly the people who have
+not found it yet.
+
+It is also **not filtered by the subteam chips**. You pinned these deliberately,
+and a chip hiding your own shortcuts would be the single place on this page where
+filtering costs you something. It keeps the empty state honest too — "nothing
+pinned" then means that, rather than "nothing pinned that is also Operations".
+Order is the order you starred them in, which is the only order anyone could
+predict.
 
 - **Stored per account** (`profile_details.favourites`, `migrations/008`), not
   in localStorage. That is the opposite call to the subteam chip and the

@@ -206,6 +206,14 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 .fav-btn.on, .applet-slot:hover .fav-btn.on { opacity: 1; color: var(--amber); }
 .fav-btn:disabled { cursor: wait; }
 
+/* The empty state carries its weight: it is the only thing on the page that
+   says the star exists, so it stays put rather than collapsing the section. */
+.fav-empty {
+  border: 1px dashed var(--border); border-radius: 16px;
+  padding: 16px 18px; font-size: 0.82rem; color: var(--muted);
+  background: var(--card);
+}
+
 .tag {
   font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
   letter-spacing: 0.07em; padding: 2px 7px; border-radius: 6px;
@@ -277,11 +285,15 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
 
     <div class="nowbar" id="nowbar" style="display:none"></div>
 
-    <!-- Starred cards, pulled to the top. Hidden entirely until there are
-         some — a heading over nothing reads as a page that failed to load. -->
-    <div id="fav-block" style="display:none">
+    <!-- Starred cards, copied to the top. The heading stays even when there are
+         none: it is where the empty state tells you the star exists at all,
+         which is the only place anybody would find out. -->
+    <div id="fav-block">
       <div class="section-label">Favourites</div>
       <div class="applet-grid" id="applet-favourites"></div>
+      <div class="fav-empty" id="fav-empty">
+        Nothing pinned yet — tap the ☆ on any tool to keep it up here.
+      </div>
     </div>
 
     <div class="section-label">Tools</div>
@@ -633,27 +645,38 @@ function appletGroup(a) {
 function render() {
   const shown = APPLETS.filter(a => visibleUnder(a, FILTER));
 
-  /* A starred card is pulled out of whatever block it would normally sit in
-     and shown once, at the top. Listing it in both places would make the page
-     say the same thing twice; leaving it in place would make the Favourites
-     block decoration. Clearing every star restores the ordinary layout. */
-  const isFav  = a => FAVOURITES.indexOf(a.id) >= 0;
-  const favCards = shown.filter(isFav);
-  document.getElementById('fav-block').style.display = favCards.length ? '' : 'none';
+  /* A starred card is *copied* to the top, not moved: it stays where it lives
+     so the layout of the site never changes shape under you, and Favourites is
+     a shortcut rather than somewhere things disappear to.
+
+     Built from FAVOURITES rather than by filtering APPLETS, so they sit in the
+     order they were starred — the only order anybody could predict — and an id
+     naming a card that has since been retired simply drops out.
+
+     Deliberately not filtered by the subteam chip. You pinned these on purpose;
+     a chip hiding your own shortcuts would be the one place on this page where
+     filtering costs you something. It also keeps the empty state honest, since
+     "nothing pinned" then means exactly that rather than "nothing pinned that
+     is also Operations". */
+  const favCards = FAVOURITES
+    .map(id => APPLETS.find(a => a.id === id))
+    .filter(Boolean);
   document.getElementById('applet-favourites').innerHTML =
     favCards.map(a => appletCard(a, TILES[a.id])).join('');
+  document.getElementById('fav-empty').style.display = favCards.length ? 'none' : '';
 
   document.getElementById('applet-grid').innerHTML = shown
-    .filter(a => !isFav(a) && appletGroup(a) === 'tools')
+    .filter(a => appletGroup(a) === 'tools')
     .map(a => appletCard(a, TILES[a.id])).join('');
 
   /* Every block after Tools — its own heading and grid, and rendered only if
      the filter left anything in it. A heading over an empty space reads as a
-     page that failed to load. */
+     page that failed to load. (Favourites is the exception, above: its heading
+     stays because its empty state is the only thing that explains the star.) */
   document.getElementById('applet-groups').innerHTML = GROUPS
     .filter(g => g.id !== 'tools')
     .map(g => {
-      const cards = shown.filter(a => !isFav(a) && appletGroup(a) === g.id);
+      const cards = shown.filter(a => appletGroup(a) === g.id);
       if (!cards.length) return '';
       return `<div class="section-label" style="margin-top:26px">${UCDFS.esc(g.label)}</div>
               <div class="applet-grid">

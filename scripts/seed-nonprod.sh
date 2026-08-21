@@ -98,6 +98,10 @@ TABLES=(
   # plan, but the name of whoever made it is about a person, and the rule here
   # has no exceptions.
   "plans:created_by"
+  # Hyperlink cards (migrations/010). Reference data by the same test as a
+  # chart: what the dashboard points at is about the team's tools, not about a
+  # person. created_by is stripped for the same reason it is on plans.
+  "links:created_by"
   "pt_sections:"
   "pt_nodes:"
   "pt_edges:"

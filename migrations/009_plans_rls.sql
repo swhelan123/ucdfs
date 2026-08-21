@@ -1,0 +1,24 @@
+-- 009: row level security on plans, which 007 created without it.
+--
+-- Every other migration that creates a table turns RLS on in the same file:
+-- 001 does it for the fourteen it found, 002 for activity_log, 003 for the two
+-- profile tables, and 000_baseline loops over the lot. 007 added public.plans
+-- and did not, so it is the single table in the schema running with RLS off.
+--
+-- The intended end state is RLS enabled everywhere with zero policies: anon
+-- gets nothing, service_role bypasses RLS, and the backend does all the
+-- authorization itself. That is what makes the anon key safe to hold, and
+-- .env.example says so in as many words. One table opted out of it silently.
+--
+-- The practical exposure is small, because nothing in this app hands the anon
+-- key to a browser and every chart endpoint goes through FastAPI. But "the
+-- browser never talks to Supabase" is a property of today's code, and RLS is
+-- what makes it a property of the database. A table that only PostgREST grants
+-- stand between and the open internet is one leaked publishable key away from
+-- being writable, and plans is the whitelist _plan_or_400() reads: an attacker
+-- who can insert a row there can name any chart id into existence.
+--
+-- No policies, deliberately. Do not add any to "fix" access; the service_role
+-- key the backend uses bypasses RLS entirely and is unaffected by this.
+
+alter table public.plans enable row level security;

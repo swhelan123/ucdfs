@@ -59,10 +59,14 @@ twice, it belongs there, not duplicated.
 
 ## The applet registry
 
-`APPLETS` in `main.py` is the single source of truth for what exists on the site.
-It generates the page routes *and* feeds `/api/applets`, which the dashboard
-renders. **Adding an applet is one entry plus one file in `static/`. Never edit
-the dashboard to add a tool.**
+`APPLETS` in `main.py` is every *page* this site serves. It generates the page
+routes *and* feeds `/api/applets`, which the dashboard renders. **Adding an
+applet is one entry plus one file in `static/`. Never edit the dashboard to add
+a tool.**
+
+It is no longer the whole dashboard. **Off-site shortcut cards are rows in
+`links`** (`migrations/010`), added from `/admin` at runtime. See "Hyperlink
+cards" below for why the line falls there and not somewhere tidier.
 
 ```python
 {"id": "inventory", "name": "Inventory", "icon": "📦",
@@ -73,8 +77,8 @@ the dashboard to add a tool.**
 
 - `status`: `live` | `quiet` (dimmed, off-season) | `soon` (placeholder, not clickable)
 - `accent`: a colour token from `shared.css`
-- `external: True` with a URL in `route` for off-site links: the VCU firmware
-  repo on GitHub, last season's Canva mech plan. These open in a new tab with
+- `external`: **not a registry field any more.** It is set by `_link_card()` on
+  every row out of `links`. A card carrying it opens in a new tab with
   `rel="noopener"`; there is a test that every `_blank` card carries it.
 - `subteams`: ids from `SUBTEAMS`, or `["all"]`. Drives the dashboard filter
   chips and nothing else. See "Subteams" below. Omitting it means everyone.
@@ -87,8 +91,16 @@ the dashboard to add a tool.**
   `APPLET_GROUPS`; omitting it means the main `tools` grid. See "Dashboard
   layout" below.
 
-Current ids: `attendance`, `profiles`, `flowcharts`, `harness`, `vcu`, `comp`,
-`admin`, and under `archive`: `pt`, `mech`.
+Current applet ids: `attendance`, `profiles`, `flowcharts`, `comp`, `admin`, and
+under `archive`: `harness`, `pt`. Link ids are whatever is in the table; the
+seeded ones are `vcu`, `harnesshive`, `onshape`, `sharepoint`, `fsstats`,
+`fswiki`, `fsae-reddit` and, under `archive`, `mech`.
+
+The harness mapper is archived rather than deleted: HarnessHive does the job
+now, but the tool still opens and `harness_doc` still holds the team's document.
+Note that removing its registry entry would **not** remove the tool. The
+`/harness/api/*` endpoints and the `/harness/ws` room are separate, and
+`static/` is a public prefix, so the page shell keeps being served either way.
 
 ## Dashboard layout
 
@@ -105,6 +117,63 @@ the grouping logic is `render()` in `dashboard.html`.
 `UCDFS.applets()`, `UCDFS.appletGroups()` and `UCDFS.favourites()` share one
 cached `/api/applets` response, so asking for all three is still a single
 request.
+
+### Hyperlink cards
+
+`links` (`migrations/010`) holds the dashboard's off-site shortcuts: the VCU
+repo, Onshape, SharePoint, HarnessHive, FS Stats, FSWiki, r/FSAE, last season's
+Canva plan. They were registry entries until seven had accumulated, each one a
+deploy to add a name and a url, and therefore each one something only a person
+with a checkout could do. They are managed from `/admin` now.
+
+**The split is not internal-vs-external for tidiness.** An `APPLETS` entry
+carries a `file` and the loop under the registry turns it into a route, so a row
+claiming to be a page the image does not contain is a 404 tile: adding one is a
+deploy whatever an admin screen pretends. A hyperlink generates nothing and is
+pure content. Only the second kind can honestly be data, and that is the whole
+reason `APPLETS` did not go the way `PLANS` did.
+
+`_link_card()` reshapes a row into the same dict an applet is, so `appletCard()`
+draws it, the subteam chips filter it and the star pins it with no front-end
+change at all. `_cards()` is applets **then** links within each block: the
+team's own tools are what somebody opens the page to reach, and the outbound
+shortcuts are reference.
+
+- **The url check is the one that matters.** A url goes straight into an `href`,
+  and escaping does nothing about the *protocol*: `javascript:…` escapes
+  perfectly and still runs, on every dashboard, every time anyone loads the
+  site. `_clean_link_url()` whitelists `http` and `https`. `tests/suite-links.js`
+  leads with that check for a reason. Everything else in `_clean_link()` is
+  tidiness by comparison.
+- **Ids are minted server-side** (`link_…`, like `chart_…` and `sec_…`). An id
+  in a create body is ignored, not honoured: a caller who picks the primary key
+  can collide with an applet id and shadow a real page with an unauthenticated
+  link.
+- **Accent, group and status fall back; they do not 400.** They come from
+  selects the server itself populated, so a bad value is a stale tab rather than
+  a typo, and losing a colour beats losing the edit. An unknown *subteam* is
+  dropped the same way `_clean_subteam()` drops one, and an empty list reads as
+  `["all"]`: a card visible to nobody is never what anyone meant.
+- **Gated on the admin role, deliberately not on the override.** The rest of
+  `/api/admin/*` is gated because it reaches someone else's data. This reaches
+  the shape of a shared page, which is the same kind of thing as making a chart,
+  and that is not gated at all. Requiring the override to fix a typo in a url
+  would mean an admin elevated all day, which is the problem god mode exists to
+  solve.
+- **Deleting echoes the name back**, the same rail as deleting an account or a
+  chart, and for the same reason rather than because the stakes match: the admin
+  list can be a minute stale, and the id under the button may no longer be the
+  card the row is showing.
+- **Nothing sweeps favourites when a link is deleted.** `_favourites_for()`
+  filters against what exists on the way out, so the star closes behind it at
+  the next dashboard load. A sweep would be a write to every account on the team
+  to achieve what a filter already does.
+- There is no `requires_role`. Gating a link would be theatre: the url is in the
+  page for anyone who can see the card, and the far end does its own auth.
+  Anything genuinely needing a gate is a page, and pages are registry entries.
+- `scripts/seed-nonprod.sh` copies `links` with `created_by` stripped, by the
+  same test it applies to `plans`: what the dashboard points at is about the
+  team's tools, the name of whoever typed it is about a person.
 
 ### Favourites
 
@@ -624,6 +693,20 @@ sections into rows, 007 turns charts into rows, and each one is filtered or read
 unconditionally by the code that follows it, so non-prod gets the SQL, then CI
 runs, then prod gets the SQL, then prod gets the image. The other order 500s
 every chart endpoint.
+
+010 is gentler about it and still wants the same order. `_link_rows()` returns
+`[]` when the table is missing, so a site running ahead of its migration loses
+its shortcut cards rather than its dashboard. That is degraded, not broken, but
+it is still eight cards missing from the homepage with nothing on screen to say
+why. Apply it first.
+
+**009 turns on RLS for `plans`, which 007 created without it.** Every other
+table-creating migration enables it in the same file; that one did not, so it
+was the single table in the schema running with RLS off. The exposure was small,
+because nothing hands the anon key to a browser, but "the browser never talks to
+Supabase" is a property of today's code and RLS is what makes it a property of
+the database. `plans` is also the whitelist `_plan_or_400()` reads, so a write
+there names charts into existence.
 
 ### Seeding non-prod
 

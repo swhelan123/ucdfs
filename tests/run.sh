@@ -22,7 +22,7 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness profiles admin plans)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login comp harness profiles admin plans links)
 
 # Stamped before anything runs, so cleanup can find exactly the rows this run
 # wrote to the shared activity feed and nothing older.
@@ -54,6 +54,7 @@ cleanup() {
     cleanup_test_accounts
     cleanup_activity_log "$RUN_STARTED"
     cleanup_pt_done_log "$RUN_STARTED"
+    cleanup_links
     if [ "$KEEP" = "1" ]; then
       echo "  test container left running at $BASE"
     else
@@ -83,6 +84,7 @@ for suite in "${SUITES[@]}"; do
     profiles) TEST_BASE="$BASE" node "$ROOT/tests/suite-profiles.js" || total_fail=$((total_fail+1)) ;;
     admin)   TEST_BASE="$BASE" node "$ROOT/tests/suite-admin.js" || total_fail=$((total_fail+1)) ;;
     plans)   TEST_BASE="$BASE" node "$ROOT/tests/suite-plans.js" || total_fail=$((total_fail+1)) ;;
+    links)   TEST_BASE="$BASE" node "$ROOT/tests/suite-links.js" || total_fail=$((total_fail+1)) ;;
     *)      echo "Unknown suite: $suite" >&2; total_fail=$((total_fail+1)) ;;
   esac
 done

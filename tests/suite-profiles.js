@@ -428,7 +428,7 @@ const STARTED = Date.now() - 1000;
       `${activeChip.trim()}, expected ${expectTeam}`);
 
     // Every card on the page, across both blocks. The dashboard groups them
-    // now (Tools, then Last season), and "filter, never hide" is a claim about
+    // now (Tools, then Archive), and "filter, never hide" is a claim about
     // the page, not about one container. Counting only #applet-grid would call
     // the archived cards missing.
     const shownCards = () =>

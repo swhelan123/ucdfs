@@ -59,8 +59,8 @@ const PAGES = [
     const drawn = await waitFor(() => w.eval('TILES_LOADED') === true);
     check('the dashboard finishes drawing', drawn, 'TILES_LOADED still false');
 
-    // Both blocks: the dashboard lays cards out in groups now (Tools, then Last
-    // season), so counting one container would miss the archived ones and read
+    // Both blocks: the dashboard lays cards out in groups now (Tools, then
+    // Archive), so counting one container would miss the archived ones and read
     // as cards having gone missing from the page.
     const cards = d.querySelectorAll('#applet-grid .applet, #applet-groups .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);
@@ -114,9 +114,26 @@ const PAGES = [
       typeof degraded === 'string'
         ? (degraded.match(/applet-stat[^"]*/) || ['(no stat line)'])[0]
         : String(degraded));
-    check('external applet opens in a new tab',
-      [...cards].some(c => (c.getAttribute('href') || '').startsWith('http') &&
-                            c.getAttribute('target') === '_blank'));
+    /* Whether an external card exists at all is database state now, not a
+       registry fact: hyperlink cards are rows in `links` (migrations/010). So
+       the expectation comes from the API rather than being assumed, and a
+       database that has not had 010 applied says so out loud instead of failing
+       as though the dashboard had stopped rendering off-site shortcuts.
+
+       Stronger than the "at least one" check it replaces: *every* card the API
+       marks external has to render as a new-tab link, so one that lost its
+       target cannot hide behind the others. */
+    const apiApplets = ((await (await fetch(BASE + '/api/applets',
+      { headers: { Cookie: cookieHeader } })).json()).applets) || [];
+    const wantExternal = apiApplets.filter(a => a.external).length;
+    const gotExternal = [...cards].filter(
+      c => (c.getAttribute('href') || '').startsWith('http') &&
+           c.getAttribute('target') === '_blank').length;
+    if (!wantExternal) {
+      console.log('  ── no external cards on this dashboard; is migration 010 applied? ──');
+    }
+    check('every external card opens in a new tab',
+      gotExternal === wantExternal, `${gotExternal} of ${wantExternal}`);
     // Off-site shortcuts must carry rel=noopener with target=_blank, or the
     // page they open gets a handle on this one through window.opener.
     check('and does so without handing over window.opener',

@@ -154,7 +154,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Plans Check,Test Bot'
+TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Plans Check,Links Member,Links Boss,Test Bot'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time
@@ -190,6 +190,32 @@ PY
 # Same idea for pt_done_log: suite-plans ticks a node on the 26/27 plan, and
 # that audit line is append-only by design. Nothing in the app removes it when
 # the node goes. Same double guard as above, name AND time window.
+cleanup_links() {
+  # Hyperlink cards created by suite-links (migrations/010).
+  #
+  # Matched on the name prefix rather than on the id, because a run that
+  # crashes between creating a link and deleting it never learns the id the
+  # server minted. A leftover row here is not inert: it is a card on the
+  # dashboard of every account in the non-prod project.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+q = "/rest/v1/links?name=like." + urllib.parse.quote(prefix + "*", safe="")
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test link(s)")
+except Exception as e:
+    # The table may not exist yet (010 unapplied). Never fail a run over tidying.
+    print(f"  cleanup: could not tidy links ({e})")
+PY
+}
+
 cleanup_pt_done_log() {
   local since="${1:-}"
   [ -z "$since" ] && return 0

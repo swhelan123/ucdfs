@@ -301,6 +301,21 @@ APPLETS = [
         # /api/applets omits it rather than showing a tile that 403s.
         "requires_role": "admin",
     },
+    {
+        "id":     "harness",
+        "name":   "Wiring Harness Mapper",
+        "icon":   "🔌",
+        "route":  "/harness",
+        "file":   "harness.html",
+        # The blurb carries the reason it is dimmed. A quiet card with no
+        # explanation reads as broken, and this one is neither broken nor
+        # off-season: HarnessHive does the job now.
+        "blurb":  "Superseded by HarnessHive: connectors, pinouts and wire runs",
+        "accent": "amber",
+        "status": "quiet",
+        "subteams": ["pt"],
+        "group":  "archive",
+    },
     # ── Last season ───────────────────────────────────────────────────────
     # Both 25/26 build plans. They are finished, not broken, and people still
     # look things up in them, so they move to their own block at the foot of

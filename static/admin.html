@@ -203,6 +203,22 @@
     <div class="section-label">Everyone</div>
     <div class="card" id="people"></div>
 
+    <div class="section-label">Dashboard blocks</div>
+    <div class="card"><div id="groups"></div></div>
+    <button class="lnk-add" id="grp-add" type="button">+ Add a block</button>
+
+    <div class="note">
+      <b>Blocks</b> are the headings the dashboard is divided into. The
+      <b>first</b> one is where a card with no block of its own lands, and it is
+      drawn at the top under the filter chips. A block with nothing in it is not
+      shown on the dashboard at all, so an empty one is not a mistake, it is
+      just waiting.
+      <br><br>
+      A block can only be deleted once it is <b>empty</b>. Cards do not move
+      when a block goes, they just stop being where you filed them, and some of
+      them are built into the site and cannot be re-filed from here.
+    </div>
+
     <div class="section-label">Dashboard links</div>
     <div class="card">
       <div id="links"></div>
@@ -243,6 +259,7 @@
 let PEOPLE = [], ROLES = [], ME = null;
 let LINKS = [], LGROUPS = [], LSUBS = [], LACCENTS = [], LSTATUSES = [];
 let LREADY = true, EDITING = null;
+let BLOCKS = [], BREADY = true;
 
 function renderGod() {
   const me = PEOPLE.find(p => p.id === ME);
@@ -370,6 +387,139 @@ async function setRole(sel, id, role) {
   } finally {
     sel.disabled = false;
   }
+}
+
+/* ── Dashboard blocks ────────────────────────────────────────────────────────
+   Deliberately plainer than the link editor: a block is a heading and a
+   position, so there is nothing to lay out a form for. Rename and add both go
+   through prompt(), which is what the account delete already does. */
+
+function renderBlocks() {
+  const box = document.getElementById('groups');
+  if (!BREADY) {
+    box.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Blocks need migration 011. Until then the dashboard ' +
+      'uses its built-in headings and these cannot be edited.</div></div>';
+    document.getElementById('grp-add').disabled = true;
+    return;
+  }
+
+  box.innerHTML = BLOCKS.map((g, i) => {
+    /* Why the button is off is more useful than the button being gone: an
+       admin who cannot delete a block should find out it is because something
+       is still in it, not be left looking for a control. */
+    const why = BLOCKS.length <= 1 ? 'The only block left'
+              : g.cards            ? `${g.cards} card${g.cards === 1 ? '' : 's'} still in it`
+              : 'Delete this block';
+    return `
+      <div class="lnk">
+        <div class="lnk-icon">▦</div>
+        <div class="lnk-body">
+          <div class="lnk-name">${UCDFS.esc(g.label)}
+            ${i === 0 ? '<span class="lnk-tag">first</span>' : ''}</div>
+          <div class="lnk-url">${g.cards} card${g.cards === 1 ? '' : 's'}</div>
+        </div>
+        <div class="lnk-btns">
+          <button class="lnk-btn" type="button" data-gmove="${UCDFS.esc(g.id)}"
+                  data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+          <button class="lnk-btn" type="button" data-gmove="${UCDFS.esc(g.id)}"
+                  data-dir="1" ${i === BLOCKS.length - 1 ? 'disabled' : ''}
+                  title="Move down">↓</button>
+          <button class="lnk-btn" type="button"
+                  data-grename="${UCDFS.esc(g.id)}">Rename</button>
+          <button class="lnk-btn danger" type="button" data-gdel="${UCDFS.esc(g.id)}"
+                  title="${UCDFS.esc(why)}"
+                  ${g.cards || BLOCKS.length <= 1 ? 'disabled' : ''}>Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function saveBlock(body, okMsg) {
+  const r = await fetch('/api/admin/groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || 'Failed');
+  UCDFS.toast(okMsg);
+  await loadBlocks();
+}
+
+async function addBlock() {
+  const label = prompt('What should the new block be called?\n\n' +
+    'It appears as a heading on the dashboard once something is in it.', '');
+  if (label === null) return;
+  try { await saveBlock({ label: label.trim() }, 'Block added'); }
+  catch (e) { UCDFS.toast(e.message || "Couldn't add that block"); }
+}
+
+async function renameBlock(id) {
+  const g = BLOCKS.find(x => x.id === id);
+  if (!g) return;
+  /* Only the heading is editable. The id is what every card in the block points
+     at, so changing it would empty the block and scatter its cards into the
+     first one; the server does not accept one either. */
+  const label = prompt('Rename this block:', g.label);
+  if (label === null) return;
+  try { await saveBlock({ id: id, label: label.trim() }, 'Renamed'); }
+  catch (e) { UCDFS.toast(e.message || "Couldn't rename that block"); }
+}
+
+async function deleteBlock(btn, id) {
+  const g = BLOCKS.find(x => x.id === id);
+  if (!g) return;
+  const typed = prompt(
+    `Delete the "${g.label}" block?\n\n` +
+    'It is empty, so no card moves and nothing on the dashboard changes except ' +
+    'that this heading stops existing.\n\n' +
+    "Type the block's heading to confirm:", '');
+  if (typed === null) return;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/groups/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, label: (typed || '').trim() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(`${g.label} removed`);
+    await loadBlocks();
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't delete that block");
+  }
+}
+
+async function moveBlock(id, dir) {
+  const ids = BLOCKS.map(x => x.id);
+  const i = ids.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  ids[i] = ids[j]; ids[j] = id;
+  try {
+    const r = await fetch('/api/admin/groups/reorder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids }),
+    });
+    const j2 = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j2.detail || 'Failed');
+    await loadBlocks();
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that order");
+  }
+}
+
+async function loadBlocks() {
+  const r = await fetch('/api/admin/groups');
+  if (!r.ok) throw new Error('Could not load the blocks');
+  const j = await r.json();
+  BLOCKS = j.groups || [];
+  BREADY = j.ready !== false;
+  renderBlocks();
+  /* The link editor's Block dropdown is built from the same list, so a block
+     added here has to be offered there without a reload. */
+  if (LREADY) await loadLinks();
 }
 
 /* ── Dashboard links ─────────────────────────────────────────────────────────
@@ -655,6 +805,15 @@ async function boot() {
   });
   document.getElementById('lnk-add').addEventListener('click', () => openLinkForm(null));
 
+  document.getElementById('groups').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.grename) renameBlock(b.dataset.grename);
+    else if (b.dataset.gdel) deleteBlock(b, b.dataset.gdel);
+    else if (b.dataset.gmove) moveBlock(b.dataset.gmove, Number(b.dataset.dir));
+  });
+  document.getElementById('grp-add').addEventListener('click', addBlock);
+
   try {
     await load();
   } catch (e) {
@@ -672,6 +831,14 @@ async function boot() {
     document.getElementById('links').innerHTML =
       '<div class="empty"><div class="empty-icon">⚠️</div>' +
       '<div class="empty-text">Could not load the links.</div></div>';
+  }
+
+  try {
+    await loadBlocks();
+  } catch (e) {
+    document.getElementById('groups').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Could not load the blocks.</div></div>';
   }
 }
 

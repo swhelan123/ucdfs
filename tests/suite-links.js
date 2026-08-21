@@ -22,9 +22,16 @@
  *     favourites endpoint used to check ids against APPLETS_BY_ID alone, and a
  *     link id would have been a 400 for a card the dashboard had just drawn.
  *
- * Every link it creates is named with the test prefix so cleanup_links() in
- * lib.sh can find them even when this file crashes halfway. A leftover row is
- * not inert: it is a card on every dashboard in the non-prod project.
+ * It also covers the dashboard blocks those cards sit in (migrations/011),
+ * which are rows with one rail links do not have: a block cannot be deleted
+ * while anything is in it, counting applets as well as links. Applets are code,
+ * so an admin who emptied a block a registry entry names could not put it back
+ * from the UI.
+ *
+ * Every link and block it creates is named with the test prefix so the cleanup
+ * helpers in lib.sh can find them even when this file crashes halfway. A
+ * leftover row is not inert: it is a card, or a heading, on every dashboard in
+ * the non-prod project.
  */
 const { BASE, check, summary, signUp } = require('./lib');
 
@@ -46,6 +53,7 @@ const PREFIX = 'ucdfs-test-';
   // Ids this run minted, so the finally block can take them back out even if a
   // check throws. cleanup_links is the backstop, not the plan.
   const mine = [];
+  const blocksMade = [];
 
   try {
     console.log('a member is refused, and not by hiding the buttons');
@@ -263,7 +271,85 @@ const PREFIX = 'ucdfs-test-';
       !(after.favourites || []).includes(id), JSON.stringify(after.favourites));
     check('and it is not a card any more',
       !(after.applets || []).some(a => a.id === id), id);
+    console.log('\ndashboard blocks');
+    /* Blocks are rows too (migrations/011), and the rails differ from links in
+       one way that matters: a block cannot be deleted while anything is in it,
+       counting applets as well as links. Applets are code, so an admin who
+       emptied a block that a registry entry names could not put it back. */
+    const blocksR = await json(await get('/api/admin/groups'));
+    check('an admin can list blocks', Array.isArray(blocksR.groups),
+      typeof blocksR.groups);
+    check('each block says how many cards are in it',
+      (blocksR.groups || []).every(g => typeof g.cards === 'number'),
+      JSON.stringify((blocksR.groups || []).map(g => [g.id, g.cards])));
+
+    for (const [label, path, body] of [
+      ['listing blocks',   '/api/admin/groups',          null],
+      ['adding one',       '/api/admin/groups',          { label: 'x' }],
+      ['deleting one',     '/api/admin/groups/delete',   { id: 'apps', label: 'Apps' }],
+      ['reordering them',  '/api/admin/groups/reorder',  { ids: [] }],
+    ]) {
+      const r = body === null ? await get(path, hdrM) : await post(path, body, hdrM);
+      check(`member: ${label}`, r.status === 403, String(r.status));
+    }
+
+    if (blocksR.ready === false) {
+      console.log('  ── migration 011 is not applied; skipping the rest of the blocks ──');
+    } else {
+      const blocks = blocksR.groups || [];
+
+      const noLabel = await post('/api/admin/groups', { label: '   ' });
+      check('a block with no heading', noLabel.status === 400, String(noLabel.status));
+
+      const addedR = await json(await post('/api/admin/groups',
+        { label: PREFIX + 'Block' }));
+      const gid = addedR.group && addedR.group.id;
+      if (gid) blocksMade.push(gid);
+      check('a block can be added', !!gid, String(gid));
+      check('its id is minted server-side', /^grp_[0-9a-f]{8}$/.test(gid || ''), String(gid));
+
+      const renamed = await json(await post('/api/admin/groups',
+        { id: gid, label: PREFIX + 'Renamed' }));
+      check('a block can be renamed',
+        renamed.group && renamed.group.label === PREFIX + 'Renamed',
+        renamed.group && renamed.group.label);
+
+      /* The rail this whole section exists for. Every seeded block holds cards,
+         so pick one that does and check it survives. */
+      const held = (await json(await get('/api/admin/groups'))).groups
+        .find(g => g.cards > 0);
+      if (held) {
+        const refused = await post('/api/admin/groups/delete',
+          { id: held.id, label: held.label });
+        check('a block holding cards cannot be deleted',
+          refused.status === 400, String(refused.status));
+        const survived = (await json(await get('/api/admin/groups'))).groups
+          .some(g => g.id === held.id);
+        check('and it is still there', survived, String(survived));
+      } else {
+        console.log('  ── no block holds cards; skipping the emptiness rail ──');
+      }
+
+      const wrongLabel = await post('/api/admin/groups/delete',
+        { id: gid, label: 'not the heading' });
+      check('the heading has to match', wrongLabel.status === 400, String(wrongLabel.status));
+
+      const order = (await json(await get('/api/admin/groups'))).groups.map(g => g.id);
+      const short = await post('/api/admin/groups/reorder', { ids: order.slice(1) });
+      check('a partial block order is refused', short.status === 400, String(short.status));
+
+      const goneG = await post('/api/admin/groups/delete',
+        { id: gid, label: PREFIX + 'Renamed' });
+      check('an empty block can be deleted', goneG.status === 200, String(goneG.status));
+      if (goneG.ok) blocksMade.splice(blocksMade.indexOf(gid), 1);
+    }
+
   } finally {
+    for (const id of blocksMade) {
+      const g = ((await json(await get('/api/admin/groups'))).groups || [])
+        .find(x => x.id === id);
+      if (g) await post('/api/admin/groups/delete', { id, label: g.label });
+    }
     for (const id of mine) {
       const row = ((await json(await get('/api/admin/links'))).links || [])
         .find(l => l.id === id);

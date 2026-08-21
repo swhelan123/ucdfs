@@ -250,6 +250,44 @@ APPLETS = [
         "subteams": ["pt"],
     },
     {
+        "id":     "harnesshive",
+        "name":   "HarnessHive",
+        "icon":   "🐝",
+        "route":  "https://app.harnesshive.com/",
+        "blurb":  "Harness design and documentation (HarnessHive)",
+        "accent": "teal",
+        "status": "live",
+        "external": True,
+        # Third in the electronics run, after the mapper and the firmware, so
+        # the whole loop from pinout to code to drawing sits in one glance.
+        "subteams": ["pt"],
+    },
+    {
+        "id":     "onshape",
+        "name":   "Onshape",
+        "icon":   "📐",
+        "route":  "https://ucdformula.onshape.com",
+        "blurb":  "Every assembly, part and drawing (Onshape)",
+        "accent": "green",
+        "status": "live",
+        "external": True,
+        # Tagged mech and pt rather than "all": Operations do not open CAD, and
+        # the chips are relevance. Both build subteams model in here, though,
+        # so tagging it mech alone would bury it for whoever is drawing a mount.
+        "subteams": ["mech", "pt"],
+    },
+    {
+        "id":     "sharepoint",
+        "name":   "SharePoint",
+        "icon":   "🗂️",
+        "route":  "https://ucd.sharepoint.com/sites/UCDFS214/",
+        "blurb":  "Shared team documents and files (SharePoint)",
+        "accent": "purple",
+        "status": "live",
+        "external": True,
+        "subteams": ["all"],
+    },
+    {
         "id":     "comp",
         "name":   "Competition Hub",
         "icon":   "🏁",

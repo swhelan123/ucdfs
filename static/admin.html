@@ -84,6 +84,78 @@
 .who-del:hover { border-color: #c0392b; color: #c0392b; }
 .who-del:disabled { opacity: 0.5; cursor: default; }
 
+/* ── Dashboard links ── */
+.lnk { display: flex; align-items: center; gap: 12px;
+       padding: 12px 15px; border-bottom: 1px solid var(--border); }
+.lnk:last-child { border-bottom: none; }
+.lnk.quiet { opacity: 0.55; }
+.lnk-icon { font-size: 1.2rem; width: 26px; text-align: center; flex-shrink: 0; }
+.lnk-body { flex: 1; min-width: 0; }
+.lnk-name { font-weight: 600; font-size: 0.88rem; display: flex;
+            align-items: center; gap: 7px; flex-wrap: wrap; }
+.lnk-url  { font-size: 0.72rem; color: var(--muted); margin-top: 2px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lnk-tag {
+  font-size: 0.58rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 6px; border-radius: 6px;
+  background: var(--bg); color: var(--muted);
+}
+.lnk-btns { display: flex; gap: 5px; flex-shrink: 0; }
+.lnk-btn {
+  padding: 6px 9px; font: inherit; font-size: 0.75rem; cursor: pointer;
+  border: 2px solid var(--border); border-radius: 10px;
+  background: var(--card); color: var(--muted);
+}
+.lnk-btn:hover { border-color: var(--indigo); color: var(--indigo); }
+.lnk-btn.danger:hover { border-color: #c0392b; color: #c0392b; }
+.lnk-btn:disabled, .lnk-btn:disabled:hover {
+  opacity: 0.35; cursor: default; border-color: var(--border); color: var(--muted);
+}
+.lnk-group {
+  font-size: 0.62rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted);
+  padding: 11px 15px 5px; border-bottom: 1px solid var(--border);
+}
+
+/* The editor. One form, reused for adding and for editing, because two forms
+   drift and the fields are the same either way. */
+.lnk-form { padding: 16px; border-top: 1px solid var(--border); display: none; }
+.lnk-form.open { display: block; }
+.lnk-row { display: flex; gap: 10px; margin-bottom: 11px; flex-wrap: wrap; }
+.lnk-f { flex: 1; min-width: 132px; }
+.lnk-f.narrow { flex: 0 0 72px; min-width: 72px; }
+.lnk-f label {
+  display: block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
+}
+.lnk-f input, .lnk-f select {
+  width: 100%; padding: 8px 10px; font: inherit; font-size: 0.85rem;
+  border: 2px solid var(--border); border-radius: 11px;
+  background: var(--card); color: var(--text); outline: none;
+}
+.lnk-f input:focus, .lnk-f select:focus { border-color: var(--indigo); }
+.lnk-chips { display: flex; gap: 12px; flex-wrap: wrap; padding-top: 3px; }
+.lnk-chip { display: flex; align-items: center; gap: 5px; font-size: 0.82rem; }
+.lnk-actions { display: flex; gap: 8px; margin-top: 14px; }
+.lnk-save {
+  padding: 9px 17px; font: inherit; font-size: 0.85rem; font-weight: 600;
+  border: none; border-radius: 11px; background: var(--ucd-navy);
+  color: #fff; cursor: pointer;
+}
+.lnk-save:disabled { opacity: 0.6; cursor: default; }
+.lnk-cancel {
+  padding: 9px 17px; font: inherit; font-size: 0.85rem; cursor: pointer;
+  border: 2px solid var(--border); border-radius: 11px;
+  background: var(--card); color: var(--muted);
+}
+.lnk-add {
+  width: 100%; margin-top: 11px; padding: 10px 16px; cursor: pointer;
+  font: inherit; font-size: 0.85rem; font-weight: 600;
+  border: 2px dashed var(--border); border-radius: 12px;
+  background: transparent; color: var(--muted);
+}
+.lnk-add:hover { border-color: var(--indigo); color: var(--indigo); }
+
 .note {
   font-size: 0.76rem; color: var(--muted); line-height: 1.6;
   margin-top: 18px; padding: 14px 16px;
@@ -131,6 +203,25 @@
     <div class="section-label">Everyone</div>
     <div class="card" id="people"></div>
 
+    <div class="section-label">Dashboard links</div>
+    <div class="card">
+      <div id="links"></div>
+      <div class="lnk-form" id="lnk-form"></div>
+    </div>
+    <button class="lnk-add" id="lnk-add" type="button">+ Add a link</button>
+
+    <div class="note">
+      <b>Links</b> are the dashboard's off-site shortcuts: Onshape, SharePoint,
+      the VCU repo. Adding one here puts it on everyone's dashboard straight
+      away, with no deploy. Pages built into this site are not links and are not
+      editable here, because each one is a file that has to ship with the code.
+      <br><br>
+      <b>Subteams</b> decide which filter chip a card shows under, and nothing
+      else. They are not permissions: anybody can open any link on this list.
+      <b>Quiet</b> dims a card without removing it, for something off-season or
+      superseded.
+    </div>
+
     <div class="note">
       <b>member</b> is the default. <b>committee</b> gets the Competition Hub
       admin actions: roster, shop runs, marking things bought.
@@ -150,6 +241,8 @@
 <script src="/static/shared.js"></script>
 <script>
 let PEOPLE = [], ROLES = [], ME = null;
+let LINKS = [], LGROUPS = [], LSUBS = [], LACCENTS = [], LSTATUSES = [];
+let LREADY = true, EDITING = null;
 
 function renderGod() {
   const me = PEOPLE.find(p => p.id === ME);
@@ -279,6 +372,263 @@ async function setRole(sel, id, role) {
   }
 }
 
+/* ── Dashboard links ─────────────────────────────────────────────────────────
+   The vocabularies (groups, subteams, accents, statuses) all come from the
+   server rather than being written down here. They exist once, at the top of
+   main.py, and a second copy in this file would be wrong the first time
+   somebody adds a colour. */
+
+function linkTags(l) {
+  const subs = (l.subteams || ['all']).map(id => {
+    const s = LSUBS.find(x => x.id === id);
+    return s ? s.name : id;
+  }).join(', ');
+  const tags = [];
+  if (l.status === 'quiet') tags.push('<span class="lnk-tag">quiet</span>');
+  tags.push(`<span class="lnk-tag">${UCDFS.esc(subs || 'all')}</span>`);
+  return tags.join('');
+}
+
+function renderLinks() {
+  const box = document.getElementById('links');
+
+  if (!LREADY) {
+    box.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Links need migration 010. Apply it and reload.</div></div>';
+    document.getElementById('lnk-add').disabled = true;
+    return;
+  }
+  if (!LINKS.length) {
+    box.innerHTML = '<div class="empty"><div class="empty-icon">🔗</div>' +
+      '<div class="empty-text">No links yet.</div></div>';
+    return;
+  }
+
+  /* Grouped in the dashboard's own block order, so this list reads in the
+     order the cards actually appear rather than in id order. A block with no
+     links in it draws no heading, same rule as the dashboard. */
+  let html = '';
+  for (const g of LGROUPS) {
+    const rows = LINKS.filter(l => (l.group_id || 'tools') === g.id);
+    if (!rows.length) continue;
+    html += `<div class="lnk-group">${UCDFS.esc(g.label)}</div>`;
+    rows.forEach((l, i) => {
+      html += `
+        <div class="lnk ${l.status === 'quiet' ? 'quiet' : ''}">
+          <div class="lnk-icon">${UCDFS.esc(l.icon || '🔗')}</div>
+          <div class="lnk-body">
+            <div class="lnk-name">${UCDFS.esc(l.name)}${linkTags(l)}</div>
+            <div class="lnk-url">${UCDFS.esc(l.url)}</div>
+          </div>
+          <div class="lnk-btns">
+            <button class="lnk-btn" type="button" data-move="${UCDFS.esc(l.id)}"
+                    data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+            <button class="lnk-btn" type="button" data-move="${UCDFS.esc(l.id)}"
+                    data-dir="1" ${i === rows.length - 1 ? 'disabled' : ''}
+                    title="Move down">↓</button>
+            <button class="lnk-btn" type="button" data-edit="${UCDFS.esc(l.id)}">Edit</button>
+            <button class="lnk-btn danger" type="button"
+                    data-del="${UCDFS.esc(l.id)}">Delete</button>
+          </div>
+        </div>`;
+    });
+  }
+  box.innerHTML = html;
+}
+
+function openLinkForm(id) {
+  EDITING = id || null;
+  const l = id ? LINKS.find(x => x.id === id) : null;
+  const sel = (list, cur, val, lab) => list.map(o => {
+    const v = val ? val(o) : o, t = lab ? lab(o) : o;
+    return `<option value="${UCDFS.esc(v)}" ${v === cur ? 'selected' : ''}>${UCDFS.esc(t)}</option>`;
+  }).join('');
+  const subs = (l && l.subteams) || ['all'];
+
+  document.getElementById('lnk-form').innerHTML = `
+    <div class="lnk-row">
+      <div class="lnk-f narrow">
+        <label for="lf-icon">Icon</label>
+        <input id="lf-icon" maxlength="8" value="${UCDFS.esc((l && l.icon) || '🔗')}">
+      </div>
+      <div class="lnk-f">
+        <label for="lf-name">Name</label>
+        <input id="lf-name" maxlength="40" value="${UCDFS.esc((l && l.name) || '')}"
+               placeholder="Onshape">
+      </div>
+    </div>
+    <div class="lnk-row">
+      <div class="lnk-f">
+        <label for="lf-url">Web address</label>
+        <input id="lf-url" type="url" value="${UCDFS.esc((l && l.url) || '')}"
+               placeholder="https://example.com">
+      </div>
+    </div>
+    <div class="lnk-row">
+      <div class="lnk-f">
+        <label for="lf-blurb">Description</label>
+        <input id="lf-blurb" maxlength="90" value="${UCDFS.esc((l && l.blurb) || '')}"
+               placeholder="What someone finds there">
+      </div>
+    </div>
+    <div class="lnk-row">
+      <div class="lnk-f">
+        <label for="lf-accent">Colour</label>
+        <select id="lf-accent">${sel(LACCENTS, (l && l.accent) || 'indigo')}</select>
+      </div>
+      <div class="lnk-f">
+        <label for="lf-status">Status</label>
+        <select id="lf-status">${sel(LSTATUSES, (l && l.status) || 'live')}</select>
+      </div>
+      <div class="lnk-f">
+        <label for="lf-group">Block</label>
+        <select id="lf-group">
+          ${sel(LGROUPS, (l && l.group_id) || 'tools', g => g.id, g => g.label)}
+        </select>
+      </div>
+    </div>
+    <div class="lnk-row">
+      <div class="lnk-f">
+        <label>Subteams</label>
+        <div class="lnk-chips">
+          <label class="lnk-chip"><input type="checkbox" id="lf-all"
+            ${subs.indexOf('all') >= 0 ? 'checked' : ''}> Everyone</label>
+          ${LSUBS.map(t => `<label class="lnk-chip"><input type="checkbox"
+            class="lf-sub" value="${UCDFS.esc(t.id)}"
+            ${subs.indexOf(t.id) >= 0 ? 'checked' : ''}> ${UCDFS.esc(t.name)}</label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="lnk-actions">
+      <button class="lnk-save" type="button" id="lf-save">${id ? 'Save' : 'Add link'}</button>
+      <button class="lnk-cancel" type="button" id="lf-cancel">Cancel</button>
+    </div>`;
+
+  document.getElementById('lnk-form').classList.add('open');
+  document.getElementById('lf-save').addEventListener('click', saveLink);
+  document.getElementById('lf-cancel').addEventListener('click', closeLinkForm);
+  /* "Everyone" and a specific subteam are contradictory, so ticking one clears
+     the other rather than letting somebody save a card tagged both. */
+  document.getElementById('lf-all').addEventListener('change', e => {
+    if (e.target.checked) document.querySelectorAll('.lf-sub').forEach(c => c.checked = false);
+  });
+  document.querySelectorAll('.lf-sub').forEach(c => c.addEventListener('change', e => {
+    if (e.target.checked) document.getElementById('lf-all').checked = false;
+  }));
+  document.getElementById('lf-name').focus();
+}
+
+function closeLinkForm() {
+  EDITING = null;
+  const f = document.getElementById('lnk-form');
+  f.classList.remove('open');
+  f.innerHTML = '';
+}
+
+async function saveLink() {
+  const btn = document.getElementById('lf-save');
+  const subs = document.getElementById('lf-all').checked
+    ? ['all']
+    : Array.from(document.querySelectorAll('.lf-sub:checked')).map(c => c.value);
+
+  const body = {
+    name:     document.getElementById('lf-name').value,
+    icon:     document.getElementById('lf-icon').value,
+    url:      document.getElementById('lf-url').value,
+    blurb:    document.getElementById('lf-blurb').value,
+    accent:   document.getElementById('lf-accent').value,
+    status:   document.getElementById('lf-status').value,
+    group:    document.getElementById('lf-group').value,
+    /* No ticks at all means everyone, not nobody. A card visible to no one is
+       never what somebody meant, and the server makes the same call. */
+    subteams: subs.length ? subs : ['all'],
+  };
+  if (EDITING) body.id = EDITING;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/links', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(EDITING ? 'Saved' : `${body.name} added`);
+    closeLinkForm();
+    await loadLinks();
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't save that link");
+  }
+}
+
+async function deleteLink(btn, id) {
+  const l = LINKS.find(x => x.id === id);
+  if (!l) return;
+
+  /* Typing the name is the confirmation. Same rail as deleting an account, and
+     for the same reason rather than because the stakes match: this list can be
+     a minute stale, and the id under this button may no longer be the card the
+     row is showing. The server checks the name again. */
+  const typed = prompt(
+    `Remove "${l.name}" from the dashboard?\n\n` +
+    'The card disappears for everyone. Nothing at the other end of the link is ' +
+    'touched, and you can add it back.\n\n' +
+    "Type the link's name to confirm:", '');
+  if (typed === null) return;
+
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/links/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, name: (typed || '').trim() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(`${l.name} removed`);
+    await loadLinks();
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't remove that link");
+  }
+}
+
+async function moveLink(id, dir) {
+  const l = LINKS.find(x => x.id === id);
+  if (!l) return;
+  const group = l.group_id || 'tools';
+  const ids = LINKS.filter(x => (x.group_id || 'tools') === group).map(x => x.id);
+  const i = ids.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  ids[i] = ids[j];
+  ids[j] = id;
+
+  try {
+    const r = await fetch('/api/admin/links/reorder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: group, ids: ids }),
+    });
+    const j2 = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j2.detail || 'Failed');
+    await loadLinks();
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that order");
+  }
+}
+
+async function loadLinks() {
+  const r = await fetch('/api/admin/links');
+  if (!r.ok) throw new Error('Could not load the links');
+  const j = await r.json();
+  LINKS     = j.links    || [];
+  LGROUPS   = j.groups   || [];
+  LSUBS     = j.subteams || [];
+  LACCENTS  = j.accents  || [];
+  LSTATUSES = j.statuses || [];
+  LREADY    = j.ready !== false;
+  renderLinks();
+}
+
 async function load() {
   const r = await fetch('/api/admin/people');
   if (!r.ok) throw new Error('Could not load the team');
@@ -293,12 +643,35 @@ async function load() {
 async function boot() {
   UCDFS.renderPill();
   document.getElementById('god-switch').addEventListener('click', toggleGod);
+
+  /* Delegated, because the rows are redrawn after every change and per-row
+     listeners would be re-bound each time or leak. */
+  document.getElementById('links').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.edit) openLinkForm(b.dataset.edit);
+    else if (b.dataset.del) deleteLink(b, b.dataset.del);
+    else if (b.dataset.move) moveLink(b.dataset.move, Number(b.dataset.dir));
+  });
+  document.getElementById('lnk-add').addEventListener('click', () => openLinkForm(null));
+
   try {
     await load();
   } catch (e) {
     document.getElementById('people').innerHTML =
       '<div class="empty"><div class="empty-icon">⚠️</div>' +
       '<div class="empty-text">Could not load the team. Has migration 004 been applied?</div></div>';
+  }
+
+  /* Loaded separately from the people list, and failing separately. The two
+     have nothing to do with each other, and one broken table should not blank
+     the half of the page that still works. */
+  try {
+    await loadLinks();
+  } catch (e) {
+    document.getElementById('links').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Could not load the links.</div></div>';
   }
 }
 

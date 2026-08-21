@@ -59,8 +59,8 @@ const PAGES = [
     const drawn = await waitFor(() => w.eval('TILES_LOADED') === true);
     check('the dashboard finishes drawing', drawn, 'TILES_LOADED still false');
 
-    // Both blocks: the dashboard lays cards out in groups now (Tools, then Last
-    // season), so counting one container would miss the archived ones and read
+    // Both blocks: the dashboard lays cards out in groups now (Tools, then
+    // Archive), so counting one container would miss the archived ones and read
     // as cards having gone missing from the page.
     const cards = d.querySelectorAll('#applet-grid .applet, #applet-groups .applet');
     check('renders a card per registry entry', cards.length >= 5, `${cards.length} cards`);

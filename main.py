@@ -9,7 +9,7 @@ import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -150,9 +150,17 @@ async def api_subteams():
 
 
 # ── Applet registry ───────────────────────────────────────────────────────────
-# The single source of truth for what exists on the site. It generates the page
-# routes AND feeds /api/applets, which the dashboard renders. Adding an applet
-# is one entry here plus one file in static/, and the dashboard needs no edit.
+# Every page this site serves. It generates the page routes AND feeds
+# /api/applets, which the dashboard renders. Adding an applet is one entry here
+# plus one file in static/, and the dashboard needs no edit.
+#
+# It is no longer the whole dashboard. Hyperlink cards are rows in `links`
+# (migrations/010), added and ordered from /admin at runtime. The split is not
+# "internal vs external" for tidiness: an entry here carries a "file" and the
+# loop below turns it into a route, so a card naming a page the image does not
+# contain is a 404 tile and adding one is a deploy whatever any admin screen
+# claims. A hyperlink generates nothing and is pure content. Only the second
+# kind can honestly be data. See _links().
 #
 #   status:   "live"  is working, full brightness on the dashboard
 #             "quiet" is real but dormant (off-season); dimmed, still clickable
@@ -226,57 +234,6 @@ APPLETS = [
         "subteams": ["all"],
     },
     {
-        "id":     "vcu",
-        "name":   "VCU Firmware",
-        "icon":   "🧠",
-        "route":  "https://github.com/UCDFS/TEENSY",
-        "blurb":  "Vehicle control unit code for the Teensy 4.1 (GitHub)",
-        "accent": "indigo",
-        "status": "live",
-        "external": True,
-        # Next to the harness mapper on purpose: both are the electronics side
-        # of Powertrain, and someone tracing a signal usually wants both open.
-        "subteams": ["pt"],
-    },
-    {
-        "id":     "harnesshive",
-        "name":   "HarnessHive",
-        "icon":   "🐝",
-        "route":  "https://app.harnesshive.com/",
-        "blurb":  "Harness design and documentation (HarnessHive)",
-        "accent": "teal",
-        "status": "live",
-        "external": True,
-        # Third in the electronics run, after the mapper and the firmware, so
-        # the whole loop from pinout to code to drawing sits in one glance.
-        "subteams": ["pt"],
-    },
-    {
-        "id":     "onshape",
-        "name":   "Onshape",
-        "icon":   "📐",
-        "route":  "https://ucdformula.onshape.com",
-        "blurb":  "Every assembly, part and drawing (Onshape)",
-        "accent": "green",
-        "status": "live",
-        "external": True,
-        # Tagged mech and pt rather than "all": Operations do not open CAD, and
-        # the chips are relevance. Both build subteams model in here, though,
-        # so tagging it mech alone would bury it for whoever is drawing a mount.
-        "subteams": ["mech", "pt"],
-    },
-    {
-        "id":     "sharepoint",
-        "name":   "SharePoint",
-        "icon":   "🗂️",
-        "route":  "https://ucd.sharepoint.com/sites/UCDFS214/",
-        "blurb":  "Shared team documents and files (SharePoint)",
-        "accent": "purple",
-        "status": "live",
-        "external": True,
-        "subteams": ["all"],
-    },
-    {
         "id":     "comp",
         "name":   "Competition Hub",
         "icon":   "🏁",
@@ -301,6 +258,11 @@ APPLETS = [
         # /api/applets omits it rather than showing a tile that 403s.
         "requires_role": "admin",
     },
+    # ── Archive ───────────────────────────────────────────────────────────
+    # Finished or superseded, not broken. People still look things up in these,
+    # so they get their own block at the foot of the dashboard rather than
+    # being deleted or left competing for attention with what is in use now.
+    # Last season's Mech plan is in this block too, as a row in `links`.
     {
         "id":     "harness",
         "name":   "Wiring Harness Mapper",
@@ -316,11 +278,6 @@ APPLETS = [
         "subteams": ["pt"],
         "group":  "archive",
     },
-    # ── Last season ───────────────────────────────────────────────────────
-    # Both 25/26 build plans. They are finished, not broken, and people still
-    # look things up in them, so they move to their own block at the foot of
-    # the dashboard rather than being deleted or left competing for attention
-    # with what is being built now.
     {
         "id":     "pt",
         "name":   "PT Manufacturing Plan",
@@ -336,21 +293,7 @@ APPLETS = [
         # Which chart this card opens, so the feed can badge its ticks.
         "plan":   "pt",
     },
-    {
-        "id":     "mech",
-        "name":   "Mech Manufacturing Plan",
-        "icon":   "⚙️",
-        "route":  "https://www.canva.com/design/DAHFgTx32zs/IXAWyUJbm15DIqgdsbRkTg/edit",
-        "blurb":  "Last season's chassis build, 25/26, on Canva",
-        "accent": "green",
-        "status": "quiet",
-        "external": True,
-        "subteams": ["mech"],
-        "group":  "archive",
-    },
 ]
-
-APPLETS_BY_ID = {a["id"]: a for a in APPLETS}
 
 # plan id → the applet that opens it, so a feed line from a charted plan can
 # carry that card's icon. Anything else badges as the flowcharts tool, which is
@@ -363,8 +306,193 @@ APPLET_BY_PLAN = {a["plan"]: a["id"] for a in APPLETS if a.get("plan")}
 # leaving "Last season" over an empty space.
 APPLET_GROUPS = [
     {"id": "tools",   "label": "Tools"},
-    {"id": "archive", "label": "Last season"},
+    # Not "Last season" any more. The block holds the two 25/26 build plans and
+    # the harness mapper, which is superseded rather than seasonal, and a
+    # heading that is wrong about a third of its contents is worse than a dull
+    # one that is right about all of it.
+    {"id": "archive", "label": "Archive"},
 ]
+
+APPLET_GROUP_IDS = {g["id"] for g in APPLET_GROUPS}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hyperlink cards  (migrations/010)
+#
+#  The dashboard's off-site shortcuts: the VCU repo, Onshape, SharePoint,
+#  HarnessHive, FS Stats, FSWiki, r/FSAE, last season's Canva plan. They were
+#  registry entries until seven of them had accumulated, each one a deploy to
+#  add a name and a url, and each one therefore something only a person with a
+#  checkout could do. Now they are rows, added and ordered from /admin.
+#
+#  Everything below exists because a row here is less trustworthy than a line of
+#  Python. The registry is reviewed in a pull request; this table is typed into
+#  a form by whoever is on committee this year. So each field is checked against
+#  the same vocabulary the registry uses, in one place, on the way in:
+#
+#    url       http/https only. This is rendered straight into an href, and a
+#              stored "javascript:" url is a script that runs on every
+#              dashboard in the team, every time anyone opens the site. This is
+#              the check that matters; the rest are tidiness.
+#    accent    a shared.css token, or the card renders with a broken variable.
+#    group     an APPLET_GROUPS id, or the card lands in a block that is never
+#              drawn and is invisible with no error anywhere.
+#    subteams  SUBTEAM_IDS or "all". Relevance, never permission. An empty list
+#              reads as "all" rather than hiding the card from everybody, which
+#              is the same call the registry makes for a missing field.
+#    status    live or quiet. Deliberately no "soon": a placeholder you cannot
+#              click describes a tool being built, not a hyperlink, which either
+#              exists or does not.
+#
+#  There is no requires_role here. Gating a link would be theatre: the url is in
+#  the page for anyone who can see the card, and the thing it points at does its
+#  own authorization. Anything that genuinely needs gating is a page, and pages
+#  are registry entries.
+# ══════════════════════════════════════════════════════════════════════════════
+
+MAX_LINKS       = 40    # a bound on an add button, not a considered limit
+MAX_LINK_NAME   = 40
+MAX_LINK_ICON   = 8     # an emoji plus its variation selector, not a sentence
+MAX_LINK_BLURB  = 90
+MAX_LINK_URL    = 2000
+
+LINK_ACCENTS  = {"indigo", "purple", "green", "amber", "teal", "red"}
+LINK_STATUSES = {"live", "quiet"}
+LINK_SCHEMES  = ("http", "https")
+
+
+def _clean_link_url(value) -> str:
+    """A url safe to put in an href, or a 400.
+
+    The scheme check is the whole point of this function. Everything a card
+    renders is escaped, but escaping does nothing about the *protocol*: an
+    href of "javascript:fetch(...)" is escaped perfectly and still runs. A
+    whitelist of two schemes is the only form of this check that stays correct
+    as browsers add new ones.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        raise HTTPException(400, "A link needs a web address")
+    if len(raw) > MAX_LINK_URL:
+        raise HTTPException(400, "That web address is too long")
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in LINK_SCHEMES or not parsed.netloc:
+        raise HTTPException(400, "Links must start with http:// or https://")
+    return raw
+
+
+def _clean_link_subteams(value) -> list:
+    """Subteam ids, or ["all"]. Unknown ids are dropped, not rejected.
+
+    Same call as _clean_subteam: a stale id from an old client should degrade,
+    and dropping the lot back to "all" keeps the card visible rather than
+    hiding it from everyone, which is the failure nobody notices.
+    """
+    if not isinstance(value, list):
+        return ["all"]
+    ids = [str(v).strip().lower() for v in value]
+    if "all" in ids:
+        return ["all"]
+    keep = [i for i in ids if i in SUBTEAM_IDS]
+    # De-duplicated but order-preserving, so the admin screen reads back what
+    # was ticked rather than a re-sorted version of it.
+    seen, out = set(), []
+    for i in keep:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out or ["all"]
+
+
+def _clean_link(body: dict) -> dict:
+    """Validate one link's fields into the columns of `links`.
+
+    Returns everything except id, created_at and created_by, which the caller
+    owns: an id from a request body is how a caller names a row into existence.
+    """
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "A link needs a name")
+    if len(name) > MAX_LINK_NAME:
+        raise HTTPException(400, f"Keep the name under {MAX_LINK_NAME} characters")
+
+    blurb = (body.get("blurb") or "").strip()
+    if len(blurb) > MAX_LINK_BLURB:
+        raise HTTPException(400, f"Keep the description under {MAX_LINK_BLURB} characters")
+
+    icon = (body.get("icon") or "").strip()[:MAX_LINK_ICON] or "🔗"
+
+    accent = (body.get("accent") or "").strip().lower()
+    status = (body.get("status") or "").strip().lower()
+    group  = (body.get("group") or "").strip()
+
+    return {
+        "name":     name,
+        "icon":     icon,
+        "url":      _clean_link_url(body.get("url")),
+        "blurb":    blurb,
+        # Unrecognised values fall back rather than 400ing. These three come
+        # from selects the server itself populated, so a bad one is a stale tab
+        # rather than a typo, and losing the colour is a better outcome than
+        # losing the edit.
+        "accent":   accent if accent in LINK_ACCENTS else "indigo",
+        "status":   status if status in LINK_STATUSES else "live",
+        "group_id": group if group in APPLET_GROUP_IDS else "tools",
+        "subteams": _clean_link_subteams(body.get("subteams")),
+    }
+
+
+def _link_rows() -> list:
+    """Every link row, in dashboard order.
+
+    Returns [] when the table is missing, so a site running ahead of its
+    migrations loses its shortcut cards rather than its dashboard. That is the
+    same call _favourites_for and the activity feed make, and it is why 010 has
+    to be applied before this code ships: the gap is degraded, not broken, but
+    it is still a gap. See "Migrations" in CLAUDE.md.
+    """
+    try:
+        r = (supabase.table("links").select("*")
+             .order("group_id").order("sort").order("id").execute())
+        return r.data or []
+    except Exception as e:
+        logger.error(f"[links] could not read links (is 010 applied?): {e}")
+        return []
+
+
+def _link_card(row: dict) -> dict:
+    """One row, in the shape the dashboard already knows how to draw.
+
+    The point of this function is that the dashboard learns nothing. A link is
+    an applet-shaped dict with external set, so appletCard() renders it, the
+    subteam chips filter it and the star pins it without a line of new
+    front-end code.
+    """
+    return {
+        "id":       row["id"],
+        "name":     row.get("name") or row["id"],
+        "icon":     row.get("icon") or "🔗",
+        # "route", not "url": the dashboard reads route for every card, and
+        # renaming it here would be a second shape for it to handle.
+        "route":    row.get("url") or "",
+        "blurb":    row.get("blurb") or "",
+        "accent":   row.get("accent") or "indigo",
+        "status":   row.get("status") or "live",
+        "subteams": list(row.get("subteams") or ["all"]),
+        "group":    row.get("group_id") or "tools",
+        "external": True,
+    }
+
+
+def _cards() -> list:
+    """Everything the dashboard could draw: applets first, then links.
+
+    Applets before links within each block, deliberately. The team's own tools
+    are what somebody opens this page to reach; the outbound shortcuts are
+    reference. It also means the order of the registry keeps meaning what it
+    says without every entry needing a sort column to defend its position.
+    """
+    return list(APPLETS) + [_link_card(r) for r in _link_rows()]
 
 
 def _plan_row(pid: str) -> Optional[dict]:
@@ -423,8 +551,12 @@ def _page_route(filename: str, applet: dict):
     return _serve
 
 
+# Every applet with a file gets a route. There is no "and not external" here
+# any more: an off-site card is a row in `links` and never reaches this list, so
+# the only thing an entry without a file can be is a card pointing at a route
+# that something else defines, like the pt plan pointing at /plan/pt.
 for _applet in APPLETS:
-    if _applet.get("file") and not _applet.get("external"):
+    if _applet.get("file"):
         app.add_api_route(
             _applet["route"], _page_route(_applet["file"], _applet), methods=["GET"]
         )
@@ -454,19 +586,27 @@ async def pt_page_legacy():
 MAX_FAVOURITES = 12   # a bound on a star button, not a considered limit
 
 
-def _favourites_for(profile: Optional[dict]) -> list:
+def _favourites_for(profile: Optional[dict], cards: Optional[list] = None) -> list:
     """Which cards this person has starred, as ids the dashboard can match.
 
-    Filtered against the live registry on the way out as well as on the way in,
-    so a card that has since been retired quietly stops being a favourite rather
-    than leaving a gap where a tile used to be. Missing table (008 not applied
-    yet) reads as "no favourites", never as an error. This is a convenience on
-    a page that has to render regardless.
+    Filtered against what currently exists on the way out as well as on the way
+    in, so a card that has since been retired quietly stops being a favourite
+    rather than leaving a gap where a tile used to be. That now covers deleted
+    links as well as retired applets, which is why deleting a link needs no
+    cleanup pass over everybody's favourites: the hole closes itself the next
+    time each person loads the dashboard.
+
+    Missing table (008 not applied yet) reads as "no favourites", never as an
+    error. This is a convenience on a page that has to render regardless.
+
+    `cards` is passed in by callers that already have the list, so asking for
+    the dashboard does not read `links` twice.
     """
     if not profile:
         return []
+    known = {c["id"] for c in (cards if cards is not None else _cards())}
     stored = _get_details(profile["id"]).get("favourites") or []
-    return [f for f in stored if f in APPLETS_BY_ID]
+    return [f for f in stored if f in known]
 
 
 @app.get("/api/applets")
@@ -477,19 +617,21 @@ async def api_applets(request: Request):
     only to refuse you is worse than no tile.
     """
     profile = getattr(request.state, "profile", None)
+    cards   = _cards()
     return {
         "applets": [
             # "group" rides along so the dashboard can lay out its blocks
-            # without knowing which cards belong where. Same rule as always:
-            # adding a card is an entry here, never an edit to the dashboard.
+            # without knowing which cards belong where. Applets and links are
+            # already one shape by here, so the dashboard cannot tell which of
+            # them came from code and does not need to.
             {k: v for k, v in a.items() if k != "file"}
-            for a in APPLETS if _may_open(a, profile)
+            for a in cards if _may_open(a, profile)
         ],
         "groups": APPLET_GROUPS,
         # Sent with the cards rather than fetched separately: the dashboard
         # paints once, and a favourites list that arrived afterwards would
         # reorder the grid under the cursor.
-        "favourites": _favourites_for(profile),
+        "favourites": _favourites_for(profile, cards),
     }
 
 
@@ -814,7 +956,7 @@ PUBLIC_PREFIXES = ("/static/",)
 # dynamic chart route serves. Miss one and that page answers a signed-out browser
 # with JSON instead of sending it to sign in.
 PAGE_ROUTES = {"/", "/pt"} | {
-    a["route"] for a in APPLETS if a.get("file") and not a.get("external")
+    a["route"] for a in APPLETS if a.get("file")
 }
 # Charts are rows, so their pages cannot be enumerated up front the way applet
 # routes can. Anything under here is a page: signed out it redirects to the
@@ -1321,6 +1463,178 @@ async def api_admin_activity_delete(request: Request):
     return {"ok": True}
 
 
+# ── Hyperlink cards, from /admin ──────────────────────────────────────────────
+#
+# Gated on the admin role and NOT on the override. /api/admin/* is gated because
+# it reaches somebody else's data; this reaches the shape of a shared page, the
+# same kind of thing as making a chart or a section, and neither of those is
+# gated at all. The role is the line: adding a card everyone sees is a committee
+# decision, but it is not the kind of thing that needs the seatbelt you put on
+# before editing a person's profile. Demanding the override here would mean
+# elevating to fix a typo in a url, and an admin who is elevated all day is the
+# problem god mode exists to solve.
+
+
+def _links_available() -> bool:
+    """Has 010 been applied? Distinguishes "no links" from "no table"."""
+    try:
+        supabase.table("links").select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/api/admin/links")
+async def api_admin_links(request: Request):
+    """The link rows, plus the vocabularies the editor renders itself from.
+
+    Sent together so the admin page never hardcodes the accent names, the group
+    ids or the subteam list. Those three exist once, at the top of this file,
+    and drift the moment a second copy is written down.
+    """
+    require_role(request, "admin")
+    return {
+        "links":    _link_rows(),
+        "groups":   APPLET_GROUPS,
+        "subteams": SUBTEAMS,
+        "accents":  sorted(LINK_ACCENTS),
+        "statuses": sorted(LINK_STATUSES),
+        "limits":   {"links": MAX_LINKS, "name": MAX_LINK_NAME,
+                     "blurb": MAX_LINK_BLURB, "url": MAX_LINK_URL},
+        # So the page can say "apply migration 010" rather than showing an empty
+        # list that looks like a table with nothing in it.
+        "ready":    _links_available(),
+    }
+
+
+@app.post("/api/admin/links")
+async def api_admin_link_save(request: Request):
+    """Create a link, or edit one. An id in the body means edit.
+
+    The id is never taken from the body on create. It is minted here (link_…),
+    like chart_… and sec_…, for the same reason: a caller who can choose the
+    primary key can name a row into existence, and can also collide with an
+    applet id and quietly shadow a real page on the dashboard.
+    """
+    me   = require_role(request, "admin")
+    b    = await request.json()
+    lid  = (b.get("id") or "").strip()
+    row  = _clean_link(b)
+    rows = _link_rows()
+    who  = _public_profile(me).get("name")
+
+    def _end_of(group_id: str, exclude: str = "") -> int:
+        """The next sort value in a block. Spaced by ten to match the seed, so a
+        card can later be dropped between two others without renumbering."""
+        peers = [r for r in rows
+                 if r.get("group_id") == group_id and r["id"] != exclude]
+        return (max([r.get("sort") or 0 for r in peers]) + 10) if peers else 10
+
+    if lid:
+        existing = next((r for r in rows if r["id"] == lid), None)
+        if not existing:
+            raise HTTPException(404, "That link no longer exists")
+        row["id"] = lid
+        # Moving a card to another block has to give it a position in that
+        # block. Left alone it keeps the sort it had in the old one and lands
+        # somewhere arbitrary in the middle of its new neighbours, which reads
+        # as the block being unordered rather than as this card being new to it.
+        if (existing.get("group_id") or "tools") != row["group_id"]:
+            row["sort"] = _end_of(row["group_id"], exclude=lid)
+        verb = "edited the link"
+    else:
+        if len(rows) >= MAX_LINKS:
+            raise HTTPException(400, f"That's the most links you can have ({MAX_LINKS})")
+        row["id"]         = "link_" + uuid.uuid4().hex[:8]
+        row["created_by"] = who
+        row["sort"]       = _end_of(row["group_id"])
+        verb = "added the link"
+
+    try:
+        supabase.table("links").upsert(row).execute()
+    except Exception as e:
+        logger.error(f"[admin] link save failed for {row['id']}: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 010 been applied?")
+
+    log_activity("admin", who, verb, row["name"])
+    return {"ok": True, "link": row}
+
+
+@app.post("/api/admin/links/delete")
+async def api_admin_link_delete(request: Request):
+    """Remove one link. The caller has to echo the name back.
+
+    The same rail as deleting an account or a chart, for the same reason rather
+    than because the stakes match: the admin screen renders a list, somebody
+    reorders or renames a card in another tab, and the id under the button you
+    are about to press is no longer the card you are looking at. Echoing the
+    name is what makes a stale list fail safely.
+
+    Nothing cleans this id out of anyone's favourites, deliberately.
+    _favourites_for filters against what exists on the way out, so the star
+    disappears on its own at the next dashboard load. A sweep over
+    profile_details would be a write to every account on the team to achieve
+    what a filter already does.
+    """
+    me = require_role(request, "admin")
+    b  = await request.json()
+    lid = (b.get("id") or "").strip()
+
+    row = next((r for r in _link_rows() if r["id"] == lid), None)
+    if not row:
+        raise HTTPException(404, "That link no longer exists")
+
+    typed = (b.get("name") or "").strip()
+    if typed != (row.get("name") or ""):
+        raise HTTPException(400, "Type the link's name exactly to delete it")
+
+    try:
+        supabase.table("links").delete().eq("id", lid).execute()
+    except Exception as e:
+        logger.error(f"[admin] link delete failed for {lid}: {e}")
+        raise HTTPException(503, "Couldn't delete that link.")
+
+    log_activity("admin", _public_profile(me).get("name"), "removed the link", row.get("name") or lid)
+    return {"ok": True}
+
+
+@app.post("/api/admin/links/reorder")
+async def api_admin_links_reorder(request: Request):
+    """Rewrite the order of one block's links. Takes the ids, in the order wanted.
+
+    Scoped to a single group because that is the only order the dashboard shows.
+    Ids that are not in that block are ignored rather than moved into it: a
+    reorder is a reorder, and a request that also relocates a card would be two
+    actions wearing one name.
+    """
+    me    = require_role(request, "admin")
+    b     = await request.json()
+    group = (b.get("group") or "").strip()
+    if group not in APPLET_GROUP_IDS:
+        raise HTTPException(400, "Not a dashboard block")
+
+    ids   = [str(i).strip() for i in (b.get("ids") or [])]
+    mine  = {r["id"] for r in _link_rows() if r.get("group_id") == group}
+    # dict.fromkeys de-duplicates while keeping order. Comparing lengths alone
+    # would let ["a", "a"] stand in for {"a", "b"}: same count, and "b" keeps
+    # whatever sort it had, interleaved with the new numbers.
+    order = [i for i in dict.fromkeys(ids) if i in mine]
+    if set(order) != mine:
+        # A partial list would silently leave the omitted cards on their old
+        # sort values, in an order nobody chose.
+        raise HTTPException(400, "That list is out of date. Reload and try again.")
+
+    try:
+        for position, lid in enumerate(order, start=1):
+            supabase.table("links").update({"sort": position * 10}).eq("id", lid).execute()
+    except Exception as e:
+        logger.error(f"[admin] link reorder failed for {group}: {e}")
+        raise HTTPException(503, "Couldn't save that order.")
+
+    log_activity("admin", _public_profile(me).get("name"), "reordered the links in", group)
+    return {"ok": True, "ids": order}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Team profiles  (migrations/003)
 #
@@ -1746,16 +2060,19 @@ async def api_profile_favourites(request: Request):
     b   = await request.json()
 
     applet_id = (b.get("id") or "").strip()
-    # Checked against the registry, not stored as sent: this array is read back
-    # and rendered, and an id naming no card is junk that never cleans itself up.
-    if applet_id not in APPLETS_BY_ID:
+    # Checked against what exists, not stored as sent: this array is read back
+    # and rendered, and an id naming no card is junk that never cleans itself
+    # up. "What exists" is applets plus links, since a hyperlink card carries a
+    # star like any other and starring one must not 400.
+    cards = {c["id"]: c for c in _cards()}
+    if applet_id not in cards:
         raise HTTPException(400, "unknown applet")
     # You cannot favourite what you cannot open. The card is not on your
     # dashboard to star, so a request to star it did not come from the UI.
-    if not _may_open(APPLETS_BY_ID[applet_id], me):
+    if not _may_open(cards[applet_id], me):
         raise HTTPException(403, "You don't have access to that")
 
-    current = [f for f in (_get_details(uid).get("favourites") or []) if f in APPLETS_BY_ID]
+    current = [f for f in (_get_details(uid).get("favourites") or []) if f in cards]
     on = bool(b.get("on"))
     if on and applet_id not in current:
         if len(current) >= MAX_FAVOURITES:

@@ -56,6 +56,8 @@ test display names; both conditions are required. Add a name to `TEST_ACTORS` in
 | `harness` | the numbers people order parts from: nets, rule check, BOM, exports, reports |
 | `profiles` | subteam tags stay honest and never hide a tool; profile saves are self-only; photos are members-only |
 | `admin` | the permission boundary: what a member is refused, what an un-elevated admin is refused, and that god mode can always be switched back on |
+| `plans` | charts as rows: the id whitelist, server-minted ids, and that a chart holding work cannot be deleted |
+| `links` | admin-managed hyperlink cards: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it |
 
 ## Regressions these exist to catch
 

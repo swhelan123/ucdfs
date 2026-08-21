@@ -59,3 +59,46 @@ insert into public.dashboard_groups (id, label, sort) values
   -- things up in, out of the way of what is in use now.
   ('archive',     'Archive',     60)
 on conflict (id) do nothing;
+
+-- ── Moving the cards 010 seeded into these blocks ────────────────────────────
+--
+-- 010 shipped before this file existed and put every shortcut in one block
+-- called 'tools'. It has since been applied, so it is a snapshot of what ran
+-- and is not editable: the work of re-filing those cards belongs here.
+--
+-- 'tools' is not seeded above, deliberately. It was never a subject, it was
+-- "the main grid", which is what the *first* block is now. Anything still
+-- pointing at it after this file has run is a card added by hand in the gap,
+-- and _card_group() draws it under the first heading rather than nowhere.
+--
+-- Wrapped in a guard so this file does not care whether 010 has run yet. A bare
+-- `update public.links` against a database without that table is an error, and
+-- an error here would abandon the blocks this file exists to create, leaving a
+-- half-applied migration whose failure has nothing to do with what it is for.
+do $$
+begin
+  if to_regclass('public.links') is null then
+    raise notice '010 not applied yet; blocks created, links left for it to seed';
+    return;
+  end if;
+
+  -- Guarded on group_id = 'tools' so this only moves cards still where 010 left
+  -- them. An admin who has already re-filed one from /admin keeps their choice,
+  -- and the file stays re-runnable.
+  update public.links set group_id = 'electronics' where group_id = 'tools' and id in ('vcu', 'harnesshive');
+  update public.links set group_id = 'design'      where group_id = 'tools' and id = 'onshape';
+  update public.links set group_id = 'documents'   where group_id = 'tools' and id = 'sharepoint';
+  update public.links set group_id = 'reference'   where group_id = 'tools' and id in ('fsstats', 'fswiki', 'fsae-reddit');
+
+  -- Sort is per block, and they arrived numbered 10..70 across a single one.
+  -- Renumber within each so the up and down buttons in /admin start from
+  -- something sane rather than from gaps that only made sense in one block.
+  update public.links set sort = 10 where id in ('vcu', 'onshape', 'sharepoint', 'fsstats');
+  update public.links set sort = 20 where id in ('harnesshive', 'fswiki');
+  update public.links set sort = 30 where id = 'fsae-reddit';
+
+  -- Anything added between 010 and this file, and anything added later, belongs
+  -- in the first block rather than in a name that no longer means anything.
+  execute 'alter table public.links alter column group_id set default ''apps''';
+  update public.links set group_id = 'apps' where group_id = 'tools';
+end $$;

@@ -47,16 +47,10 @@ create table if not exists public.links (
   -- dashboard filter chips and nothing else, and an empty array reads as "all"
   -- rather than hiding the card from everybody.
   subteams   text[]      not null default '{all}',
-  -- Which dashboard block. Ids come from dashboard_groups (migrations/011).
-  -- Named group_id and not "group" because group is a reserved word in SQL and
-  -- every reference to it would need quoting forever after.
-  --
-  -- No foreign key, on purpose: the same call favourites make. A block that is
-  -- retired should not need a migration to clean up after, and _card_group()
-  -- already falls back to the first block for an id naming nothing. The
-  -- integrity that matters is enforced where it can give a useful error, in
-  -- _clean_link() on the way in and in the delete rail on the way out.
-  group_id   text        not null default 'apps',
+  -- Which dashboard block. Ids come from APPLET_GROUPS. Named group_id and not
+  -- "group" because group is a reserved word in SQL and every reference to it
+  -- would need quoting forever after.
+  group_id   text        not null default 'tools',
   -- Order within the block. Spaced by ten so a card can be dropped between two
   -- others without renumbering the column.
   sort       integer     not null default 0,
@@ -78,34 +72,29 @@ alter table public.links enable row level security;
 -- Ids preserved exactly, or every favourite pointing at one of these would be
 -- filtered out as unknown on the next dashboard load and quietly disappear.
 --
--- Blocks come from dashboard_groups (migrations/011). vcu and harnesshive share
--- one: both are the electronics side of Powertrain, and someone tracing a signal
--- usually wants the firmware and the harness drawing open together.
---
--- Neither migration depends on the other having run. A missing links table reads
--- as no shortcut cards; a missing groups table falls back to DEFAULT_GROUPS in
--- main.py, which carries these same ids. Apply both before the image that needs
--- them, in whichever order suits.
+-- Sort values reproduce the order they had in APPLETS. vcu and harnesshive stay
+-- adjacent: both are the electronics side of Powertrain, and someone tracing a
+-- signal usually wants the firmware and the harness drawing open together.
 insert into public.links (id, name, icon, url, blurb, accent, status, subteams, group_id, sort) values
   ('vcu',         'VCU Firmware', '🧠',
    'https://github.com/UCDFS/TEENSY',
    'Vehicle control unit code for the Teensy 4.1 (GitHub)',
-   'indigo', 'live', '{pt}',        'electronics', 10),
+   'indigo', 'live', '{pt}',        'tools',   10),
 
   ('harnesshive', 'HarnessHive',  '🐝',
    'https://app.harnesshive.com/',
    'Harness design and documentation (HarnessHive)',
-   'teal',   'live', '{pt}',        'electronics', 20),
+   'teal',   'live', '{pt}',        'tools',   20),
 
   ('onshape',     'Onshape',      '📐',
    'https://ucdformula.onshape.com',
    'Every assembly, part and drawing (Onshape)',
-   'green',  'live', '{mech,pt}',   'design',      10),
+   'green',  'live', '{mech,pt}',   'tools',   30),
 
   ('sharepoint',  'SharePoint',   '🗂️',
    'https://ucd.sharepoint.com/sites/UCDFS214/',
    'Shared team documents and files (SharePoint)',
-   'purple', 'live', '{all}',       'documents',   10),
+   'purple', 'live', '{all}',       'tools',   40),
 
   -- ── Outside reference, new here ────────────────────────────────────────────
   -- Tagged all: none of these is any one subteam's, and the chips are
@@ -113,22 +102,22 @@ insert into public.links (id, name, icon, url, blurb, accent, status, subteams, 
   ('fsstats',     'FS Stats',     '📊',
    'https://www.fsstats.co.uk/team/2030',
    'Event results and scoring history (FS Stats)',
-   'amber',  'live', '{all}',       'reference',   10),
+   'amber',  'live', '{all}',       'tools',   50),
 
   ('fswiki',      'FSWiki',       '📚',
    'https://fswiki.us/Fswiki',
    'Design writeups and reference from other teams (FSWiki)',
-   'indigo', 'live', '{all}',       'reference',   20),
+   'indigo', 'live', '{all}',       'tools',   60),
 
   ('fsae-reddit', 'r/FSAE',       '💬',
    'https://www.reddit.com/r/FSAE/',
    'Questions, builds and post-mortems (Reddit)',
-   'red',    'live', '{all}',       'reference',   30),
+   'red',    'live', '{all}',       'tools',   70),
 
   -- Last season's chassis build. Archived rather than deleted for the same
   -- reason the PT plan is: finished, not broken, still looked up.
   ('mech',        'Mech Manufacturing Plan', '⚙️',
    'https://www.canva.com/design/DAHFgTx32zs/IXAWyUJbm15DIqgdsbRkTg/edit',
    'Last season''s chassis build, 25/26, on Canva',
-   'green',  'quiet', '{mech}',     'archive',     10)
+   'green',  'quiet', '{mech}',     'archive', 10)
 on conflict (id) do nothing;

@@ -739,8 +739,17 @@ still appear. Both are degraded, not broken, but that is still eight cards
 missing from the homepage with nothing on screen to say why. Apply them first.
 
 **Neither of 010 and 011 depends on the other having run**, so the order between
-those two does not matter. There is no foreign key between them, and each falls
-back independently.
+those two does not matter. There is no foreign key between them, each falls back
+independently in `main.py`, and 011's rewrite of `links.group_id` sits behind a
+`to_regclass('public.links')` guard. That guard is not defensive tidiness: a bare
+`update` against a missing table is an error, and an error there would abandon
+the blocks 011 exists to create, so the file would fail for a reason that has
+nothing to do with what it does.
+
+011 re-files the cards 010 seeded rather than 010 being edited to seed them
+correctly. 010 shipped and was applied, which makes it a snapshot of what ran;
+the block it used, `tools`, is not seeded by 011 at all, because it was never a
+subject but "the main grid", and the *first* block is what that means now.
 
 **009 turns on RLS for `plans`, which 007 created without it.** Every other
 table-creating migration enables it in the same file; that one did not, so it

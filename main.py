@@ -226,17 +226,6 @@ APPLETS = [
         "subteams": ["all"],
     },
     {
-        "id":     "harness",
-        "name":   "Wiring Harness Mapper",
-        "icon":   "🔌",
-        "route":  "/harness",
-        "file":   "harness.html",
-        "blurb":  "Connectors, pinouts and wire runs",
-        "accent": "amber",
-        "status": "live",
-        "subteams": ["pt"],
-    },
-    {
         "id":     "vcu",
         "name":   "VCU Firmware",
         "icon":   "🧠",

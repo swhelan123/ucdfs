@@ -98,6 +98,10 @@ TABLES=(
   # plan, but the name of whoever made it is about a person, and the rule here
   # has no exceptions.
   "plans:created_by"
+  # Dashboard blocks (migrations/011), before the links that name them: same
+  # reason plans comes before its rows. A link in a block that does not exist
+  # renders under the first heading instead of the one somebody filed it under.
+  "dashboard_groups:created_by"
   # Hyperlink cards (migrations/010). Reference data by the same test as a
   # chart: what the dashboard points at is about the team's tools, not about a
   # person. created_by is stripped for the same reason it is on plans.

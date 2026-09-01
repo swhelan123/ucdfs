@@ -300,12 +300,16 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
       </div>
     </div>
 
-    <div class="section-label">Tools</div>
+    <!-- The first block keeps this fixed grid, and its heading is filled in from
+         the blocks /api/applets sends. The chips filter the whole page, not this
+         block, which is why they sit up here rather than inside it. -->
+    <div class="section-label" id="first-group-label">Tools</div>
     <div class="chips" id="subteam-chips"></div>
     <div class="applet-grid" id="applet-grid"></div>
 
-    <!-- Further blocks (currently just "Last season") are rendered here from
-         the groups /api/applets sends, so adding one stays a registry change. -->
+    <!-- Every block after the first. Headings and grids both come from the
+         blocks /api/applets sends (dashboard_groups, migrations/011), so adding
+         one is something an admin does rather than a deploy. -->
     <div id="applet-groups"></div>
 
     <div class="section-label">Recent activity</div>
@@ -634,16 +638,28 @@ async function toggleFavourite(btn) {
   }
 }
 
+/* The first block: where a card with no group of its own goes, and the one
+   drawn into the fixed grid above rather than under a generated heading.
+
+   GROUPS always has at least one entry, since the server falls back to its
+   built-in blocks when the table is missing or empty. The '' guard is for the
+   instant before the first fetch resolves, not for a state the server can
+   produce. */
+function firstGroup() {
+  return GROUPS.length ? GROUPS[0].id : '';
+}
+
 /* Which block a card belongs to.
 
-   No "group" means the main Tools grid, and so does a group nobody declared.
-   Same rule as the subteam filter: an entry that forgets to tag itself, or
-   names a block that does not exist, must stay visible rather than quietly
+   No "group" means the first block, and so does a group nobody declared. Same
+   rule as the subteam filter: an entry that forgets to tag itself, or names a
+   block that has since been deleted, must stay visible rather than quietly
    vanishing. Rendering it nowhere would be a card that exists on the server and
-   cannot be found on the page. */
+   cannot be found on the page. The server refuses to delete a block that still
+   holds cards, so this is the safety net rather than the mechanism. */
 function appletGroup(a) {
-  const g = a.group || 'tools';
-  return GROUPS.some(x => x.id === g) ? g : 'tools';
+  const g = a.group || firstGroup();
+  return GROUPS.some(x => x.id === g) ? g : firstGroup();
 }
 
 function render() {
@@ -673,16 +689,20 @@ function render() {
   favGrid.style.display = favCards.length ? '' : 'none';
   document.getElementById('fav-empty').style.display = favCards.length ? 'none' : '';
 
+  const first = firstGroup();
+  if (GROUPS.length) {
+    document.getElementById('first-group-label').textContent = GROUPS[0].label;
+  }
   document.getElementById('applet-grid').innerHTML = shown
-    .filter(a => appletGroup(a) === 'tools')
+    .filter(a => appletGroup(a) === first)
     .map(a => appletCard(a, TILES[a.id])).join('');
 
-  /* Every block after Tools: its own heading and grid, and rendered only if
+  /* Every block after the first: its own heading and grid, and rendered only if
      the filter left anything in it. A heading over an empty space reads as a
      page that failed to load. (Favourites is the exception, above: its heading
      stays because its empty state is the only thing that explains the star.) */
   document.getElementById('applet-groups').innerHTML = GROUPS
-    .filter(g => g.id !== 'tools')
+    .filter(g => g.id !== first)
     .map(g => {
       const cards = shown.filter(a => appletGroup(a) === g.id);
       if (!cards.length) return '';

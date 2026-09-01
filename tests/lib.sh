@@ -190,6 +190,30 @@ PY
 # Same idea for pt_done_log: suite-plans ticks a node on the 26/27 plan, and
 # that audit line is append-only by design. Nothing in the app removes it when
 # the node goes. Same double guard as above, name AND time window.
+cleanup_groups() {
+  # Dashboard blocks created by suite-links (migrations/011). Same reasoning as
+  # cleanup_links: matched on the heading prefix, because a crashed run never
+  # learns the id the server minted, and a leftover block is a heading on every
+  # dashboard in the non-prod project.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+q = "/rest/v1/dashboard_groups?label=like." + urllib.parse.quote(prefix + "*", safe="")
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test block(s)")
+except Exception as e:
+    # The table may not exist yet (011 unapplied). Never fail a run over tidying.
+    print(f"  cleanup: could not tidy blocks ({e})")
+PY
+}
+
 cleanup_links() {
   # Hyperlink cards created by suite-links (migrations/010).
   #

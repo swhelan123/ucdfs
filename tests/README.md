@@ -57,7 +57,7 @@ test display names; both conditions are required. Add a name to `TEST_ACTORS` in
 | `profiles` | subteam tags stay honest and never hide a tool; profile saves are self-only; photos are members-only |
 | `admin` | the permission boundary: what a member is refused, what an un-elevated admin is refused, and that god mode can always be switched back on |
 | `plans` | charts as rows: the id whitelist, server-minted ids, and that a chart holding work cannot be deleted |
-| `links` | admin-managed hyperlink cards: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it |
+| `links` | admin-managed hyperlink cards and the blocks they sit in: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it, and that a block holding cards cannot be deleted |
 
 ## Regressions these exist to catch
 

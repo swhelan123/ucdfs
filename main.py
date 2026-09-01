@@ -304,16 +304,69 @@ APPLET_BY_PLAN = {a["plan"]: a["id"] for a in APPLETS if a.get("plan")}
 # "group" is a tool; the dashboard renders a block only if something is in it,
 # so retiring the last archived card removes the heading with it rather than
 # leaving "Last season" over an empty space.
-APPLET_GROUPS = [
-    {"id": "tools",   "label": "Tools"},
-    # Not "Last season" any more. The block holds the two 25/26 build plans and
-    # the harness mapper, which is superseded rather than seasonal, and a
-    # heading that is wrong about a third of its contents is worse than a dull
-    # one that is right about all of it.
-    {"id": "archive", "label": "Archive"},
+# ── Dashboard blocks  (migrations/011) ────────────────────────────────────────
+#
+# The headings the dashboard is divided into, in order. Rows, not a list, for
+# the same reason links are: what the site is *divided into* is a decision about
+# how the team thinks about its own tools, and that changes more often than the
+# code does.
+#
+# This list is the fallback, not the source. It is what _groups() answers with
+# when the table is missing, and it carries the ids 011 seeds so a site running
+# ahead of its migration still draws every card under a sensible heading rather
+# than collapsing six blocks into one unlabelled grid.
+#
+# "apps" first is load-bearing: it is the block a card with no group of its own
+# falls into, and the dashboard renders the first block into its existing grid
+# without a heading of its own. Reordering the table changes which block that is.
+DEFAULT_GROUPS = [
+    {"id": "apps",        "label": "Apps",        "sort": 10},
+    {"id": "electronics", "label": "Electronics", "sort": 20},
+    {"id": "design",      "label": "Design",      "sort": 30},
+    {"id": "documents",   "label": "Documents",   "sort": 40},
+    {"id": "reference",   "label": "Reference",   "sort": 50},
+    {"id": "archive",     "label": "Archive",     "sort": 60},
 ]
 
-APPLET_GROUP_IDS = {g["id"] for g in APPLET_GROUPS}
+MAX_GROUPS      = 12   # a bound on an add button, not a considered limit
+MAX_GROUP_LABEL = 24   # a heading, not a sentence
+
+
+def _group_rows() -> list:
+    """Every block, in dashboard order, or [] if 011 has not been applied."""
+    try:
+        r = (supabase.table("dashboard_groups").select("*")
+             .order("sort").order("id").execute())
+        return r.data or []
+    except Exception as e:
+        logger.error(f"[groups] could not read blocks (is 011 applied?): {e}")
+        return []
+
+
+def _groups() -> list:
+    """The blocks the dashboard draws, always at least one.
+
+    Falls back to DEFAULT_GROUPS when the table is missing *or empty*. Empty
+    matters as much as missing: every card carries a group id, and with no
+    blocks at all there is nowhere for any of them to render. A dashboard with
+    no cards on it is indistinguishable from one that failed to load, so the
+    honest failure is to draw the built-in headings and let somebody notice the
+    admin screen disagrees.
+    """
+    rows = _group_rows()
+    if not rows:
+        return [dict(g) for g in DEFAULT_GROUPS]
+    return [{"id": g["id"], "label": g.get("label") or g["id"],
+             "sort": g.get("sort") or 0} for g in rows]
+
+
+def _group_ids() -> set:
+    return {g["id"] for g in _groups()}
+
+
+def _first_group() -> str:
+    """Where a card with no group of its own lands. Never empty; see _groups()."""
+    return _groups()[0]["id"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -335,7 +388,7 @@ APPLET_GROUP_IDS = {g["id"] for g in APPLET_GROUPS}
 #              dashboard in the team, every time anyone opens the site. This is
 #              the check that matters; the rest are tidiness.
 #    accent    a shared.css token, or the card renders with a broken variable.
-#    group     an APPLET_GROUPS id, or the card lands in a block that is never
+#    group     a dashboard_groups id, or the card lands in a block that is never
 #              drawn and is invisible with no error anywhere.
 #    subteams  SUBTEAM_IDS or "all". Relevance, never permission. An empty list
 #              reads as "all" rather than hiding the card from everybody, which
@@ -437,7 +490,7 @@ def _clean_link(body: dict) -> dict:
         # losing the edit.
         "accent":   accent if accent in LINK_ACCENTS else "indigo",
         "status":   status if status in LINK_STATUSES else "live",
-        "group_id": group if group in APPLET_GROUP_IDS else "tools",
+        "group_id": group if group in _group_ids() else _first_group(),
         "subteams": _clean_link_subteams(body.get("subteams")),
     }
 
@@ -627,7 +680,7 @@ async def api_applets(request: Request):
             {k: v for k, v in a.items() if k != "file"}
             for a in cards if _may_open(a, profile)
         ],
-        "groups": APPLET_GROUPS,
+        "groups": _groups(),
         # Sent with the cards rather than fetched separately: the dashboard
         # paints once, and a favourites list that arrived afterwards would
         # reorder the grid under the cursor.
@@ -1495,7 +1548,7 @@ async def api_admin_links(request: Request):
     require_role(request, "admin")
     return {
         "links":    _link_rows(),
-        "groups":   APPLET_GROUPS,
+        "groups":   _groups(),
         "subteams": SUBTEAMS,
         "accents":  sorted(LINK_ACCENTS),
         "statuses": sorted(LINK_STATUSES),
@@ -1610,7 +1663,7 @@ async def api_admin_links_reorder(request: Request):
     me    = require_role(request, "admin")
     b     = await request.json()
     group = (b.get("group") or "").strip()
-    if group not in APPLET_GROUP_IDS:
+    if group not in _group_ids():
         raise HTTPException(400, "Not a dashboard block")
 
     ids   = [str(i).strip() for i in (b.get("ids") or [])]
@@ -1632,6 +1685,184 @@ async def api_admin_links_reorder(request: Request):
         raise HTTPException(503, "Couldn't save that order.")
 
     log_activity("admin", _public_profile(me).get("name"), "reordered the links in", group)
+    return {"ok": True, "ids": order}
+
+
+# ── Dashboard blocks, from /admin ─────────────────────────────────────────────
+#
+# Same gate and the same reasoning as links: the admin role, not the override.
+# A block is a heading over a grid, which is the shape of a shared page rather
+# than anybody's data.
+
+
+def _groups_available() -> bool:
+    """Has 011 been applied? Distinguishes "the built-in blocks" from "the ones
+    somebody set up", which the admin screen has to be able to say out loud:
+    editing a block that is really a hardcoded fallback would look like it
+    worked and change nothing."""
+    try:
+        supabase.table("dashboard_groups").select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def _cards_by_group() -> dict:
+    """How many cards sit in each block, applets and links together.
+
+    Mirrors appletGroup() in dashboard.html exactly, including the fallback: a
+    card naming a block that does not exist counts against the first block,
+    because that is where the dashboard will actually draw it.
+    """
+    first, ids, out = _first_group(), _group_ids(), {}
+    for c in _cards():
+        g = c.get("group") or first
+        if g not in ids:
+            g = first
+        out[g] = out.get(g, 0) + 1
+    return out
+
+
+@app.get("/api/admin/groups")
+async def api_admin_groups(request: Request):
+    """The blocks, with how many cards are in each so the editor can say why a
+    delete will be refused before somebody presses it."""
+    require_role(request, "admin")
+    counts = _cards_by_group()
+    return {
+        "groups": [{**g, "cards": counts.get(g["id"], 0)} for g in _groups()],
+        "limits": {"groups": MAX_GROUPS, "label": MAX_GROUP_LABEL},
+        "ready":  _groups_available(),
+    }
+
+
+def _clean_group_label(value) -> str:
+    label = (value or "").strip()
+    if not label:
+        raise HTTPException(400, "A block needs a heading")
+    if len(label) > MAX_GROUP_LABEL:
+        raise HTTPException(400, f"Keep the heading under {MAX_GROUP_LABEL} characters")
+    return label
+
+
+@app.post("/api/admin/groups")
+async def api_admin_group_save(request: Request):
+    """Add a block, or rename one. An id in the body means rename.
+
+    Only the label is editable. An id is what every card in the block points at,
+    so changing one would silently empty the block and scatter its cards into
+    the first one. Ids are minted here (grp_…) for the same reason they are for
+    links and charts.
+    """
+    me   = require_role(request, "admin")
+    b    = await request.json()
+    gid  = (b.get("id") or "").strip()
+    rows = _group_rows()
+    who  = _public_profile(me).get("name")
+    label = _clean_group_label(b.get("label"))
+
+    if not _groups_available():
+        raise HTTPException(503, "Blocks need migration 011. Apply it and reload.")
+
+    if gid:
+        if gid not in {r["id"] for r in rows}:
+            raise HTTPException(404, "That block no longer exists")
+        row, verb = {"id": gid, "label": label}, "renamed the block to"
+    else:
+        if len(rows) >= MAX_GROUPS:
+            raise HTTPException(400, f"That's the most blocks you can have ({MAX_GROUPS})")
+        row = {
+            "id":         "grp_" + uuid.uuid4().hex[:8],
+            "label":      label,
+            "sort":       (max([r.get("sort") or 0 for r in rows]) + 10) if rows else 10,
+            "created_by": who,
+        }
+        verb = "added the block"
+
+    try:
+        supabase.table("dashboard_groups").upsert(row).execute()
+    except Exception as e:
+        logger.error(f"[admin] block save failed for {row['id']}: {e}")
+        raise HTTPException(503, "Couldn't save that block.")
+
+    log_activity("admin", who, verb, label)
+    return {"ok": True, "group": row}
+
+
+@app.post("/api/admin/groups/delete")
+async def api_admin_group_delete(request: Request):
+    """Remove a block. Refused while anything is in it, and refused for the last.
+
+    **Emptiness is the rail, and it counts applets as well as links.** Applets
+    are code: an admin who deletes the block a registry entry names cannot put
+    it back from the UI, and the entry would render under a heading nobody
+    chose. Deleting a block that holds cards would also be the one action here
+    with no undo, since the cards do not move anywhere, they just stop being
+    where somebody filed them.
+
+    The last block cannot go at all. _groups() falls back when the table is
+    empty, so an empty table does not break the dashboard, but it does mean the
+    admin screen and the site disagree about what exists, which is worse than
+    refusing.
+    """
+    me  = require_role(request, "admin")
+    b   = await request.json()
+    gid = (b.get("id") or "").strip()
+
+    rows = _group_rows()
+    row  = next((r for r in rows if r["id"] == gid), None)
+    if not row:
+        raise HTTPException(404, "That block no longer exists")
+    if len(rows) <= 1:
+        raise HTTPException(400, "That's the only block left")
+
+    typed = (b.get("label") or "").strip()
+    if typed != (row.get("label") or ""):
+        raise HTTPException(400, "Type the block's heading exactly to delete it")
+
+    held = _cards_by_group().get(gid, 0)
+    if held:
+        raise HTTPException(
+            400, f"Move the {held} card{'s' if held != 1 else ''} out of that block first")
+
+    try:
+        supabase.table("dashboard_groups").delete().eq("id", gid).execute()
+    except Exception as e:
+        logger.error(f"[admin] block delete failed for {gid}: {e}")
+        raise HTTPException(503, "Couldn't delete that block.")
+
+    log_activity("admin", _public_profile(me).get("name"),
+                 "removed the block", row.get("label") or gid)
+    return {"ok": True}
+
+
+@app.post("/api/admin/groups/reorder")
+async def api_admin_groups_reorder(request: Request):
+    """Rewrite the order of the blocks. Takes every id, in the order wanted.
+
+    Reordering is not cosmetic here the way it is for links: the first block is
+    where a card with no group of its own lands, and the dashboard draws it
+    without a heading. Moving a block to the top changes both.
+    """
+    me   = require_role(request, "admin")
+    b    = await request.json()
+    ids  = [str(i).strip() for i in (b.get("ids") or [])]
+    mine = {r["id"] for r in _group_rows()}
+    if not mine:
+        raise HTTPException(503, "Blocks need migration 011. Apply it and reload.")
+
+    order = [i for i in dict.fromkeys(ids) if i in mine]
+    if set(order) != mine:
+        raise HTTPException(400, "That list is out of date. Reload and try again.")
+
+    try:
+        for position, gid in enumerate(order, start=1):
+            supabase.table("dashboard_groups").update({"sort": position * 10}).eq("id", gid).execute()
+    except Exception as e:
+        logger.error(f"[admin] block reorder failed: {e}")
+        raise HTTPException(503, "Couldn't save that order.")
+
+    log_activity("admin", _public_profile(me).get("name"), "reordered", "the dashboard blocks")
     return {"ok": True, "ids": order}
 
 

@@ -392,25 +392,53 @@ for a part, a captain buys it on their own card. That is the whole reason these
 cannot be one record. The link is many-to-one: one Amazon order settles five
 approved requests.
 
-### Approval: dual authorisation, sequential
+### Approval: one threshold, then dual authorisation
 
-No budgets exist and none are agreed, so there are **no spend limits, no
-thresholds and no tiered routing**. Approval is amount-independent. Every
-request needs two approvals, in this order:
+Set by the team 2026-09-01. There is still no budget; this is a **delegation of
+authority**, which is a different thing and does not need one.
 
-1. **Captain of the requester's department** — *does this team need it?*
-2. **Ops Captain** — *should the club spend this?*
+| Amount | Who approves |
+|---|---|
+| **under €100** | captain of the requester's department, alone |
+| **€100 and over** | department captain **first**, then the Ops Captain |
 
-Department first, so the Ops Captain's queue only ever holds things a department
-has already backed. Two different questions; neither approver can answer the
-other's, which is why real systems separate line approval from finance approval.
+Department first above the line, so the Ops Captain's queue only ever holds
+things a department has already backed. The two are asking different questions —
+*does this team need it?* and *should the club spend this?* — and neither can
+answer the other's. That is why real systems separate line approval from
+financial approval, and it is the whole reason the second slot exists.
 
-**The fallthrough rule.** Both slots must be filled by two *distinct* people,
-neither of them the requester. Where a slot would land on the requester, or on
-whoever already filled the other slot, it falls through to any other captain.
-One rule, no special cases, and it covers all three collapses: an Ops member's
-request (both slots would be the Ops Captain), the Ops Captain's own request
-(no slots), and a captain requesting for their own department.
+**€100 is data, not a constant.** It will be argued about, and changing it must
+not be a deploy. Same call migrations 010 and 011 made for links and dashboard
+blocks.
+
+**A captain may authorise their own spend under €100.** Deliberate, and the
+reason the threshold exists: a captain who decides an €80 part is necessary
+should buy it, not wait on a queue. Above the line, no self-approval — the Ops
+Captain slot is always a second person.
+
+**The fallthrough rule**, which applies to every slot that is not a captain
+self-approving below the line: both slots must be two *distinct* people, neither
+of them the requester. Where a slot would land on the requester, or on whoever
+already filled the other, it falls through to any other captain. One rule, no
+special cases, and it covers all three collapses: an Ops member's request (both
+slots would be the Ops Captain), the Ops Captain's own request (no slots), and a
+captain requesting a €100+ item for their own department.
+
+**The threshold is checked twice, against the estimate and then the actual.**
+Approved at €90 and the receipt says €130, it crossed the line after the fact,
+so it needs the Ops Captain at claim time before it is paid. Without this the
+threshold is advisory: request €90, buy €300, claim it. This is also the general
+rule stated under Tables — an amount changing after approval reopens it — and
+this is the case that makes it matter.
+
+**What replaces the gate below €100 is visibility, not nothing.** Self-approved
+captain spend is a distinct category in the treasurer's ledger rather than a
+silent row, and it appears in the weekly digest. That is how expense policy
+works everywhere above an approval line: spot-checkable after the fact, not
+pre-gated. Worth watching for the standard dodge — one €160 order filed as two
+€80 requests — which needs no rule, only a ledger grouped by requester and week
+so it is obvious.
 
 ### Captaincy has to become a real permission
 
@@ -452,17 +480,21 @@ the one thing worth beating Oracle at.
 
 ### Queue: batch approve
 
-Dual approval on every request means two humans must act on a €6 bolt order.
-That is the main way this stalls, so the queue takes a checkbox column and
-approves several at once — **each still written as its own audited event**. One
-click, three rows in `purchase_events`.
+The €100 threshold already removes most of the volume problem: a €6 bolt order
+needs one captain, not two. The queue still takes a checkbox column and approves
+several at once — **each written as its own audited event**, so one click makes
+three rows in `purchase_events` — because the common case is a department
+captain clearing a morning's worth of small requests in one pass, and making
+that twelve individual round-trips is how the habit dies.
 
 ### Claims without a request
 
 Allowed, and flagged. People buy an M6 bolt without filing a form; a system that
 forbids it pushes the spend off-book rather than eliminating it. A claim line
-with no linked request shows as unapproved spend and needs **the same two
-approvals, applied after the fact** — same rule, same people, no new concept.
+with no linked request shows as unapproved spend and needs **whatever approval it
+would have needed had it been requested, applied after the fact** — under €100
+the department captain, at or above it the Ops Captain too, judged on the actual
+paid. Same rule, same people, no new concept.
 
 ### Keep the subsystem tag even though there is no budget
 

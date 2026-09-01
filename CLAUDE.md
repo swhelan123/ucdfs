@@ -40,6 +40,7 @@ static/
   pt.html             full-screen canvas tool: draws any one chart, at /plan/<id>
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
+scripts/              ops, not app code: seed-nonprod.sh, supabase-keepalive.sh
 tests/                see tests/README.md
 ```
 
@@ -779,6 +780,45 @@ flag that relaxes it. It reads from a `UCDFS_ENV=prod` file and writes only to a
 are the same project, so it cannot overwrite the live manufacturing plan with
 whatever state staging had drifted into. Re-runnable
 (`Prefer: resolution=merge-duplicates`).
+
+### Keeping the databases awake
+
+A free-tier Supabase project pauses after seven days with no activity, and the
+free tier does not let you schedule the restore — somebody opens the dashboard
+and presses a button. Both projects are exposed to this. Prod looks safe because
+the site gets used most weeks, but exam periods, the summer, and the gap between
+one committee and the next are all longer than seven days. Non-prod is worse,
+since dev and stage are only up when somebody is working on the site.
+
+`scripts/supabase-keepalive.sh` queries `comp_meta` on both projects. It is
+scheduled by a **user systemd timer on the homeserver**, daily, `Persistent=true`
+so a run missed while the box is off fires when it comes back:
+
+```bash
+systemctl --user list-timers ucdfs-keepalive.timer
+journalctl --user -u ucdfs-keepalive -n 30
+```
+
+The units are `~/.config/systemd/user/ucdfs-keepalive.{service,timer}` and are
+**not in this repo** — they carry absolute paths and are specific to that
+machine. Nothing in CI or `deploy.sh` runs this script.
+
+**It uses the anon key, and expects to read nothing.** RLS is on with zero
+policies everywhere, so `[]` is the pass condition and a row is the alarm — the
+script fails the run if the anon key ever reads `comp_meta`, which makes it a
+daily check on the property that makes that key safe to hold. The query still
+counts as activity either way: RLS is enforced inside Postgres, so the SQL runs
+whether or not a row survives it. Do not "fix" an empty result by reaching for
+the service key. A credential that bypasses RLS has no business in a job that
+runs unattended every day, and the empty array is the point.
+
+A keepalive nobody looks at is worse than none, because it makes you believe you
+are covered. So the unit carries `OnFailure=notify-failure@%n.service`, a
+generic push notifier on the homeserver that any unit can point at, not
+something this project owns. **It is inert until `~/.config/notify/ntfy.env`
+exists** — until then a failure is only a red unit in the journal, and the
+notifier logs that it had nothing to send. Setup is in the header of
+`~/.local/bin/notify-failure`.
 
 ## How a change reaches the site
 

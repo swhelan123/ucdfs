@@ -290,5 +290,55 @@ const PAGES = [
     w.close();
   }
 
+  /* ── Closing a page with work still in flight ──────────────────────────
+     The regression this exists for took CI down on the #13 merge, and it is
+     not a page bug: suite-admin closed the dashboard while boot() was still
+     awaiting its API calls, boot()'s `finally { reveal() }` then ran against a
+     torn-down window where `document` is undefined, and that TypeError — from
+     a callback nobody awaits — is an uncaught rejection that kills the whole
+     node process. Not one failed check. Every check after it, never run.
+
+     It only bit on a loaded runner, which is why it reached main: on any
+     machine quick enough, the requests land before the close and the bug is
+     invisible. So the two orderings are forced here rather than waited for.
+     A guard that has stopped working takes this process down instead of
+     printing FAIL, which still fails the suite, loudly, on every run. That is
+     the point: the timing is no longer what decides whether we find out. */
+  console.log('\nclosing a page mid-flight does not kill the suite');
+  {
+    // One: the response itself is still outstanding at close.
+    const { w } = await open('/', { setCookies, failOnPrompt: true });
+    w.eval('fetch("/api/applets").then(function () { document.body.className += " late"; });');
+    w.close();
+    await new Promise(r => setTimeout(r, 1500));
+    check('a response arriving after close is not delivered', true);
+  }
+  {
+    // Two: the response has arrived and only the body read is outstanding.
+    // This is the case guarding fetch() alone misses, because the app writes
+    // `.then(r => r.json())` and that second promise is a different promise.
+    const { w } = await open('/', { setCookies, failOnPrompt: true });
+    w.eval(`
+      window.__openGate = null;
+      window.__gate = new Promise(function (r) { window.__openGate = r; });
+      window.__gotResponse = false;
+      fetch('/api/applets')
+        .then(function (r) {
+          window.__gotResponse = true;
+          return window.__gate.then(function () { return r.json(); });
+        })
+        .then(function () { document.body.className += ' late'; });
+    `);
+    const arrived = await waitFor(() => w.eval('window.__gotResponse') === true);
+    // Held across the teardown on purpose: after close there is no window left
+    // to reach into for it.
+    const openGate = w.__openGate;
+    w.close();
+    openGate();
+    await new Promise(r => setTimeout(r, 1500));
+    check('a body read finishing after close is not delivered', arrived,
+      arrived ? '' : 'the response never arrived, so nothing was proved');
+  }
+
   process.exit(summary('pages') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

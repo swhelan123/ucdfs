@@ -33,6 +33,9 @@ function summary(name) {
  */
 async function open(path, opts = {}) {
   const errors = [];
+  // Set by the close() wrapper below, read by the fetch shim. See the note
+  // there: a request that lands after the window is gone must not be delivered.
+  let closed = false;
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => {
     if (/Not implemented|Could not parse CSS/i.test(e.message)) return;
@@ -61,10 +64,59 @@ async function open(path, opts = {}) {
     beforeParse(w) {
       // jsdom's fetch does not share the cookie jar, so pass the session on.
       const cookieHeader = jar.getCookieStringSync(BASE);
-      w.fetch = (u, o = {}) => fetch(new URL(u, BASE).href, {
+      // Nothing is delivered to a closed window. jsdom's own fetch is tied to
+      // the window lifecycle; this one is node's, swapped in for the cookie jar
+      // above, and it does not care that the page it belongs to is gone. So a
+      // suite that closes a page with a request still in flight would run the
+      // page's own .then() against a torn-down document, where `document` is
+      // undefined. That throws from a callback nobody is awaiting, which is an
+      // uncaught rejection, which takes the whole suite process down — not one
+      // failed check, every check after it, never run.
+      //
+      // That is what broke CI on the #13 merge: suite-admin closes the
+      // dashboard after reading the override banner, boot() was still awaiting
+      // its four API calls, and its `finally { reveal() }` landed after the
+      // close. It passes on a fast machine and fails on a loaded runner, which
+      // is the same slower-runner story waitFor() below was written for.
+      //
+      // A promise that never settles is the right shape: the page's await
+      // simply never resumes, so no page code runs after its window closed.
+      // Rejecting instead would be wrong, because a rejection still resumes the
+      // page — straight into whatever catch or finally it wrote, which for the
+      // dashboard is the `finally { reveal() }` that started all this.
+      //
+      // **Guarding fetch() alone is not enough**, which is the trap this fell
+      // into the first time. Reading a response is two promises, and the app
+      // writes both: `.then(r => r.json())` in shared.js. Guarding only the
+      // outer one leaves the window between the headers arriving and the body
+      // being parsed, and a close landing in there still reaches page code. So
+      // the response is handed back wrapped, with every body-reading method
+      // guarded the same way.
+      const dead = () => new Promise(() => {});
+      const guard = p => p.then(
+        v => (closed ? dead() : v),
+        e => (closed ? dead() : Promise.reject(e)),
+      );
+      // A plain object, not a subclass or a Proxy over the real Response:
+      // Response's accessors are brand-checked, so anything that inherits from
+      // one and is not one throws on .status. Nothing in this app asks whether
+      // a response `instanceof Response`; it reads these fields and calls one
+      // of these methods.
+      const wrap = res => ({
+        ok: res.ok, status: res.status, statusText: res.statusText,
+        headers: res.headers, url: res.url, redirected: res.redirected,
+        type: res.type, bodyUsed: res.bodyUsed,
+        json: () => guard(res.json()),
+        text: () => guard(res.text()),
+        blob: () => guard(res.blob()),
+        arrayBuffer: () => guard(res.arrayBuffer()),
+        formData: () => guard(res.formData()),
+        clone: () => wrap(res.clone()),
+      });
+      w.fetch = (u, o = {}) => guard(fetch(new URL(u, BASE).href, {
         ...o,
         headers: { ...(o.headers || {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) },
-      });
+      })).then(res => (closed ? dead() : wrap(res)));
       w.Element.prototype.scrollIntoView = function () {};
       w.confirm = () => false;
       w.alert = () => {};
@@ -79,6 +131,12 @@ async function open(path, opts = {}) {
   });
 
   const w = dom.window;
+
+  // The flag has to be set before jsdom tears the window down, so that a
+  // response arriving during the teardown is already on the dead path.
+  const closeWindow = w.close.bind(w);
+  w.close = () => { closed = true; closeWindow(); };
+
   await new Promise(r => w.addEventListener('load', r, { once: true }));
   await settle(w.document);
   return { dom, w, d: w.document, errors };

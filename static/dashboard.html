@@ -53,12 +53,20 @@ body.ready #load-veil {
   transition: opacity .16s ease-out, visibility 0s .16s;
 }
 
-/* The ring, not the veil, is what fades in late. The veil is already the page
-   background, so holding it there from the first frame costs nothing visible,
-   while a spinner that appears for 80ms on a fast load is just a flinch. Below
-   about a third of a second nobody feels they waited, so nothing is drawn. */
-.dash-ring { opacity: 0; animation: ring-in .2s ease-out .35s forwards; }
-@keyframes ring-in { to { opacity: 1; } }
+/* Drawn from the first frame, deliberately.
+
+   This used to hold the ring back a third of a second, on the reasoning that a
+   spinner appearing for 80ms is a flinch rather than information. The call now
+   is the other way: whatever the dashboard is doing, it should look like it is
+   doing it immediately, and there should be no window in which the screen is
+   simply blank and the site looks stuck. An indicator that only shows up once
+   things are already going badly is the one you do not want on the morning the
+   database is slow.
+
+   Costs nothing when the page is quick, because the veil and the page fade out
+   together the moment reveal() lands, so a fast load is a brief flash of a ring
+   rather than a spinner that outstays the wait. */
+.dash-ring { opacity: 1; }
 
 .dash-ring svg { display: block; animation: ring-spin 1.5s linear infinite; }
 .dash-ring circle {

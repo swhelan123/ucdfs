@@ -33,6 +33,9 @@ function summary(name) {
  */
 async function open(path, opts = {}) {
   const errors = [];
+  // Set by the close() wrapper below, read by the fetch shim. See the note
+  // there: a request that lands after the window is gone must not be delivered.
+  let closed = false;
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => {
     if (/Not implemented|Could not parse CSS/i.test(e.message)) return;
@@ -61,10 +64,32 @@ async function open(path, opts = {}) {
     beforeParse(w) {
       // jsdom's fetch does not share the cookie jar, so pass the session on.
       const cookieHeader = jar.getCookieStringSync(BASE);
+      // Nothing is delivered to a closed window. jsdom's own fetch is tied to
+      // the window lifecycle; this one is node's, swapped in for the cookie jar
+      // above, and it does not care that the page it belongs to is gone. So a
+      // suite that closes a page with a request still in flight would run the
+      // page's own .then() against a torn-down document, where `document` is
+      // undefined. That throws from a callback nobody is awaiting, which is an
+      // uncaught rejection, which takes the whole suite process down — not one
+      // failed check, every check after it, never run.
+      //
+      // That is what broke CI on the #13 merge: suite-admin closes the
+      // dashboard after reading the override banner, boot() was still awaiting
+      // its four API calls, and its `finally { reveal() }` landed after the
+      // close. It passes on a fast machine and fails on a loaded runner, which
+      // is the same slower-runner story waitFor() below was written for.
+      //
+      // A promise that never settles is the right shape here: the page's await
+      // simply never resumes, so no page code runs after its window closed. The
+      // process is about to exit anyway.
+      const dead = () => new Promise(() => {});
       w.fetch = (u, o = {}) => fetch(new URL(u, BASE).href, {
         ...o,
         headers: { ...(o.headers || {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) },
-      });
+      }).then(
+        res => (closed ? dead() : res),
+        err => (closed ? dead() : Promise.reject(err)),
+      );
       w.Element.prototype.scrollIntoView = function () {};
       w.confirm = () => false;
       w.alert = () => {};
@@ -79,6 +104,12 @@ async function open(path, opts = {}) {
   });
 
   const w = dom.window;
+
+  // The flag has to be set before jsdom tears the window down, so that a
+  // response arriving during the teardown is already on the dead path.
+  const closeWindow = w.close.bind(w);
+  w.close = () => { closed = true; closeWindow(); };
+
   await new Promise(r => w.addEventListener('load', r, { once: true }));
   await settle(w.document);
   return { dom, w, d: w.document, errors };

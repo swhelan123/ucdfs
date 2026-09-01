@@ -32,6 +32,61 @@
 body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s ease-out; }
 @media (prefers-reduced-motion: reduce) { body.ready .page { transition: none; } }
 
+/* ── What you look at while it is held back ──
+   The rule above hides the page; on a slow connection that left a blank
+   screen for up to 2.5s, which reads as broken rather than as busy.
+
+   Driven entirely by `body.ready`, the class reveal() already sets. No JS
+   here on purpose: reveal() is idempotent and called from exactly two
+   places, and the comment above it asks for no third caller. A veil that
+   hides itself off the same class cannot drift out of step with the page it
+   is covering, including on the 2.5s timeout path. */
+#load-veil {
+  position: fixed; inset: 0; z-index: 500;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+body.ready #load-veil {
+  opacity: 0; visibility: hidden;
+  /* Fades with the page rather than cutting, and the visibility delay keeps
+     it painted for the length of that fade instead of vanishing on frame 1. */
+  transition: opacity .16s ease-out, visibility 0s .16s;
+}
+
+/* The ring, not the veil, is what fades in late. The veil is already the page
+   background, so holding it there from the first frame costs nothing visible,
+   while a spinner that appears for 80ms on a fast load is just a flinch. Below
+   about a third of a second nobody feels they waited, so nothing is drawn. */
+.dash-ring { opacity: 0; animation: ring-in .2s ease-out .35s forwards; }
+@keyframes ring-in { to { opacity: 1; } }
+
+.dash-ring svg { display: block; animation: ring-spin 1.5s linear infinite; }
+.dash-ring circle {
+  fill: none; stroke: var(--indigo); stroke-width: 4; stroke-linecap: round;
+  /* r=20, so the circumference is ~125.7 and the dasharray pairs below sum to
+     it. The arc grows and shrinks as the whole thing turns, which is the bit
+     that makes it read as working rather than as a timer. */
+  animation: ring-dash 1.5s ease-in-out infinite;
+}
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@keyframes ring-dash {
+  0%   { stroke-dasharray: 6 120;  stroke-dashoffset: 0; }
+  50%  { stroke-dasharray: 80 46;  stroke-dashoffset: -18; }
+  100% { stroke-dasharray: 6 120;  stroke-dashoffset: -125; }
+}
+
+/* Rotation is the part that causes trouble for people who ask for less of it,
+   so it goes and the ring stays: a still arc breathing in place still says
+   "working", where nothing at all says "broken". */
+@media (prefers-reduced-motion: reduce) {
+  body.ready #load-veil { transition: none; }
+  .dash-ring svg { animation: none; }
+  .dash-ring circle {
+    stroke-dasharray: 80 46; animation: ring-fade 1.6s ease-in-out infinite;
+  }
+  @keyframes ring-fade { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+}
+
 /* ── Greeting ── */
 .greeting { margin-bottom: 26px; }
 .greet-hi   { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; }
@@ -236,6 +291,10 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
      readable page. Say so instead. -->
 <noscript><style>
   .page { opacity: 1; visibility: visible; }
+  /* Nothing will ever call reveal(), so the veil would spin over the note
+     below until the tab was closed. A spinner for a page that is not coming
+     is the one thing worse than no spinner. */
+  #load-veil { display: none; }
   .noscript-note {
     margin: 40px auto; max-width: 30rem; padding: 18px 20px; border-radius: 14px;
     background: #fff; border: 1px solid #e2e8f0; text-align: center;
@@ -253,6 +312,18 @@ body.ready .page { opacity: 1; visibility: visible; transition: opacity .16s eas
     nothing to show without it. Everything else on the site works the same way.
   </div>
 </noscript>
+
+<!-- ── Held-back veil ──
+     Outside #main, which is display:none until the script shows it. role=status
+     rather than an aria-live region with text: screen readers announce the
+     accessible name once, and there is no progress to narrate afterwards. -->
+<div id="load-veil" role="status" aria-label="Loading the dashboard">
+  <div class="dash-ring">
+    <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="20"></circle>
+    </svg>
+  </div>
+</div>
 
 <!-- ── Main ── -->
 <div id="main" style="display:none">

@@ -1,6 +1,5 @@
 import os
 import re
-import asyncio
 import json
 import time
 import uuid
@@ -3857,46 +3856,19 @@ def _activity(limit: int = 8) -> list:
 
 @app.get("/api/dashboard")
 async def api_dashboard():
-    # Seven independent tiles, each a few blocking round trips through the
-    # synchronous Supabase client. Run one after another they summed to about
-    # 700ms against a database with nobody in it, and that is most of the wait
-    # the dashboard sits behind its veil for.
-    #
-    # Nothing here depends on anything else here, which is the same observation
-    # that put the front end's three requests into one Promise.all. This is the
-    # server side of it.
-    #
-    # to_thread and not gather alone. The calls block, and this is an `async
-    # def`, so serially they held the event loop for the whole 700ms: two people
-    # opening the dashboard at once queued instead of overlapping, which is
-    # precisely what a workshop morning looks like. Handing each to a thread
-    # gets the blocking work off the loop as well as running it concurrently.
-    #
-    # Each is still wrapped in _tile, so a tile that raises is still None and
-    # the rest of the dashboard still draws. gather therefore never sees an
-    # exception, and needs no return_exceptions.
-    countdown, activity, attendance, flowcharts, pt, harness, comp = await asyncio.gather(
-        asyncio.to_thread(_tile, _countdown),
-        asyncio.to_thread(_tile, _activity),
-        asyncio.to_thread(_tile, _attendance_tile),
-        asyncio.to_thread(_tile, _flowcharts_tile),
-        asyncio.to_thread(_tile, _pt_tile),
-        asyncio.to_thread(_tile, _harness_tile),
-        asyncio.to_thread(_tile, _comp_tile),
-    )
     return {
         # Dublin, not the container's clock, which is UTC, so date.today()
         # here would report yesterday between midnight and 1am in summer,
         # disagreeing with the day the tiles below are actually describing.
         "date":      datetime.now(TEAM_TZ).date().isoformat(),
-        "countdown": countdown,
-        "activity":  activity or [],
+        "countdown": _tile(_countdown),
+        "activity":  _tile(_activity) or [],
         "tiles": {
-            "attendance": attendance,
-            "flowcharts": flowcharts,
-            "pt":         pt,
-            "harness":    harness,
-            "comp":       comp,
+            "attendance": _tile(_attendance_tile),
+            "flowcharts": _tile(_flowcharts_tile),
+            "pt":         _tile(_pt_tile),
+            "harness":    _tile(_harness_tile),
+            "comp":       _tile(_comp_tile),
         },
     }
 

@@ -356,6 +356,53 @@ holds the `service_role` key and does its own authorization. This is load-bearin
   role or god mode, and roles are handed out from `/admin`. There is a way to
   grant access now that isn't a password everyone knows and nobody can revoke.
 
+### One connection, and who may not share it
+
+`supabase` in `main.py` is a module-global client wrapping a **single HTTP/2
+connection**. It is not something several threads can drive at once. When
+`/api/dashboard` was first parallelised by handing that client to seven
+threads, the server hung up mid-request:
+
+```
+[dashboard] tile failed: <ConnectionTerminated error_code:1, last_stream_id:9>
+[auth] profile lookup failed: [Errno 104] Connection reset by peer
+```
+
+**The second line is the point.** That is not a dashboard tile, it is the auth
+path on a *different* request, broken by connection loss on the client they
+share. An admin was refused as a non-admin because a dashboard tile happened
+to be read at the same moment, and CI failed on god mode with a 403 that had
+nothing to do with god mode. One endpoint's optimisation reached out and broke
+authentication for whatever else was in flight. Roughly one request in
+thirty-six lost a tile or its feed.
+
+So the dashboard tiles run on a bounded, dedicated pool, and **a thread that
+runs tiles gets a client of its own**:
+
+- **Tile code calls `sb()`, never `supabase`.** `sb()` hands back the global
+  client unless `_tile` has marked the thread, so everything else — all 103
+  other call sites, on the main thread and off it — is unchanged. It is opt-in
+  deliberately: uvicorn runs sync endpoints in a threadpool of forty, and
+  giving all of those their own client is a much larger change than this.
+- **Adding a tile means using `sb()` in it and in everything it calls.** A tile
+  that reaches the global client from a pool thread reintroduces exactly the
+  failure above, and it will not look like a bug in your tile. It will look
+  like somebody else's request failing to authenticate.
+- The pool is bounded, so at most `_TILE_WORKERS` clients are ever built, once
+  each and reused. Building one costs about 16ms.
+
+**Find the call sites by walking the call graph, not by eye.** `_activity`
+reaches `_pt_activity` and `_general_activity` by iterating over the functions
+rather than naming them in a call, so an AST call-graph walk misses all three
+of their queries. Missing them does not raise; the existing "a tile that fails
+degrades, it does not blank" handling swallows it and the feed silently comes
+back `[]`.
+
+The serial version was accidentally load-bearing, which is worth remembering
+before optimising anything else here: blocking the event loop meant only ever
+one Supabase call in flight, and that is what had been keeping the shared
+connection safe.
+
 ### Identity is a seam
 
 Everything reads identity through `UCDFS.user()` rather than touching cookies or

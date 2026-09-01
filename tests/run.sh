@@ -47,9 +47,18 @@ if [ "$needs_node" = "1" ] && [ ! -d "$ROOT/tests/node_modules" ]; then
     echo "npm install failed" >&2; exit 1; }
 fi
 
+# Set only once this run has the lock AND has started its own container. Every
+# teardown below is gated on it, because until then there is nothing of ours to
+# tear down and quite possibly something of somebody else's: a run that blocks
+# on the lock and is then Ctrl-C'd would otherwise fire this trap and delete the
+# container, the accounts and the feed lines belonging to the run it was waiting
+# for. That is the same bug the lock exists to prevent, coming in through the
+# EXIT trap instead of through docker rm.
+OWNS_CONTAINER=0
+
 cleanup() {
   local code=$?
-  if [ "$needs_container" = "1" ]; then
+  if [ "$OWNS_CONTAINER" = "1" ]; then
     echo
     cleanup_test_accounts
     cleanup_activity_log "$RUN_STARTED"
@@ -103,6 +112,7 @@ fi
 if [ "$needs_container" = "1" ]; then
   echo "Starting test container on port $TEST_PORT…"
   start_test_container
+  OWNS_CONTAINER=1
 fi
 
 total_fail=0

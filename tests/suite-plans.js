@@ -167,6 +167,29 @@ const LEGACY_SECTIONS = ['lv', 'tdp', 'tsac', 'cc', 'bp', 'sw', 'hv'];
       mine.done_log.some(l => l.node_id === nid && l.done));
     check('log line absent from the legacy chart',
       !sPt.done_log.some(l => l.node_id === nid));
+    /* The tick above deliberately posted user_name: 'Plans Check', which is
+       also this account's real name, so on its own it proves nothing about
+       where the actor came from. This one asks to be signed as somebody else.
+
+       pt_done_log is append-only and is the audit trail the whole build plan is
+       trusted on — TODO.md credits it for why this tool survived when the Notion
+       tracker did not. An audit log whose actor is whatever the caller typed is
+       worth much less than it looks. Same bug as attendance and the Comp Hub. */
+    const logged = mine.done_log.find(l => l.node_id === nid && l.done);
+    check('the tick is signed by the account that made it',
+      !!logged && logged.user_name === 'Plans Check',
+      logged ? `user_name=${logged.user_name}` : 'no log line at all');
+
+    await post('/pt/api/toggle',
+      { plan: chart, node_id: nid, done: false, user_name: 'Somebody Else' });
+    await post('/pt/api/toggle',
+      { plan: chart, node_id: nid, done: true,  user_name: 'Somebody Else' });
+    const forged = (await state(chart)).done_log
+      .filter(l => l.node_id === nid)
+      .map(l => l.user_name);
+    check('and cannot be signed with somebody else\'s name',
+      forged.length > 1 && forged.every(n => n === 'Plans Check'),
+      forged.join(', ') || 'no log lines');
 
     console.log('\nwhat cannot be destroyed by accident');
     const secBusy = await post('/pt/api/sections/delete', { plan: chart, sec });

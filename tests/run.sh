@@ -55,6 +55,7 @@ cleanup() {
     cleanup_activity_log "$RUN_STARTED"
     cleanup_pt_done_log "$RUN_STARTED"
     cleanup_links
+    cleanup_comp_requests
     cleanup_groups
     if [ "$KEEP" = "1" ]; then
       echo "  test container left running at $BASE"

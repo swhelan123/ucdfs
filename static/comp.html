@@ -737,7 +737,7 @@ async function saveEditReq(id){
   if(!item){cToast("Item can't be empty");return;}
   const quantity=Math.max(1,parseInt(document.getElementById('edit-qty-'+id).value)||1);
   const split=document.getElementById('edit-split-'+id).value.split(',').map(s=>s.trim()).filter(Boolean);
-  const r=await fetch('/comp/api/requests/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name:cName,item,quantity,split_with:split})});
+  const r=await fetch('/comp/api/requests/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,item,quantity,split_with:split})});
   if(!r.ok){const d=await r.json().catch(()=>({}));cToast(d.detail||'Failed to save');return;}
   editingId=null; cToast('Updated'); loadRequests();
 }
@@ -751,7 +751,7 @@ async function addRequest(btn){
   const quantity=Math.max(1,parseInt(document.getElementById('req-qty').value)||1);
   const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
   const r=await fetch('/comp/api/requests',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:cName,item,quantity,split_with:splitWith})});
+    body:JSON.stringify({item,quantity,split_with:splitWith})});
   btn.innerHTML=orig; btn.disabled=false;
   if(!r.ok){cToast('Failed to add');return;}
   const d=await r.json().catch(()=>({}));
@@ -766,7 +766,7 @@ async function addRequest(btn){
 }
 async function deleteReq(id){
   if(!confirm('Remove this request?')) return;
-  const r=await fetch('/comp/api/requests/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,name:cName})});
+  const r=await fetch('/comp/api/requests/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   if(!r.ok){const d=await r.json().catch(()=>({}));cToast(d.detail||'Failed to remove');return;}
   loadRequests();
 }

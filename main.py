@@ -1096,6 +1096,29 @@ def current_profile(request: Request) -> dict:
     return profile
 
 
+def _me_name(request: Request) -> str:
+    """The caller's own name, spelled the way the older tables spell names.
+
+    attendance, comp_roster, comp_requests and pt_done_log all key people by
+    typed-in full name because they predate accounts (see _photo_map). Anything
+    that used to take that name from the request body takes it from here
+    instead, so the name a write is attributed to is the name of whoever is
+    signed in.
+
+    Every page already sends exactly this. That is the point: the pages were
+    never the problem, the endpoints were, and believing the body is how you get
+    an audit log that records whoever the caller felt like naming.
+    """
+    return " ".join(_public_profile(current_profile(request)).get("name", "").split())
+
+
+def _same_person(a: str, b: str) -> bool:
+    """Case-folded, whitespace-collapsed name comparison. Same rule as
+    _require_own_row: rows typed by hand before accounts existed spell people
+    inconsistently, and "shane whelan" is "Shane  Whelan"."""
+    return " ".join((a or "").split()).lower() == " ".join((b or "").split()).lower()
+
+
 # ── God mode ──────────────────────────────────────────────────────────────────
 # role == 'admin' is the capability: who is *allowed* to be elevated. god_mode is
 # whether they currently *are*. See migrations/004 for why they are two things.
@@ -2868,7 +2891,12 @@ async def pt_toggle(request: Request):
     b = await request.json()
     pid       = _plan_or_400(b.get("plan"))
     node_id   = (b.get("node_id")   or "").strip()
-    user_name = (b.get("user_name") or "Unknown").strip()
+    # Not b["user_name"]. pt_done_log is the append-only audit trail the whole
+    # build plan is trusted on, and taking the actor from the body meant any
+    # signed-in member could tick a task and sign it with somebody else's name.
+    # The page already sends this exact value; it was the endpoint that believed
+    # whatever arrived. Same bug as attendance and the Comp Hub shopping list.
+    user_name = _me_name(request) or "Unknown"
     if not node_id:
         raise HTTPException(400, "node_id required")
     done = bool(b.get("done"))
@@ -3425,6 +3453,16 @@ def _require_comp_admin(request: Request):
         raise HTTPException(403, "That's a committee-only action")
 
 
+def _current_runner() -> str:
+    """Whoever declared themselves the shop runner, or ''."""
+    try:
+        r = supabase.table("comp_meta").select("value").eq("key", "runner").execute()
+        return (r.data[0]["value"] if r.data else "") or ""
+    except Exception as e:
+        logger.error(f"[comp] runner lookup failed: {e}")
+        return ""
+
+
 @app.post("/comp/api/admin/verify")
 async def comp_admin_verify(request: Request):
     _require_comp_admin(request)
@@ -3473,10 +3511,12 @@ def _parse_quantity(raw) -> int:
 @app.post("/comp/api/requests")
 async def comp_requests_add(request: Request):
     b = await request.json()
-    name = b.get("name","").strip()
+    # Not b["name"]. Filing a request as somebody else put their name on a row
+    # that later becomes a debt in the expenses split.
+    name = _me_name(request)
     item = b.get("item","").strip()
     if not name or not item:
-        raise HTTPException(400, "name and item required")
+        raise HTTPException(400, "item required")
     split = [s.strip() for s in (b.get("split_with") or []) if s.strip()]
     shop_date = compute_shop_date()
     qty = _parse_quantity(b.get("quantity"))
@@ -3489,13 +3529,20 @@ async def comp_requests_add(request: Request):
     return {"ok": True, "shop_date": shop_date}
 
 
-def _get_own_pending_request(req_id, name: str) -> dict:
-    """Look up a request and confirm the caller owns it and it's still pending."""
+def _get_own_pending_request(request: Request, req_id) -> dict:
+    """Look up a request and confirm the caller owns it and it's still pending.
+
+    Ownership is decided here from the session, never from the body. It used to
+    take a `name` argument that the caller supplied, which meant passing
+    somebody else's name was enough to edit or delete their request: the same
+    bug, and the same shape of bug, as the attendance one _require_own_row was
+    written for. Hiding a control is not a permission.
+    """
     r = supabase.table("comp_requests").select("*").eq("id", req_id).execute()
     if not r.data:
         raise HTTPException(404, "Request not found")
     row = r.data[0]
-    if row["requester"] != name:
+    if not is_god(request) and not _same_person(row["requester"], _me_name(request)):
         raise HTTPException(403, "You can only edit or remove your own requests")
     if row["status"] != "pending":
         raise HTTPException(400, "Already bought. Can't change it now")
@@ -3505,11 +3552,10 @@ def _get_own_pending_request(req_id, name: str) -> dict:
 @app.post("/comp/api/requests/edit")
 async def comp_requests_edit(request: Request):
     b = await request.json()
-    name = (b.get("name") or "").strip()
     item = (b.get("item") or "").strip()
-    if not name or not item:
-        raise HTTPException(400, "name and item required")
-    _get_own_pending_request(b.get("id"), name)
+    if not item:
+        raise HTTPException(400, "item required")
+    _get_own_pending_request(request, b.get("id"))
     split = [s.strip() for s in (b.get("split_with") or []) if s.strip()]
     supabase.table("comp_requests").update(
         {"item": item, "split_with": split, "quantity": _parse_quantity(b.get("quantity"))}
@@ -3520,28 +3566,64 @@ async def comp_requests_edit(request: Request):
 @app.post("/comp/api/requests/delete")
 async def comp_requests_delete(request: Request):
     b = await request.json()
-    name = (b.get("name") or "").strip()
     req_id = b.get("id")
-
-    if not name:
-        raise HTTPException(400, "name required")
-
-    _get_own_pending_request(req_id, name)
+    _get_own_pending_request(request, req_id)
     supabase.table("comp_requests").delete().eq("id", req_id).execute()
     return {"ok": True}
 
 @app.post("/comp/api/requests/update")
 async def comp_requests_update(request: Request):
+    """Mark a request bought, price it, or put it back.
+
+    This had NO permission check of any kind, which was the worst of the three:
+    price, status and bought_by are the entire input to /comp/api/expenses, so
+    any signed-in member could mark anything bought at any price in anyone's
+    name and mint a debt owed to themselves.
+
+    The gate is the shop runner, because that is the flow the page actually
+    implements: somebody says "I'm going", shops, and enters prices when they
+    get back. A committee account can always do it, for the case where whoever
+    went shopping never declared themselves.
+
+    Forcing bought_by to the caller is not enough on its own — self-attribution
+    IS the attack, since bought_by is the person everyone else ends up owing.
+    That is why it is gated on being the runner rather than just stamped.
+    """
     b = await request.json()
+    req_id = b.get("id")
+    if req_id is None:
+        # Was a KeyError and a 500 before. The permission check below reads the
+        # row first, and a filter on a missing id is not a question worth asking.
+        raise HTTPException(400, "id required")
+    me  = _me_name(request)
+    row = (supabase.table("comp_requests").select("bought_by")
+           .eq("id", req_id).execute().data or [{}])[0]
+
+    # The third clause is the undo button. The page draws ↩️ for whoever is
+    # recorded as the buyer, and standing down as runner after a shop run is
+    # the normal end of one — without this, marking five things bought and then
+    # tapping Done locks you out of correcting any of them. It cannot be used to
+    # invent a debt: the row already names you as the person who paid.
+    if not (_is_comp_admin(request)
+            or _same_person(_current_runner(), me)
+            or _same_person(row.get("bought_by") or "", me)):
+        raise HTTPException(
+            403, "Only the shop runner can price a request. Tap \u201cI\u2019m going\u201d first")
+
     update = {k: b[k] for k in ("price", "status", "bought_by") if k in b}
     if not update:
         raise HTTPException(400, "nothing to update")
-    supabase.table("comp_requests").update(update).eq("id", b["id"]).execute()
+    # Never whoever the body names. A runner may price somebody else's request,
+    # which is the whole job, but the buyer recorded is the buyer.
+    # None is the undo path clearing the field, and must stay None.
+    if update.get("bought_by") is not None:
+        update["bought_by"] = me
+    supabase.table("comp_requests").update(update).eq("id", req_id).execute()
     # Only a status change is feed-worthy. Price edits and re-assignments happen
     # repeatedly on the same request and would drown everything else out.
     if update.get("status") == "bought":
         row = (supabase.table("comp_requests").select("item,requester")
-               .eq("id", b["id"]).execute().data or [{}])[0]
+               .eq("id", req_id).execute().data or [{}])[0]
         log_activity("comp", update.get("bought_by") or "Someone",
                      "bought", row.get("item") or "")
     return {"ok": True}
@@ -3568,10 +3650,25 @@ async def comp_runner_get():
 
 @app.post("/comp/api/runner")
 async def comp_runner_set(request: Request):
+    """Declare yourself the shop runner, or stand down.
+
+    Also took a bare name from the body, which mattered more once the runner
+    became the gate on pricing above: naming somebody else was a way to hand
+    yourself, or take from them, the ability to write prices.
+
+    You may put yourself up and you may clear the slot. A committee account can
+    clear anyone, which is what the Unassign button in the page is.
+    """
     b = await request.json()
-    supabase.table("comp_meta").upsert(
-        {"key": "runner", "value": (b.get("name") or "").strip()}
-    ).execute()
+    want = (b.get("name") or "").strip()
+    if want and not _is_comp_admin(request) and not _same_person(want, _me_name(request)):
+        raise HTTPException(403, "You can only put yourself up as the shop runner")
+    if not want and not _is_comp_admin(request):
+        # Standing down is yours; unassigning somebody else is the committee's.
+        current = _current_runner()
+        if current and not _same_person(current, _me_name(request)):
+            raise HTTPException(403, "Only the shop runner can stand themselves down")
+    supabase.table("comp_meta").upsert({"key": "runner", "value": want}).execute()
     return {"ok": True}
 
 

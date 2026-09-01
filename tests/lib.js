@@ -79,17 +79,44 @@ async function open(path, opts = {}) {
       // close. It passes on a fast machine and fails on a loaded runner, which
       // is the same slower-runner story waitFor() below was written for.
       //
-      // A promise that never settles is the right shape here: the page's await
-      // simply never resumes, so no page code runs after its window closed. The
-      // process is about to exit anyway.
+      // A promise that never settles is the right shape: the page's await
+      // simply never resumes, so no page code runs after its window closed.
+      // Rejecting instead would be wrong, because a rejection still resumes the
+      // page — straight into whatever catch or finally it wrote, which for the
+      // dashboard is the `finally { reveal() }` that started all this.
+      //
+      // **Guarding fetch() alone is not enough**, which is the trap this fell
+      // into the first time. Reading a response is two promises, and the app
+      // writes both: `.then(r => r.json())` in shared.js. Guarding only the
+      // outer one leaves the window between the headers arriving and the body
+      // being parsed, and a close landing in there still reaches page code. So
+      // the response is handed back wrapped, with every body-reading method
+      // guarded the same way.
       const dead = () => new Promise(() => {});
-      w.fetch = (u, o = {}) => fetch(new URL(u, BASE).href, {
+      const guard = p => p.then(
+        v => (closed ? dead() : v),
+        e => (closed ? dead() : Promise.reject(e)),
+      );
+      // A plain object, not a subclass or a Proxy over the real Response:
+      // Response's accessors are brand-checked, so anything that inherits from
+      // one and is not one throws on .status. Nothing in this app asks whether
+      // a response `instanceof Response`; it reads these fields and calls one
+      // of these methods.
+      const wrap = res => ({
+        ok: res.ok, status: res.status, statusText: res.statusText,
+        headers: res.headers, url: res.url, redirected: res.redirected,
+        type: res.type, bodyUsed: res.bodyUsed,
+        json: () => guard(res.json()),
+        text: () => guard(res.text()),
+        blob: () => guard(res.blob()),
+        arrayBuffer: () => guard(res.arrayBuffer()),
+        formData: () => guard(res.formData()),
+        clone: () => wrap(res.clone()),
+      });
+      w.fetch = (u, o = {}) => guard(fetch(new URL(u, BASE).href, {
         ...o,
         headers: { ...(o.headers || {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) },
-      }).then(
-        res => (closed ? dead() : res),
-        err => (closed ? dead() : Promise.reject(err)),
-      );
+      })).then(res => (closed ? dead() : wrap(res)));
       w.Element.prototype.scrollIntoView = function () {};
       w.confirm = () => false;
       w.alert = () => {};

@@ -1,5 +1,7 @@
 import os
 import re
+import asyncio
+import threading
 import json
 import time
 import uuid
@@ -19,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 import httpx
 from supabase import create_client, Client
+from concurrent.futures import ThreadPoolExecutor
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
@@ -37,6 +40,47 @@ if not SUPABASE_SERVICE_KEY:
 
 # Everything the backend does server-side goes through the service key.
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_KEY)
+
+# ── One Supabase connection per tile worker ─────────────────────────────────
+# The client above wraps a single HTTP/2 connection, and it is not something
+# several threads can drive at once. Doing that made the server hang up mid
+# request:
+#
+#   [dashboard] tile failed: <ConnectionTerminated error_code:1, last_stream_id:9>
+#   [auth] profile lookup failed: [Errno 104] Connection reset by peer
+#
+# The second line is why this matters more than one slow page. Losing the
+# connection broke whatever else was using it, including authentication on
+# unrelated requests, so a user was refused as a non-admin because a dashboard
+# tile was being read at the same moment.
+#
+# So a thread that runs tiles gets a connection of its own and shares nothing.
+# Building one costs about 16ms and _tile_pool is bounded, so at most
+# _TILE_WORKERS of them are ever built, once each, and reused after that.
+#
+# Deliberately opt-in rather than "a client per thread". uvicorn runs sync
+# endpoints in a threadpool of its own, and quietly giving all forty of those
+# threads their own client is a much larger change than this one. `own` is set
+# by _tile and nowhere else, so every other caller keeps the global exactly as
+# before, on the main thread and off it.
+_tile_local = threading.local()
+
+_TILE_WORKERS = 8
+_tile_pool = ThreadPoolExecutor(max_workers=_TILE_WORKERS, thread_name_prefix="tile")
+
+
+def sb() -> Client:
+    """The Supabase client this caller should use.
+
+    The global one, unless the caller is a tile worker, which gets its own.
+    """
+    if not getattr(_tile_local, "own", False):
+        return supabase
+    client = getattr(_tile_local, "client", None)
+    if client is None:
+        client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_KEY)
+        _tile_local.client = client
+    return client
 
 # ── Uploads ───────────────────────────────────────────────────────────────────
 # Profile photos live on this server's disk, not in Supabase Storage. They are
@@ -2495,9 +2539,9 @@ def _photo_map() -> dict:
     reason for a list of people to fail to render.
     """
     try:
-        rows = supabase.table("profiles").select("id,first_name,last_name").execute().data or []
+        rows = sb().table("profiles").select("id,first_name,last_name").execute().data or []
         details = {d.get("id"): d for d in
-                   (supabase.table("profile_details").select("id,photo_ext,photo_rev")
+                   (sb().table("profile_details").select("id,photo_ext,photo_rev")
                     .execute().data or [])}
     except Exception as e:
         logger.debug(f"[profiles] photo map unavailable: {e}")
@@ -2567,7 +2611,7 @@ def upsert_attendance(name: str, target_date: str, status: str,
 
 
 def get_attendance_for_date(target_date: str) -> list:
-    result = supabase.table("attendance") \
+    result = sb().table("attendance") \
         .select("*") \
         .eq("date", target_date) \
         .execute()
@@ -3636,6 +3680,10 @@ async def comp_expenses():
 # Each tile is computed independently: a missing table or a failing query
 # degrades that one tile to null rather than blanking the whole dashboard.
 def _tile(fn):
+    # Marks this thread as one that must not touch the shared connection. Set
+    # here rather than at pool creation because it is the only thing that makes
+    # sb() hand out a private client, and this is the only place that needs it.
+    _tile_local.own = True
     try:
         return fn()
     except Exception as e:
@@ -3697,7 +3745,7 @@ def _attendance_tile() -> dict:
 def _flowcharts_tile() -> dict:
     """How many charts are on the go. The card is a door to a list, not to one
     chart, so the useful number is the size of the list."""
-    rows = supabase.table("plans").select("id,archived").execute().data or []
+    rows = sb().table("plans").select("id,archived").execute().data or []
     live = len([r for r in rows if not r.get("archived")])
     if not rows:
         return {"charts": 0, "detail": "no charts yet"}
@@ -3709,9 +3757,9 @@ def _flowcharts_tile() -> dict:
 def _pt_tile() -> dict:
     # One chart's numbers, not all charts mashed together. An empty
     # next-season plan would otherwise drag the live build's figure to nonsense.
-    nodes = supabase.table("pt_nodes").select("id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
-    done  = supabase.table("pt_done").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
-    prog  = supabase.table("pt_progress").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
+    nodes = sb().table("pt_nodes").select("id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
+    done  = sb().table("pt_done").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
+    prog  = sb().table("pt_progress").select("node_id").eq("plan_id", DASHBOARD_PLAN).execute().data or []
     total = len(nodes)
     pct   = round(100 * len(done) / total) if total else 0
     return {
@@ -3724,7 +3772,7 @@ def _pt_tile() -> dict:
 
 
 def _harness_tile() -> dict:
-    r = supabase.table("harness_doc").select("updated_at") \
+    r = sb().table("harness_doc").select("updated_at") \
         .eq("id", HARNESS_DOC_ID).execute()
     if not r.data:
         return {"updated_at": None, "detail": "not started"}
@@ -3733,8 +3781,8 @@ def _harness_tile() -> dict:
 
 
 def _comp_tile() -> dict:
-    reqs   = supabase.table("comp_requests").select("status").execute().data or []
-    events = supabase.table("schedule_events").select("id").execute().data or []
+    reqs   = sb().table("comp_requests").select("status").execute().data or []
+    events = sb().table("schedule_events").select("id").execute().data or []
     pending = len([r for r in reqs if r.get("status") == "pending"])
     if pending:
         detail = f"{pending} request{'s' if pending != 1 else ''} pending"
@@ -3808,14 +3856,14 @@ def _ts_key(ts) -> float:
 
 
 def _pt_activity(limit: int) -> list:
-    rows = supabase.table("pt_done_log").select("id,plan_id,node_id,done,user_name,created_at") \
+    rows = sb().table("pt_done_log").select("id,plan_id,node_id,done,user_name,created_at") \
         .order("created_at", desc=True).limit(limit).execute().data or []
     if not rows:
         return []
     # Node ids are only unique within a plan, so the label lookup is keyed by
     # both, or a 26/27 node could borrow a 25/26 node's name in the feed.
     labels = {(n.get("plan_id"), n["id"]): n.get("label") for n in
-              (supabase.table("pt_nodes").select("plan_id,id,label").execute().data or [])}
+              (sb().table("pt_nodes").select("plan_id,id,label").execute().data or [])}
     return [{
         # id + source are what the feed's delete needs to name one line out of
         # two merged tables. They are not secret, since every row is already on the
@@ -3835,7 +3883,7 @@ def _pt_activity(limit: int) -> list:
 
 
 def _general_activity(limit: int) -> list:
-    rows = supabase.table("activity_log").select("id,applet,actor,verb,subject,created_at") \
+    rows = sb().table("activity_log").select("id,applet,actor,verb,subject,created_at") \
         .order("created_at", desc=True).limit(limit).execute().data or []
     return [{**r, "source": "activity_log"} for r in rows]
 
@@ -3856,19 +3904,37 @@ def _activity(limit: int = 8) -> list:
 
 @app.get("/api/dashboard")
 async def api_dashboard():
+    # Seven independent tiles, each a few blocking round trips. Run one after
+    # another they came to about 700ms, which is most of the wait the dashboard
+    # sits behind its veil for. Nothing here depends on anything else here.
+    #
+    # A bounded pool, not asyncio.to_thread, for two reasons. It caps how many
+    # private clients exist at _TILE_WORKERS, and it keeps tile work off the
+    # threadpool uvicorn runs sync endpoints in, so a slow dashboard cannot eat
+    # the workers another request needs.
+    #
+    # Each call is still wrapped in _tile, so a tile that raises is still None
+    # and the rest of the dashboard still draws. gather never sees an exception
+    # and needs no return_exceptions.
+    loop = asyncio.get_running_loop()
+    countdown, activity, attendance, flowcharts, pt, harness, comp = await asyncio.gather(*(
+        loop.run_in_executor(_tile_pool, _tile, fn)
+        for fn in (_countdown, _activity, _attendance_tile, _flowcharts_tile,
+                   _pt_tile, _harness_tile, _comp_tile)
+    ))
     return {
         # Dublin, not the container's clock, which is UTC, so date.today()
         # here would report yesterday between midnight and 1am in summer,
         # disagreeing with the day the tiles below are actually describing.
         "date":      datetime.now(TEAM_TZ).date().isoformat(),
-        "countdown": _tile(_countdown),
-        "activity":  _tile(_activity) or [],
+        "countdown": countdown,
+        "activity":  activity or [],
         "tiles": {
-            "attendance": _tile(_attendance_tile),
-            "flowcharts": _tile(_flowcharts_tile),
-            "pt":         _tile(_pt_tile),
-            "harness":    _tile(_harness_tile),
-            "comp":       _tile(_comp_tile),
+            "attendance": attendance,
+            "flowcharts": flowcharts,
+            "pt":         pt,
+            "harness":    harness,
+            "comp":       comp,
         },
     }
 

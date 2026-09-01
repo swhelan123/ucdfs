@@ -363,7 +363,89 @@ This inverts the adoption problem. Instead of asking people to come to the app,
 the app goes to where they already are, and every message is a deep link back.
 It's one webhook URL in an env var and a small `notify()` helper.
 
+**Revised 2026-09-01: build the seam, not the channel.** "Teams" here is an
+assumption from July that nobody has re-checked, and it is exactly the kind of
+assumption that went stale on the Notion entry. The decision is a `notify()`
+helper that every applet calls from day one and that **goes nowhere until a
+channel is configured** — the same posture as `notify-failure` on the homeserver,
+which has been sitting inert and harmless since the keepalive work. Picking
+between Teams webhooks, the ntfy container already running here, and Outlook
+digests is then a separate, cheap, reversible decision made when someone knows
+where the team actually reads things.
+
+Also **downgraded from a hard dependency of Purchase Requests to a strong
+nice-to-have**, by the €100 threshold. The dependency argument assumed two
+approvers on every request, so a €6 bolt order stalled until two people acted.
+One captain clearing their own queue is a habit that survives without a push.
+
 ---
+
+## Portal tour  ❓  *(designed 2026-09-01, build first)*
+
+A `?` in the header of every page that opens a card-by-card walkthrough, and
+runs itself once on a first visit. **This already exists** — `pt.html` has it,
+five cards, dots, Back/Next/Skip, reopened by the `?` in its header. The job is
+to lift it out of that one page, not to invent it.
+
+Corrects an earlier reading of "the onboarding thing": `UCDFS.onboard()` in
+shared.js is the *subteam question*, a different feature. The tour is the `?`.
+(Easy to miss by grep: `TOUR_KEY` is a const, so searching for `localStorage`
+with a string literal walks straight past it.)
+
+### What moves and what doesn't
+
+The **engine** moves to `shared.js`, beside `onboard()`. The **steps stay with
+the page** — each declares its own list. `pt.html`'s five cards are good
+*because* they are about that canvas; concatenating every applet's steps into
+one portal mega-tour would produce something nobody finishes.
+
+So there are two kinds, and they should not be merged:
+
+- **the portal tour** — what this site is, where things live, what the grid is.
+  Runs on the dashboard on first open.
+- **per-applet tours** — pt has one already. Harness and Comp want one.
+
+The engine has to **carry its own CSS**, the way `onboard()` does through
+`ensureRuntimeStyles()`. The canvas tools do not load `shared.css` and the `?`
+has to look the same on them as everywhere else.
+
+### First-run behaviour, settled 2026-09-01
+
+**Skippable, with the `?` to bring it back**, and a versioned `localStorage` key
+per tour. Straight copy of the pt.html posture, including its reasoning, which is
+already written at the top of that block and is right:
+
+> Seen-ness is a per-browser preference and not identity: getting it wrong shows
+> somebody a tour twice, which is why it does not need a column, a migration or a
+> round trip. The key is versioned so rewriting the steps can show them again.
+
+> A tutorial you can only ever see once is one people dismiss by accident and
+> then can't find.
+
+Consequence accepted deliberately: **this does not record who has been
+onboarded.** A new browser re-shows it and nothing is auditable. That is correct
+for orientation, and would be wrong the day any of it carries safety induction or
+tools training — those are records and want a column on the profile. Do not let
+the tour quietly grow into that; add the record separately when it is needed.
+
+### The stacking problem is the actual work
+
+A brand-new member on first sign-in currently meets the subteam overlay, then a
+profile nudge. Add a portal tour and three overlays race each other on the same
+page load, in whatever order their fetches land.
+
+It needs to be **one queue with a fixed order**, not three features that each
+independently decide to appear:
+
+    1. subteam question   identity, one tap, already blocks nothing
+    2. portal tour        orientation
+    3. profile nudge      can wait, and already sends people off-page
+
+`onboard()` already chains 1 → 3 internally, so this is inserting a step into an
+existing sequence rather than adding a third caller. Note `obStarted` and the
+`obCallbacks` array: the reason that flag exists is that the dashboard calls
+`onboard()` twice and without it the overlay gets built on top of itself. The
+same trap is waiting for whatever runs the tour.
 
 ## Purchase Requests & Reimbursements  🧾  *(designed 2026-09-01, not built)*
 

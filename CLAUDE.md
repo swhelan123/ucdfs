@@ -40,6 +40,7 @@ static/
   pt.html             full-screen canvas tool: draws any one chart, at /plan/<id>
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
+scripts/              ops, not app code: seed-nonprod.sh, supabase-keepalive.sh
 tests/                see tests/README.md
 ```
 
@@ -88,7 +89,7 @@ cards" below for why the line falls there and not somewhere tidier.
 - `plan`: for a card that opens one specific chart: which chart. Only last
   season's plans use it now; the feed reads it to badge their ticks.
 - `group`: which dashboard block the card sits in. Ids come from
-  `APPLET_GROUPS`; omitting it means the main `tools` grid. See "Dashboard
+  `dashboard_groups`; omitting it means the **first** block. See "Dashboard
   layout" below.
 
 Current applet ids: `attendance`, `profiles`, `flowcharts`, `comp`, `admin`, and
@@ -104,15 +105,52 @@ Note that removing its registry entry would **not** remove the tool. The
 
 ## Dashboard layout
 
-`APPLET_GROUPS` in `main.py` is the list of blocks and their headings, sent to
-the dashboard with the cards. Cards carry a `group`; a card without one lands in
-`tools`, so an entry that forgets to say goes where people are already looking
-rather than into an archive nobody scrolls to.
+The blocks are rows in `dashboard_groups` (`migrations/011`): an id, a heading
+and a position, managed from `/admin`. `DEFAULT_GROUPS` in `main.py` is the
+**fallback**, not the source. `_groups()` answers with it when the table is
+missing *or empty*, and it carries the ids 011 seeds, so a site running ahead of
+its migration still draws every card under a sensible heading instead of
+collapsing six blocks into one.
+
+Empty matters as much as missing: every card carries a group id, so with no
+blocks at all there is nowhere for any of them to render, and a dashboard with
+no cards looks exactly like one that failed to load.
+
+Blocks are `apps`, `electronics`, `design`, `documents`, `reference`, `archive`.
+The shortcuts are split by subject rather than lumped under one "Shortcuts"
+heading. Sparse today, deliberately: the point of managing links from `/admin`
+is that there will be more of them, and a heading to file a new one *under* is
+what stops the twentieth landing at the bottom of an undifferentiated list.
+
+**The first block is special twice over.** It is where a card with no `group`
+of its own lands, and the dashboard draws it into the fixed grid under the
+filter chips rather than under a generated heading. Reordering the blocks
+changes both, which is why `/api/admin/groups/reorder` is not cosmetic the way
+the links one is.
+
+- **A block can only be deleted once it is empty, and the count includes
+  applets.** Applets are code: an admin who deleted the block a registry entry
+  names could not put it back from the UI, and the entry would render under a
+  heading nobody chose. `_cards_by_group()` mirrors `appletGroup()` in
+  `dashboard.html` exactly, fallback included, so the count is of where cards
+  will actually be drawn.
+- **The last block cannot be deleted at all.** `_groups()` falls back when the
+  table is empty so the dashboard survives it, but then the admin screen and the
+  site disagree about what exists, which is worse than refusing.
+- **Only the heading is editable.** An id is what every card in a block points
+  at, so changing one would empty the block and scatter its cards into the
+  first. Ids are minted server-side (`grp_…`), like `link_…` and `chart_…`.
+- There is **no foreign key** from `links.group_id`. Same call favourites make:
+  a retired block should not need a migration to clean up after, and
+  `appletGroup()` already falls back to the first block for an id naming
+  nothing. That fallback is the safety net; the delete rail is the mechanism.
 
 A block with nothing in it **renders nothing, heading included**. A heading over
 empty space reads as a page that failed to load, and the subteam filter can
 easily empty a block. `tests/suite-pages.js` covers the dashboard drawing clean;
-the grouping logic is `render()` in `dashboard.html`.
+the grouping logic is `render()` in `dashboard.html`. This is why an empty block
+in the admin list is not a mistake: it is one nobody has filed anything under
+yet, and it costs the dashboard nothing.
 
 `UCDFS.applets()`, `UCDFS.appletGroups()` and `UCDFS.favourites()` share one
 cached `/api/applets` response, so asking for all three is still a single
@@ -694,11 +732,25 @@ unconditionally by the code that follows it, so non-prod gets the SQL, then CI
 runs, then prod gets the SQL, then prod gets the image. The other order 500s
 every chart endpoint.
 
-010 is gentler about it and still wants the same order. `_link_rows()` returns
-`[]` when the table is missing, so a site running ahead of its migration loses
-its shortcut cards rather than its dashboard. That is degraded, not broken, but
-it is still eight cards missing from the homepage with nothing on screen to say
-why. Apply it first.
+010 and 011 are gentler about it and still want the same order. `_link_rows()`
+returns `[]` when the links table is missing, so a site running ahead of its
+migration loses its shortcut cards rather than its dashboard, and `_groups()`
+falls back to `DEFAULT_GROUPS` when the blocks table is missing, so the headings
+still appear. Both are degraded, not broken, but that is still eight cards
+missing from the homepage with nothing on screen to say why. Apply them first.
+
+**Neither of 010 and 011 depends on the other having run**, so the order between
+those two does not matter. There is no foreign key between them, each falls back
+independently in `main.py`, and 011's rewrite of `links.group_id` sits behind a
+`to_regclass('public.links')` guard. That guard is not defensive tidiness: a bare
+`update` against a missing table is an error, and an error there would abandon
+the blocks 011 exists to create, so the file would fail for a reason that has
+nothing to do with what it does.
+
+011 re-files the cards 010 seeded rather than 010 being edited to seed them
+correctly. 010 shipped and was applied, which makes it a snapshot of what ran;
+the block it used, `tools`, is not seeded by 011 at all, because it was never a
+subject but "the main grid", and the *first* block is what that means now.
 
 **009 turns on RLS for `plans`, which 007 created without it.** Every other
 table-creating migration enables it in the same file; that one did not, so it
@@ -728,6 +780,45 @@ flag that relaxes it. It reads from a `UCDFS_ENV=prod` file and writes only to a
 are the same project, so it cannot overwrite the live manufacturing plan with
 whatever state staging had drifted into. Re-runnable
 (`Prefer: resolution=merge-duplicates`).
+
+### Keeping the databases awake
+
+A free-tier Supabase project pauses after seven days with no activity, and the
+free tier does not let you schedule the restore — somebody opens the dashboard
+and presses a button. Both projects are exposed to this. Prod looks safe because
+the site gets used most weeks, but exam periods, the summer, and the gap between
+one committee and the next are all longer than seven days. Non-prod is worse,
+since dev and stage are only up when somebody is working on the site.
+
+`scripts/supabase-keepalive.sh` queries `comp_meta` on both projects. It is
+scheduled by a **user systemd timer on the homeserver**, daily, `Persistent=true`
+so a run missed while the box is off fires when it comes back:
+
+```bash
+systemctl --user list-timers ucdfs-keepalive.timer
+journalctl --user -u ucdfs-keepalive -n 30
+```
+
+The units are `~/.config/systemd/user/ucdfs-keepalive.{service,timer}` and are
+**not in this repo** — they carry absolute paths and are specific to that
+machine. Nothing in CI or `deploy.sh` runs this script.
+
+**It uses the anon key, and expects to read nothing.** RLS is on with zero
+policies everywhere, so `[]` is the pass condition and a row is the alarm — the
+script fails the run if the anon key ever reads `comp_meta`, which makes it a
+daily check on the property that makes that key safe to hold. The query still
+counts as activity either way: RLS is enforced inside Postgres, so the SQL runs
+whether or not a row survives it. Do not "fix" an empty result by reaching for
+the service key. A credential that bypasses RLS has no business in a job that
+runs unattended every day, and the empty array is the point.
+
+A keepalive nobody looks at is worse than none, because it makes you believe you
+are covered. So the unit carries `OnFailure=notify-failure@%n.service`, a
+generic push notifier on the homeserver that any unit can point at, not
+something this project owns. **It is inert until `~/.config/notify/ntfy.env`
+exists** — until then a failure is only a red unit in the journal, and the
+notifier logs that it had nothing to send. Setup is in the header of
+`~/.local/bin/notify-failure`.
 
 ## How a change reaches the site
 

@@ -28,7 +28,7 @@ is unavailable, so **everything runs in Docker**.
 main.py               all backend: routes, auth, applet registry, Supabase access
 static/
   shared.css          design system: tokens + components for card-based pages
-  shared.js           UCDFS runtime: identity, applet registry, toast helpers
+  shared.js           UCDFS runtime: identity, applet registry, first-run overlays, toasts
   dashboard.html      the homepage, at /
   login.html          the sign-in screen
   attendance.html     card-based applet
@@ -490,12 +490,50 @@ the database row the middleware already loaded.
 ### shared.js must carry its own CSS
 
 Anything `shared.js` injects into the page (the override banner, the
-first-sign-in overlay) is styled from a `<style id="ucdfs-runtime-css">` block
+first-sign-in overlay, the tour) is styled from a `<style id="ucdfs-runtime-css">` block
 inside that file, **not** from `shared.css`. The canvas tools (pt, harness) load
 `shared.js` and deliberately not `shared.css`, so a rule that lives only in the
 stylesheet renders as raw unstyled markup on exactly the two pages nobody thinks
 to check. Colours are written `var(--token, literal)` so they pick up the design
 system on a card page and still look right without it.
+
+### Only one overlay at a time, and shared.js owns the queue
+
+`shared.js` can put three different things on screen unprompted: the subteam
+question, the profile nudge it chains into, and `UCDFS.tour()`. A brand-new
+member's first sign-in triggers all three.
+
+**They must not each decide for themselves when to appear.** Each waits on a
+round trip before it knows whether it has anything to show, so left alone they
+race on whichever response lands first, and the loser draws underneath a modal
+that is already up. The order is fixed and deliberate: identity, then
+orientation, then the profile nudge, which already sends people off-page anyway.
+
+`whenOnboardingIdle()` is the join point. It returns a promise that settles once
+the subteam step is done with the screen, and **null means idle already** — the
+common case is a member who answered weeks ago, and they should not wait on a
+promise to find that out. Anything added later that wants the screen on load
+joins this queue rather than calling `document.body.appendChild` and hoping.
+
+This is not theoretical: with the gate removed, `tests/suite-pages.js` fails on
+*"the tour does not stack on top of it"* — which is the whole reason that check
+sits next to a positive control. On its own, "the tour did not open" passes just
+as well when the tour is broken.
+
+**`UCDFS.tour()` is the engine, and the steps stay with the page.** `pt.html`
+declares its own five cards and hands over its own `?` button, because the
+canvas tools style one to match their header. Everything else gets a `?`
+injected into `.header-inner`. Folding every applet's steps into one portal tour
+would make something nobody reaches the end of.
+
+Seen-ness is `localStorage`, keyed `ucdfs_tour_<key>` and versioned by
+convention, because it is a per-browser preference and not identity: getting it
+wrong shows somebody a tour twice, which is not worth a column, a migration and
+a round trip. **The accepted cost is that this records nothing about who has
+been onboarded** — a new browser shows it again and none of it is auditable.
+Correct for orientation, wrong the day any of it carries safety induction or
+tools training. Those are records and want a column on the profile. Add that
+separately rather than growing the tour into it.
 
 ### Hiding a control is not a permission
 

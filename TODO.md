@@ -363,6 +363,256 @@ This inverts the adoption problem. Instead of asking people to come to the app,
 the app goes to where they already are, and every message is a deep link back.
 It's one webhook URL in an env var and a small `notify()` helper.
 
+**Revised 2026-09-01: build the seam, not the channel.** "Teams" here is an
+assumption from July that nobody has re-checked, and it is exactly the kind of
+assumption that went stale on the Notion entry. The decision is a `notify()`
+helper that every applet calls from day one and that **goes nowhere until a
+channel is configured** — the same posture as `notify-failure` on the homeserver,
+which has been sitting inert and harmless since the keepalive work. Picking
+between Teams webhooks, the ntfy container already running here, and Outlook
+digests is then a separate, cheap, reversible decision made when someone knows
+where the team actually reads things.
+
+Also **downgraded from a hard dependency of Purchase Requests to a strong
+nice-to-have**, by the €100 threshold. The dependency argument assumed two
+approvers on every request, so a €6 bolt order stalled until two people acted.
+One captain clearing their own queue is a habit that survives without a push.
+
+---
+
+## Portal tour  ❓  *(designed 2026-09-01, build first)*
+
+A `?` in the header of every page that opens a card-by-card walkthrough, and
+runs itself once on a first visit. **This already exists** — `pt.html` has it,
+five cards, dots, Back/Next/Skip, reopened by the `?` in its header. The job is
+to lift it out of that one page, not to invent it.
+
+Corrects an earlier reading of "the onboarding thing": `UCDFS.onboard()` in
+shared.js is the *subteam question*, a different feature. The tour is the `?`.
+(Easy to miss by grep: `TOUR_KEY` is a const, so searching for `localStorage`
+with a string literal walks straight past it.)
+
+### What moves and what doesn't
+
+The **engine** moves to `shared.js`, beside `onboard()`. The **steps stay with
+the page** — each declares its own list. `pt.html`'s five cards are good
+*because* they are about that canvas; concatenating every applet's steps into
+one portal mega-tour would produce something nobody finishes.
+
+So there are two kinds, and they should not be merged:
+
+- **the portal tour** — what this site is, where things live, what the grid is.
+  Runs on the dashboard on first open.
+- **per-applet tours** — pt has one already. Harness and Comp want one.
+
+The engine has to **carry its own CSS**, the way `onboard()` does through
+`ensureRuntimeStyles()`. The canvas tools do not load `shared.css` and the `?`
+has to look the same on them as everywhere else.
+
+### First-run behaviour, settled 2026-09-01
+
+**Skippable, with the `?` to bring it back**, and a versioned `localStorage` key
+per tour. Straight copy of the pt.html posture, including its reasoning, which is
+already written at the top of that block and is right:
+
+> Seen-ness is a per-browser preference and not identity: getting it wrong shows
+> somebody a tour twice, which is why it does not need a column, a migration or a
+> round trip. The key is versioned so rewriting the steps can show them again.
+
+> A tutorial you can only ever see once is one people dismiss by accident and
+> then can't find.
+
+Consequence accepted deliberately: **this does not record who has been
+onboarded.** A new browser re-shows it and nothing is auditable. That is correct
+for orientation, and would be wrong the day any of it carries safety induction or
+tools training — those are records and want a column on the profile. Do not let
+the tour quietly grow into that; add the record separately when it is needed.
+
+### The stacking problem is the actual work
+
+A brand-new member on first sign-in currently meets the subteam overlay, then a
+profile nudge. Add a portal tour and three overlays race each other on the same
+page load, in whatever order their fetches land.
+
+It needs to be **one queue with a fixed order**, not three features that each
+independently decide to appear:
+
+    1. subteam question   identity, one tap, already blocks nothing
+    2. portal tour        orientation
+    3. profile nudge      can wait, and already sends people off-page
+
+`onboard()` already chains 1 → 3 internally, so this is inserting a step into an
+existing sequence rather than adding a third caller. Note `obStarted` and the
+`obCallbacks` array: the reason that flag exists is that the dashboard calls
+`onboard()` twice and without it the overlay gets built on top of itself. The
+same trap is waiting for whatever runs the tour.
+
+## Purchase Requests & Reimbursements  🧾  *(designed 2026-09-01, not built)*
+
+**Deliberately not a generalisation of `comp_requests`.** That table is a shop
+run for a competition weekend: it splits one cost between several people and
+computes who owes whom. This is the opposite shape — the club owes the buyer,
+there is exactly one creditor, and nobody owes anybody. Sharing a table would
+drag the split/debt logic into something that must never have it. The Tier 2
+"Inventory & Orders" entry below claims `comp_requests` is 80% of this. It is
+not; see the correction there.
+
+### Two documents, not one
+
+The mistake every homegrown version of this makes is merging them:
+
+| | Purchase Request | Reimbursement Claim |
+|---|---|---|
+| asks | "may I buy this?" | "pay me back for this" |
+| filed | *before* money moves | *after* money moves |
+| by | the member who needs it | the person out of pocket |
+| approval means | authority to commit funds | the spend was real |
+| needs | a justification | a receipt |
+
+**The requester and the claimant are usually different people** — a member asks
+for a part, a captain buys it on their own card. That is the whole reason these
+cannot be one record. The link is many-to-one: one Amazon order settles five
+approved requests.
+
+### Approval: one threshold, then dual authorisation
+
+Set by the team 2026-09-01. There is still no budget; this is a **delegation of
+authority**, which is a different thing and does not need one.
+
+| Amount | Who approves |
+|---|---|
+| **under €100** | captain of the requester's department, alone |
+| **€100 and over** | department captain **first**, then the Ops Captain |
+
+Department first above the line, so the Ops Captain's queue only ever holds
+things a department has already backed. The two are asking different questions —
+*does this team need it?* and *should the club spend this?* — and neither can
+answer the other's. That is why real systems separate line approval from
+financial approval, and it is the whole reason the second slot exists.
+
+**€100 is data, not a constant.** It will be argued about, and changing it must
+not be a deploy. Same call migrations 010 and 011 made for links and dashboard
+blocks.
+
+**A captain may authorise their own spend under €100.** Deliberate, and the
+reason the threshold exists: a captain who decides an €80 part is necessary
+should buy it, not wait on a queue. Above the line, no self-approval — the Ops
+Captain slot is always a second person.
+
+**The fallthrough rule**, which applies to every slot that is not a captain
+self-approving below the line: both slots must be two *distinct* people, neither
+of them the requester. Where a slot would land on the requester, or on whoever
+already filled the other, it falls through to any other captain. One rule, no
+special cases, and it covers all three collapses: an Ops member's request (both
+slots would be the Ops Captain), the Ops Captain's own request (no slots), and a
+captain requesting a €100+ item for their own department.
+
+**The threshold is checked twice, against the estimate and then the actual.**
+Approved at €90 and the receipt says €130, it crossed the line after the fact,
+so it needs the Ops Captain at claim time before it is paid. Without this the
+threshold is advisory: request €90, buy €300, claim it. This is also the general
+rule stated under Tables — an amount changing after approval reopens it — and
+this is the case that makes it matter.
+
+**What replaces the gate below €100 is visibility, not nothing.** Self-approved
+captain spend is a distinct category in the treasurer's ledger rather than a
+silent row, and it appears in the weekly digest. That is how expense policy
+works everywhere above an approval line: spot-checkable after the fact, not
+pre-gated. Worth watching for the standard dodge — one €160 order filed as two
+€80 requests — which needs no rule, only a ledger grouped by requester and week
+so it is obvious.
+
+### Captaincy has to become a real permission
+
+There is no "captain of a department" in the schema, and `profile_details.role_label`
+must not become one — 003 says it outright: *"Relevance, never permission."*
+Someone typing "Captain" into their profile cannot gain approval rights.
+
+So: a mapping of subteam → account, plus a flag for the ops-captain slot, both
+editable from `/admin`. **Data, not code.** `SUBTEAMS` is a Python list in
+main.py and captains change every September; handing over the role must not be
+a deploy.
+
+### Tables
+
+    purchase_requests     PR-2627-014 · requester · item · why · qty ·
+                          est. cost · supplier link · needed-by ·
+                          subsystem · status
+    purchase_events       append-only: actor, action, from → to status, at
+    reimbursements        RC-2627-003 · claimant · total · currency ·
+                          fx_rate_used · receipts · paid_at · paid_ref
+    reimbursement_lines   line → purchase_request (nullable) · actual cost
+
+`purchase_events` is the same call `activity_log` (002) made, and the audit log
+is the specific thing this file already credits for why the PT plan survived and
+the Notion tracker did not. Approvals are appended, never updated. An amount
+changing after approval reopens it.
+
+### What a member sees
+
+Five fields, one screen: what, what for, how many and roughly how much, link,
+needed by. Subsystem prefills from their subteam. Routing, the fallthrough rule
+and the event log are all invisible to them.
+
+Then the part that decides whether people keep filing requests: **a timeline
+with names in it.** "Waiting on Alexandra" beats "Pending approval"; "Bought by
+Cian, 14 Sep, €38.40, claim RC-003, unpaid" beats a status chip. The universal
+complaint about corporate procurement is *where has my request gone*, and it is
+the one thing worth beating Oracle at.
+
+### Queue: batch approve
+
+The €100 threshold already removes most of the volume problem: a €6 bolt order
+needs one captain, not two. The queue still takes a checkbox column and approves
+several at once — **each written as its own audited event**, so one click makes
+three rows in `purchase_events` — because the common case is a department
+captain clearing a morning's worth of small requests in one pass, and making
+that twelve individual round-trips is how the habit dies.
+
+### Claims without a request
+
+Allowed, and flagged. People buy an M6 bolt without filing a form; a system that
+forbids it pushes the spend off-book rather than eliminating it. A claim line
+with no linked request shows as unapproved spend and needs **whatever approval it
+would have needed had it been requested, applied after the fact** — under €100
+the department captain, at or above it the Ops Captain too, judged on the actual
+paid. Same rule, same people, no new concept.
+
+### Keep the subsystem tag even though there is no budget
+
+One prefilled dropdown now is the entire input to the Budget applet and the **FS
+Cost Event** submission later. Capture it from day one and both come free; skip
+it and it is a season of receipts reconstructed by hand next June.
+
+### Two things that decide whether this survives
+
+**Receipts need a backup, not just a home.** `/app/uploads/receipts/` behind the
+auth middleware, same mounted volume as avatars — but this repo already calls the
+homeserver's SD card the least reliable component in the stack. Losing an avatar
+is nothing; losing a season of receipts before the Cost Event is not. The
+systemd timer + `notify-failure` plumbing from the keepalive work is already
+there and a nightly backup slots straight into it.
+
+**Without notification this dies in March**, for the exact reason the Notion
+tracker did: an approval queue nobody is pinged about is a queue nobody clears,
+and members go back to just buying things. Teams notifications is already ranked
+above this in the order below, and for this applet it is a dependency rather
+than a nice-to-have.
+
+The other half is policy, not code, and it is free: **no reimbursement without a
+claim in the system.** Say that once and the tool is load-bearing on day one —
+which is precisely what the Notion tracker never was.
+
+### Before any of this is built
+
+`/comp/api/requests/update` (main.py) **has no permission check at all**. Any
+signed-in member can set any request's `price`, `status` and `bought_by`, and
+those three fields are the whole input to the expense and debt calculation, so
+anyone can mint a debt in their own favour. `edit` and `delete` are weaker
+still: they trust a `name` from the request body — the identical bug already
+found and fixed in attendance, never applied here. Unrelated to the new applet,
+but it is live, and it is money.
+
 ---
 
 ## Tier 2: once Tier 1 has stuck
@@ -376,15 +626,25 @@ and re-buys things it already owns.
 - Link to the supplier order + tracking
 - Low-stock flags for consumables
 
-`comp_requests` is already 80% of the request half of this. Generalise rather
-than start fresh.
+~~`comp_requests` is already 80% of the request half of this.~~ **Corrected
+2026-09-01.** It is not, and the request half has since been designed as its own
+applet — see "Purchase Requests & Reimbursements" above. `comp_requests` splits a
+cost between people and computes who owes whom; that logic belongs to a
+competition shop run and nowhere else. What is left for this entry is the half
+that entry actually names: **where the thing physically lives** once it arrives,
+and low-stock flags. Build it on top of the new tables, not on `comp_requests`.
 
 ### Budget  💷
 Per-subsystem season budget vs spend-to-date. The treasurer needs it, and the
 **FS Cost Event** requires the data anyway, so it's not overhead. It's a
 deliverable we currently assemble by hand at the end.
 
-`comp_expenses` already does splitting and GBP→EUR. Same shape.
+~~`comp_expenses` already does splitting and GBP→EUR.~~ **Corrected 2026-09-01.**
+There is no `comp_expenses` table. `/comp/api/expenses` derives it on every call
+from `comp_requests` rows with `status = 'bought'`, and the splitting it does is
+member-owes-member, not budget-vs-spend. The real input to this is
+`reimbursement_lines.subsystem` from the applet above — which is why that tag is
+captured from day one even though no budget exists yet.
 
 ### Scrutineering checklist  ✅
 Very FS-specific and very deadline-driven. Teams fail at scrutineering, not at
@@ -409,8 +669,11 @@ Turning "we think we comply" into "here is the evidence" is worth real points.
   Lightweight: title, options, decision, rationale, date, who.
 - **Testing log**: test sessions, what ran, faults found, links to attendance
   (who was there) and build plans (what it unblocks).
-- **Onboarding trail**, a "start here" for September: safety induction, tools
-  training, who's who, first task. Pairs naturally with Team Profiles.
+- ~~**Onboarding trail**~~ **promoted out of Tier 3, 2026-09-01** — "no rush" was
+  wrong about the one item on this file with a deadline. A "start here" for
+  September: safety induction, tools training, who's who, first task. Pairs
+  naturally with Team Profiles, and extends `UCDFS.onboard()` rather than
+  starting fresh. See step 3b in the order at the bottom.
 - **Sponsor tracker**: contacted / in talks / signed, tier, deliverables owed
   (logo placement, social posts). Gives the business side a tool of their own.
 - **Car status board**: one page aggregating subsystem readiness. "Is the car
@@ -528,12 +791,29 @@ with god mode as the only override.
 3. ~~**Team Profiles**: ship for September recruitment~~ ✅ built; the
    remaining work is content, not code. Seed a few real profiles before
    September so the grid isn't empty on day one
+3b. **Onboarding walkthrough**: extend `UCDFS.onboard()` past the subteam and
+   profile steps into a proper first-run trail  *(days)* — **do this first.**
+   Added 2026-09-01. It is the only item on this list with an expiry date:
+   September *is* the intake, and a walkthrough shipped in November is worth a
+   fraction of one shipped in three weeks. Everything else is worth the same
+   later as now. Seed a few real profiles alongside it, or it lands people on an
+   empty directory.
+   *Keep it unavoidable, not unskippable* — it returns until finished rather
+   than trapping someone who opened the site to check a workshop time. The
+   non-blocking rule at `api_profile_subteam` is deliberate and September is
+   exactly when it earns out.
+
 4. **Teams notifications**: make everything else visible  *(days)*
-   *Now the highest-value thing left: profiles only pay off if people open the
-   site, and this is what makes them.*
+   *Profiles only pay off if people open the site, and this is what makes them.
+   Also a hard dependency of Purchase Requests — see that section.*
 5. ~~Finish the Wiring Harness Mapper~~ ✅ audited + BOM/rule-check defects fixed.
    Remaining: multiple harnesses, server-side library, cost
 6. **Build Plans**: generalise PT, land it before the design phase ends so it's
    in place *before* the March crunch that killed the last one
-7. Inventory & Orders, then Budget
-8. Scrutineering checklist: start it by January, not May
+7. **Purchase Requests & Reimbursements**: designed 2026-09-01, spec above.
+   Wants Teams notifications (4) in place first, or the approval queue stalls.
+8. Inventory & Orders (now just the *where does it live* half), then Budget
+9. Scrutineering checklist: start it by January, not May
+
+Out of band, whenever: **`/comp/api/requests/update` has no permission check.**
+Small, live, and it is money. See the end of the Purchase Requests section.

@@ -244,7 +244,12 @@ const fmtWeek = iso => new Date(iso + 'T12:00:00')
 /* The server decides which days exist and which are past. The page never works
    that out from the clock: the container runs UTC and the team does not, and
    two answers to "is Thursday over" is exactly the bug that produces. */
+/* The same ring the dashboard shows, from shared.css. */
+const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
+
 async function load() {
+  const list = document.getElementById('list');
+  if (!DAYS.length) list.innerHTML = RING;   // first load only, not the poll
   const d = await fetch('/api/meetings').then(r => r.json()).catch(() => null);
   if (!d || !d.days) { UCDFS.toast("Couldn't load the sessions"); return; }
   DAYS = d.days; RESPONSES = d.responses || []; NOTES = d.notes || []; ROSTER = d.roster || 0;
@@ -437,7 +442,7 @@ function showTab(which) {
 
 async function loadHistory() {
   const el = document.getElementById('log-weeks');
-  if (!HISTORY) el.innerHTML = '<div class="log-empty">Loading…</div>';
+  if (!HISTORY) el.innerHTML = RING;
   const d = await fetch('/api/meetings/history').then(r => r.json()).catch(() => null);
   if (!d) { el.innerHTML = '<div class="log-empty">Couldn\u2019t load your log.</div>'; return; }
   HISTORY = d;

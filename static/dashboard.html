@@ -65,34 +65,14 @@ body.ready #load-veil {
 
    Costs nothing when the page is quick, because the veil and the page fade out
    together the moment reveal() lands, so a fast load is a brief flash of a ring
-   rather than a spinner that outstays the wait. */
-.dash-ring { opacity: 1; }
+   rather than a spinner that outstays the wait.
 
-.dash-ring svg { display: block; animation: ring-spin 1.5s linear infinite; }
-.dash-ring circle {
-  fill: none; stroke: var(--indigo); stroke-width: 4; stroke-linecap: round;
-  /* r=20, so the circumference is ~125.7 and the dasharray pairs below sum to
-     it. The arc grows and shrinks as the whole thing turns, which is the bit
-     that makes it read as working rather than as a timer. */
-  animation: ring-dash 1.5s ease-in-out infinite;
-}
-@keyframes ring-spin { to { transform: rotate(360deg); } }
-@keyframes ring-dash {
-  0%   { stroke-dasharray: 6 120;  stroke-dashoffset: 0; }
-  50%  { stroke-dasharray: 80 46;  stroke-dashoffset: -18; }
-  100% { stroke-dasharray: 6 120;  stroke-dashoffset: -125; }
-}
+   The ring itself is .ring in shared.css now, so every applet waits the same
+   way. What stays here is the veil: covering the whole page until reveal()
+   lands is this page's own behaviour, not something every applet wants. */
 
-/* Rotation is the part that causes trouble for people who ask for less of it,
-   so it goes and the ring stays: a still arc breathing in place still says
-   "working", where nothing at all says "broken". */
 @media (prefers-reduced-motion: reduce) {
   body.ready #load-veil { transition: none; }
-  .dash-ring svg { animation: none; }
-  .dash-ring circle {
-    stroke-dasharray: 80 46; animation: ring-fade 1.6s ease-in-out infinite;
-  }
-  @keyframes ring-fade { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 }
 
 /* ── Greeting ── */
@@ -326,7 +306,7 @@ body.ready #load-veil {
      rather than an aria-live region with text: screen readers announce the
      accessible name once, and there is no progress to narrate afterwards. -->
 <div id="load-veil" role="status" aria-label="Loading the dashboard">
-  <div class="dash-ring">
+  <div class="ring">
     <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
       <circle cx="24" cy="24" r="20"></circle>
     </svg>

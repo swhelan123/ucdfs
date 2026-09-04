@@ -581,6 +581,29 @@ been onboarded** — a new browser shows it again and none of it is auditable.
 Correct for orientation, wrong the day any of it carries safety induction or
 tools training. Those are records and want a column on the profile. Add that
 separately rather than growing the tour into it.
+### The loading ring is in shared.css, not shared.js
+
+The other shared components (`onboard()`, the override banner, `tour()`) are
+styled from `shared.js`'s runtime CSS, for the reason under **shared.js must
+carry its own CSS** above. The loading ring is the one exception and goes in
+`shared.css` instead.
+
+**Because the dashboard draws it on the first frame**, before any script has
+run: that page hides itself until `reveal()` lands, and the ring is what stands
+in for it meanwhile. Runtime CSS is injected by JavaScript, so a ring that
+depended on it would appear a beat late on the one page whose entire point is
+that it does not.
+
+The cost is real and worth knowing: the canvas tools (`pt`, `harness`) load
+`shared.js` and deliberately not `shared.css`, so they cannot use `.ring`. If
+one of them ever wants a loading indicator it needs its own, the same way it
+has its own header and its own `?` button.
+
+Two placements off the one class: `.ring` alone sits wherever it is put — the
+dashboard drops it inside `#load-veil`, which is that page's own full-screen
+treatment and not something every applet wants — and `.ring-block` adds the
+padding to stand in for a list that has not arrived yet. `--ring-accent` tints
+it, defaulting to indigo.
 
 ### Hiding a control is not a permission
 

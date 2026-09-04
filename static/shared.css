@@ -255,6 +255,46 @@ a.logo:hover { transform:translateY(-2px); }
 }
 .spinner-dark { border-color:var(--border); border-top-color:var(--indigo); }
 
+/* ── Loading ring ──
+   The dashboard's indicator, hoisted here so every applet shows the same thing
+   while it waits instead of each inventing its own ⏳.
+
+   In shared.css and NOT in shared.js's runtime CSS, which is where the other
+   shared components live. The dashboard draws this on the first frame, before
+   any script has run, and runtime CSS is injected by JS — so a ring that
+   depended on it would appear a beat late on the one page whose whole point is
+   that it does not. The cost is that the canvas tools, which load shared.js
+   and deliberately not shared.css, cannot use this. They have their own look
+   anyway.
+
+   Two placements off one ring: .ring on its own sits wherever it is put (the
+   dashboard drops it in a full-page veil), and .ring-block gives it the
+   padding to stand in for a list that has not arrived. */
+.ring { display:flex; align-items:center; justify-content:center; }
+.ring-block { padding:44px 16px; }
+.ring svg { display:block; animation:ring-spin 1.5s linear infinite; }
+.ring circle {
+  fill:none; stroke:var(--ring-accent, var(--indigo)); stroke-width:4; stroke-linecap:round;
+  /* r=20, so the circumference is ~125.7 and the dasharray pairs below sum to
+     it. The arc grows and shrinks as the whole thing turns, which is the bit
+     that makes it read as working rather than as a timer. */
+  animation:ring-dash 1.5s ease-in-out infinite;
+}
+@keyframes ring-spin { to { transform:rotate(360deg); } }
+@keyframes ring-dash {
+  0%   { stroke-dasharray:6 120;  stroke-dashoffset:0; }
+  50%  { stroke-dasharray:80 46;  stroke-dashoffset:-18; }
+  100% { stroke-dasharray:6 120;  stroke-dashoffset:-125; }
+}
+/* Rotation is the part that causes trouble for people who ask for less of it,
+   so it goes and the ring stays: a still arc breathing in place still says
+   "working", where nothing at all says "broken". */
+@media (prefers-reduced-motion: reduce) {
+  .ring svg { animation:none; }
+  .ring circle { stroke-dasharray:80 46; animation:ring-fade 1.6s ease-in-out infinite; }
+  @keyframes ring-fade { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+}
+
 /* ── Toast ─────────────────────────────────────────────────────────────── */
 .toast {
   position:fixed; bottom:28px; left:50%;

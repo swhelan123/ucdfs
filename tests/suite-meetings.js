@@ -199,7 +199,27 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
      but not 013, so this suite still passes mid-rollout. */
   if (sess && sess.created_at) {
     check('an answer carries when it was first given', !!sess.created_at);
-    check('a fresh answer is not marked edited', sess.edited === false, String(sess.edited));
+    /* This row has been rewritten four times by the checks above, so `edited`
+       being true is the flag working, not a fault. Asserting "fresh" on it was
+       my mistake: it is the most-edited row in the suite. Both states are worth
+       pinning, so a day nothing has touched yet supplies the other one. */
+    check('a row that has been rewritten is marked edited',
+      sess.edited === true, String(sess.edited));
+
+    const untouched = days.find(d => d.date !== target.date &&
+                                     d.date !== (another || {}).date);
+    if (untouched) {
+      await post('/api/meetings/respond', me.setCookies,
+                 { date: untouched.date, attending: true });
+      const fresh = (await get('/api/meetings/history', me.setCookies)).weeks
+        .flatMap(w => w.sessions).find(x => x.date === untouched.date);
+      check('and one written once is not',
+        fresh && fresh.edited === false && !!fresh.created_at,
+        JSON.stringify(fresh || null).slice(0, 90));
+      check('a first answer has both stamps equal',
+        fresh && fresh.created_at === fresh.updated_at,
+        fresh ? `${fresh.created_at} vs ${fresh.updated_at}` : 'missing');
+    }
   } else {
     console.log('  ── no created_at; migration 013 not applied, timestamp checks skipped ──');
   }

@@ -153,6 +153,15 @@ const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><s
 let DATA = null;
 const money = v => v === null || v === undefined || v === '' ? 'not given'
   : '€' + Number(v).toFixed(2);
+
+/* The API returns a bare yyyy-mm-dd, which is the wrong way round for anyone
+   reading it here. Noon, not midnight: `new Date('2026-09-15')` is parsed as
+   UTC, so west of Greenwich it lands on the 14th and the date shown is a day
+   early. Every other applet formats dates this way. */
+const day = iso => iso
+  ? new Date(iso + 'T12:00:00').toLocaleDateString('en-IE',
+      { day: '2-digit', month: '2-digit', year: 'numeric' })
+  : '';
 const STATE_LABEL = {
   submitted:     'Waiting on a captain',
   dept_approved: 'Waiting on Operations',
@@ -258,7 +267,7 @@ function card(r) {
         ${waiting ? ' · ' + waiting : ''}
         ${signed ? '<br>' + signed : ''}
         ${r.decided_note ? '<br>“' + esc(r.decided_note) + '”' : ''}
-        <br>Asked by ${esc(r.requester)}${r.needed_by ? ' · needed by ' + esc(r.needed_by) : ''}
+        <br>Asked by ${esc(r.requester)}${r.needed_by ? ' · needed by ' + esc(day(r.needed_by)) : ''}
         ${r.supplier_url ? ' · <a href="' + esc(r.supplier_url) + '" rel="noopener noreferrer" target="_blank">link</a>' : ''}
       </div>
       ${acts.length ? `<div class="pr-acts">${acts.join('')}</div>` : ''}

@@ -271,6 +271,29 @@ const get  = (path, cs) => fetch(BASE + path, { headers: hdr(cs) }).then(json);
                   { value: String(THRESHOLD) });
   }
 
+  // ── A division with no captain ──────────────────────────────────────────
+  console.log('\na division with no captain says so');
+  {
+    /* The state a fresh deployment is actually in: tables applied, nobody
+       assigned. A request filed then waits on nobody, and the page has to say
+       that rather than showing "waiting on a captain" with no name. */
+    await sbFetch('captaincies?subteam=eq.mech', 'DELETE');
+    await setSubteam(ids.bystand, 'mech');
+    const orphan = await file(bystand.setCookies, 5);
+    const view = await get('/api/purchases', bystand.setCookies);
+    check('the division is reported as having no captain',
+      (view.uncaptained || []).includes('mech'), JSON.stringify(view.uncaptained));
+    const row = (view.requests || []).find(r => r.id === orphan.id);
+    check('and its request waits on nobody at all',
+      row && row.open_slot === 'dept' && row.awaiting.length === 0,
+      JSON.stringify(row ? { slot: row.open_slot, awaiting: row.awaiting } : null));
+    const nobody = await post('/api/purchases/decide', deptCap.setCookies,
+                              { id: orphan.id, action: 'approve' });
+    check('and no other captain can quietly approve it either',
+      nobody.status === 403, String(nobody.status));
+    await setSubteam(ids.bystand, 'pt');
+  }
+
   // ── The audit trail ─────────────────────────────────────────────────────
   console.log('\nthe history');
   {

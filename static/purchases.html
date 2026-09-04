@@ -196,9 +196,18 @@ function render() {
   /* Told up front, because the one thing people want to know before filing is
      who has to say yes and how long that is likely to take. */
   const t = Number(DATA.threshold || 100);
+  const un = DATA.uncaptained || [];
+  const mineUncaptained = un.includes(DATA.my_subteam);
+  const label = id => (DATA.subteams.find(s => s.id === id) || {}).name || id;
   document.getElementById('who-approves').innerHTML =
     `Under €${t} your division captain decides on their own. ` +
-    `At €${t} or more it goes to them first, then to Operations.`;
+    `At €${t} or more it goes to them first, then to Operations.` +
+    (un.length
+      ? `<br><b>No captain set for ${esc(un.map(label).join(', '))}.</b> ` +
+        (mineUncaptained
+          ? 'Anything you file will wait until an admin assigns one in /admin.'
+          : 'Requests from those divisions cannot be approved until an admin assigns one.')
+      : '');
 
   document.getElementById('foot-count').textContent =
     rows.length + (rows.length === 1 ? ' request' : ' requests');
@@ -223,9 +232,13 @@ function card(r) {
 
   /* Named, not "pending". Not knowing where a request has got to is the
      universal complaint about this kind of system. */
-  const waiting = r.open_slot && r.awaiting.length
-    ? `Waiting on ${esc(r.awaiting.join(' or '))}`
-    : '';
+  /* Nobody eligible is a real state, not an empty one: with no captain set for
+     a division, its requests are filed and then wait on no-one. Saying so is
+     the difference between a fixable configuration problem and a tool that
+     looks broken. */
+  const waiting = !r.open_slot ? ''
+    : r.awaiting.length ? `Waiting on ${esc(r.awaiting.join(' or '))}`
+    : 'Nobody can approve this yet — its division has no captain set';
   const signed = [
     r.dept_name ? `Division: ${esc(r.dept_name)}` : '',
     r.ops_name  ? `Operations: ${esc(r.ops_name)}` : '',

@@ -4079,7 +4079,19 @@ def _slot_candidates(row: dict, slot: str) -> set:
     if other:
         blocked.add(other)
 
-    if natural and natural not in blocked:
+    if not natural:
+        # No captain for this division, so nobody may fill this slot.
+        #
+        # Deliberately NOT a fallthrough. The rule falls through when the
+        # natural holder is *unavailable* — they are the requester, or already
+        # in the other slot — not when the post is vacant. Routing around a
+        # vacancy would silently hand approval over one division's spending to
+        # the captains of the others, which is a permission nobody granted, and
+        # it would hide the actual problem: somebody has to be assigned.
+        #
+        # Stalling is the safe direction and the one 014 and 015 both claim.
+        return set()
+    if natural not in blocked:
         return {natural}
     return {pid for pid in caps.values() if pid not in blocked}
 
@@ -4166,12 +4178,19 @@ async def api_purchases(request: Request):
         return {"requests": [], "ready": False, "threshold": str(_threshold_eur())}
     people = _people_by_id()
     dressed = [_pr_dress(r, me["id"], people) for r in rows]
+    caps = _captains()
     return {
         "requests":  dressed,
         "threshold": str(_threshold_eur()),
         "mine":      me["id"],
         "leads":     _leads(me["id"]),
         "subteams":  SUBTEAMS,
+        # Divisions with nobody to approve for them. Sent so the page can say
+        # that out loud: with no captains a request is filed and then sits
+        # waiting on nobody, and "Waiting on a captain" with no name is the
+        # least useful thing it could say to whoever has to fix it.
+        "uncaptained": [x["id"] for x in SUBTEAMS if x["id"] not in caps],
+        "my_subteam": me.get("subteam") or "",
         "ready":     True,
     }
 

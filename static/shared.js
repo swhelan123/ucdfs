@@ -261,11 +261,18 @@
    * One avatar, as a photo when there is one and initials when there isn't.
    * `cls` is the caller's own avatar class, so each page keeps its own sizing.
    */
+  // The sizing goes inline, not in .has-photo, on purpose. A caller's colour
+  // class is free to use the `background:` shorthand, and that shorthand resets
+  // background-size to auto and background-position to 0% 0%. Page <style>
+  // blocks load after shared.css, so such a class wins the cascade and the photo
+  // renders at natural size inside a 30px circle — a face zoomed to one nostril.
+  // Inline beats every stylesheet rule whatever the order, so this cannot recur.
   function avatar(name, photo, cls, style) {
     var extra = style ? ';' + style : '';
     if (photo) {
       return '<div class="' + cls + ' has-photo" style="background-image:url(\'' +
-             esc(photo) + '\')' + extra + '" title="' + esc(name) + '"></div>';
+             esc(photo) + '\');background-size:cover;background-position:center' +
+             extra + '" title="' + esc(name) + '"></div>';
     }
     return '<div class="' + cls + '" style="background:' + colour(name) + extra +
            '" title="' + esc(name) + '">' + esc(initials(name)) + '</div>';

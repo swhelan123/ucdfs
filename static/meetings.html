@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Team Meetings</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Meetings-only styles. Tokens, header, buttons, toast, spinner, empty states
+   and .text-input all come from shared.css. */
+:root { --page-max: 1100px; }
+
+.main-grid { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 720px) {
+  .main-grid { flex-direction: row; align-items: flex-start; }
+  .panel-form { flex: 0 0 340px; order: 2; }
+  .panel-list { flex: 1; min-width: 0; order: 1; }
+}
+
+/* ── Day picker ──
+   Six buttons, not fourteen: filtering to the meeting days is what makes the
+   whole window fit on a phone without scrolling. The week separator is what
+   stops "Tue 16" and "Tue 23" reading as the same week at a glance. */
+.day-picker { display: flex; gap: 8px; margin-bottom: 22px; }
+.day-sep { width: 1px; background: var(--border); flex-shrink: 0; align-self: stretch; margin: 2px 2px; }
+.day-btn {
+  flex: 1; min-width: 60px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  padding: 10px 4px; border: 1.5px solid var(--border); border-radius: 14px;
+  background: var(--card); cursor: pointer; box-shadow: var(--shadow-sm);
+  font-family: inherit; color: var(--text); transition: all 0.15s;
+}
+.day-btn:hover { border-color: var(--green); background: var(--green-bg); }
+.day-btn.active { background: #0f172a; border-color: #0f172a; color: #fff; }
+.day-btn.is-past { opacity: 0.62; }
+.day-name { font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); }
+.day-num { font-size: 1.05rem; font-weight: 700; line-height: 1; }
+.day-mark { font-size: 0.62rem; line-height: 1; height: 8px; }
+.day-btn.active .day-name { color: rgba(255,255,255,0.7); }
+.day-btn.active .day-num  { color: #fff; }
+
+/* ── Answer card ── */
+.form-card { background: var(--card); border-radius: 20px; padding: 22px 20px;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+.ask { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
+.ask-sub { font-size: 0.78rem; color: var(--muted); margin-bottom: 16px; }
+.yn { display: flex; gap: 10px; margin-bottom: 14px; }
+.yn-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 15px 8px; border: 2px solid var(--border); border-radius: 16px;
+  background: var(--card); cursor: pointer; font-family: inherit;
+  font-size: 0.82rem; font-weight: 700; color: var(--text); transition: all 0.14s;
+}
+.yn-icon { font-size: 1.25rem; line-height: 1; }
+.yn-btn.on-yes { border-color: var(--green); background: var(--green-bg); color: var(--green-text); }
+.yn-btn.on-no  { border-color: var(--red);   background: var(--red-bg);   color: var(--red-text); }
+.why { margin-bottom: 14px; }
+.why.hidden { display: none; }
+.why label { display: block; font-size: 0.74rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+.area { width: 100%; min-height: 74px; resize: vertical; font-family: inherit;
+  font-size: 0.88rem; padding: 11px 12px; border-radius: 12px;
+  border: 1.5px solid var(--border); background: var(--card); color: var(--text); }
+.area:focus { outline: none; border-color: var(--green); }
+.counter { font-size: 0.68rem; color: var(--muted); text-align: right; margin-top: 4px; }
+
+/* ── The weekly box ──
+   Its own card rather than a third field in the one above, because it answers
+   for the week and the card above answers for one day. Two rows of the same
+   card that save to different tables would read as one thing. */
+.week-card { background: var(--card); border-radius: 20px; padding: 20px;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md); margin-top: 16px; }
+.week-card.wanted { border-color: var(--amber); background: var(--amber-bg); }
+.week-head { font-size: 0.92rem; font-weight: 700; margin-bottom: 3px; }
+.week-sub { font-size: 0.76rem; color: var(--muted); margin-bottom: 13px; }
+
+/* ── Who has answered ── */
+.list-card { background: var(--card); border-radius: 20px; border: 1px solid var(--border);
+  box-shadow: var(--shadow-md); overflow: hidden; }
+.grp-head { display: flex; align-items: center; gap: 8px; padding: 13px 18px;
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted); border-bottom: 1px solid var(--border); }
+.grp-head .chip-count { margin-left: auto; }
+.p-row { display: flex; align-items: flex-start; gap: 11px; padding: 12px 18px;
+  border-bottom: 1px solid var(--border); }
+.p-row:last-child { border-bottom: none; }
+.p-body { flex: 1; min-width: 0; }
+.p-name { font-size: 0.9rem; font-weight: 600; }
+.p-name .me-tag { font-size: 0.68rem; color: var(--muted); font-weight: 500; }
+.p-why { font-size: 0.8rem; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+.p-why.none { font-style: italic; opacity: 0.75; }
+.p-week { font-size: 0.78rem; color: var(--text); margin-top: 6px; padding-left: 10px;
+  border-left: 2px solid var(--border); line-height: 1.5; }
+.avatar { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 700; color: #fff; background-size: cover;
+  background-position: center; }
+.av-yes { background: var(--green-mid); color: var(--green-text); }
+.av-no  { background: var(--red-mid);   color: var(--red-text); }
+.av-none { background: var(--border); color: var(--muted); }
+.list-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 0.86rem; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo">🗓️</div>
+      <div class="header-text">
+        <div class="header-title">Team Meetings</div>
+        <div class="header-sub" id="header-sub">Tuesdays and Thursdays</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="section-label">Pick a session</div>
+    <div class="day-picker" id="day-picker"></div>
+
+    <div class="main-grid">
+      <div class="panel-form">
+        <div class="section-label">Your answer</div>
+        <div class="form-card">
+          <div class="ask"     id="ask">Are you coming?</div>
+          <div class="ask-sub" id="ask-sub"></div>
+          <div class="yn">
+            <button class="yn-btn" id="yn-yes" type="button" onclick="setAnswer(true)">
+              <span class="yn-icon">✅</span><span>Yes</span>
+            </button>
+            <button class="yn-btn" id="yn-no" type="button" onclick="setAnswer(false)">
+              <span class="yn-icon">❌</span><span>No</span>
+            </button>
+          </div>
+          <div class="why hidden" id="why">
+            <label for="reason">Why not?</label>
+            <textarea class="area" id="reason" maxlength="300"
+                      placeholder="Lab clashes with it, away that week, …"></textarea>
+            <div class="counter" id="reason-count"></div>
+          </div>
+          <button class="btn btn-green btn-full" id="submit-btn" onclick="save(this)">
+            <span id="submit-label">Save answer</span>
+          </button>
+        </div>
+
+        <div class="week-card" id="week-card">
+          <div class="week-head" id="week-head">What did you do this week?</div>
+          <div class="week-sub"  id="week-sub"></div>
+          <textarea class="area" id="summary" maxlength="1000"
+                    placeholder="Finished the LV loom drawings, ordered the DTM contacts…"></textarea>
+          <div class="counter" id="summary-count"></div>
+          <button class="btn btn-ghost btn-full" id="week-btn" onclick="saveWeek(this)">
+            <span id="week-label">Save this week</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-list">
+        <div class="section-label" id="list-label">Who's coming</div>
+        <div class="list-card" id="list"></div>
+      </div>
+    </div>
+
+    <div class="foot">UCD Formula Student · <span id="foot-count"></span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+const esc = s => UCDFS.esc(s);
+
+let DAYS = [], RESPONSES = [], NOTES = [], ROSTER = 0;
+let selected = null;        // ISO date of the session being answered
+let answer   = null;        // true | false | null when unanswered
+let me       = null;
+
+const fmtDay  = iso => new Date(iso + 'T12:00:00')
+  .toLocaleDateString('en-IE', {weekday:'long', day:'numeric', month:'long'});
+const fmtWeek = iso => new Date(iso + 'T12:00:00')
+  .toLocaleDateString('en-IE', {day:'numeric', month:'short'});
+
+/* The server decides which days exist and which are past. The page never works
+   that out from the clock: the container runs UTC and the team does not, and
+   two answers to "is Thursday over" is exactly the bug that produces. */
+async function load() {
+  const d = await fetch('/api/meetings').then(r => r.json()).catch(() => null);
+  if (!d || !d.days) { UCDFS.toast("Couldn't load the sessions"); return; }
+  DAYS = d.days; RESPONSES = d.responses || []; NOTES = d.notes || []; ROSTER = d.roster || 0;
+  if (!selected || !DAYS.some(x => x.date === selected)) {
+    /* Default to the next session still to come, because the common visit is
+       answering for it. Falls back to the last one when the window is all past,
+       which is somebody catching up. */
+    const next = DAYS.find(x => !x.past);
+    selected = (next || DAYS[DAYS.length - 1] || {}).date || null;
+  }
+  render();
+}
+
+function myRow()  { return RESPONSES.find(r => r.profile_id === me.id && r.meeting_date === selected); }
+function weekOf() { return (DAYS.find(x => x.date === selected) || {}).week_start; }
+function myNote() { return NOTES.find(n => n.profile_id === me.id && n.week_start === weekOf()); }
+
+function render() {
+  buildPicker();
+  buildForm();
+  buildWeek();
+  buildList();
+}
+
+function buildPicker() {
+  const el = document.getElementById('day-picker');
+  el.innerHTML = '';
+  let lastWeek = null;
+  DAYS.forEach(day => {
+    if (lastWeek && day.week_start !== lastWeek) {
+      const sep = document.createElement('div');
+      sep.className = 'day-sep';
+      el.appendChild(sep);
+    }
+    lastWeek = day.week_start;
+    const dt = new Date(day.date + 'T12:00:00');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'day-btn' + (day.date === selected ? ' active' : '') +
+                    (day.past ? ' is-past' : '');
+    /* Built as elements rather than spliced into a class attribute: the static
+       suite reads those with a regex and an expression inside one parses as two
+       nonsense class names. Same note as the tour in pt.html. */
+    const nm = document.createElement('span');
+    nm.className = 'day-name';
+    nm.textContent = dt.toLocaleDateString('en-IE', {weekday:'short'});
+    const nu = document.createElement('span');
+    nu.className = 'day-num';
+    nu.textContent = dt.getDate();
+    const mk = document.createElement('span');
+    mk.className = 'day-mark';
+    const mine = RESPONSES.find(r => r.profile_id === me.id && r.meeting_date === day.date);
+    mk.textContent = day.is_today ? '•' : (mine ? (mine.attending ? '✅' : '❌') : '');
+    btn.append(nm, nu, mk);
+    btn.onclick = () => { selected = day.date; answer = null; render(); };
+    el.appendChild(btn);
+  });
+}
+
+function buildForm() {
+  const day = DAYS.find(x => x.date === selected);
+  if (!day) return;
+  const row = myRow();
+  if (answer === null && row) answer = row.attending;
+
+  /* A session still to come asks whether you are coming; one gone by asks
+     whether you were there. Same row either way, only the question changes,
+     because "are you coming on Tuesday" makes no sense read on Wednesday. */
+  document.getElementById('ask').textContent = day.past ? 'Were you there?' : 'Are you coming?';
+  document.getElementById('ask-sub').textContent = fmtDay(day.date);
+  document.getElementById('yn-yes').classList.toggle('on-yes', answer === true);
+  document.getElementById('yn-no').classList.toggle('on-no',  answer === false);
+  document.getElementById('why').classList.toggle('hidden', answer !== false);
+  const reason = document.getElementById('reason');
+  if (document.activeElement !== reason) reason.value = (row && row.reason) || '';
+  countReason();
+  document.getElementById('submit-label').textContent = row ? 'Update answer' : 'Save answer';
+}
+
+function buildWeek() {
+  const week = weekOf();
+  if (!week) return;
+  const note = myNote();
+  const missedThisWeek = RESPONSES.some(r =>
+    r.profile_id === me.id && !r.attending &&
+    (DAYS.find(d => d.date === r.meeting_date) || {}).week_start === week);
+
+  /* Highlighted only once you have actually missed something that week. Asking
+     everybody every week turns it into a form; asking the people who were not
+     there is the question Kieran actually wanted. It stays editable either way,
+     because somebody who was in and still wants to write down what they did
+     should not be stopped. */
+  document.getElementById('week-card').classList.toggle('wanted', missedThisWeek && !(note && note.summary));
+  document.getElementById('week-head').textContent =
+    missedThisWeek ? 'You missed a session this week' : 'What did you do this week?';
+  document.getElementById('week-sub').textContent =
+    'Week of ' + fmtWeek(week) + (missedThisWeek ? ' · say what you got done instead' : ' · optional');
+  const box = document.getElementById('summary');
+  if (document.activeElement !== box) box.value = (note && note.summary) || '';
+  countSummary();
+  document.getElementById('week-label').textContent = note ? 'Update this week' : 'Save this week';
+}
+
+function personRow(r, cls, showWhy) {
+  const isMe = r.profile_id === me.id;
+  const note = NOTES.find(n => n.profile_id === r.profile_id && n.week_start === weekOf());
+  let why = '';
+  if (showWhy) {
+    why = r.reason
+      ? `<div class="p-why">${esc(r.reason)}</div>`
+      : `<div class="p-why none">No reason given</div>`;
+  }
+  const wk = (showWhy && note && note.summary)
+    ? `<div class="p-week">${esc(note.summary)}</div>` : '';
+  return `<div class="p-row">
+    ${UCDFS.avatar(r.name, r.photo, 'avatar ' + cls)}
+    <div class="p-body">
+      <div class="p-name">${esc(r.name)}${isMe ? ' <span class="me-tag">(you)</span>' : ''}</div>
+      ${why}${wk}
+    </div>
+  </div>`;
+}
+
+function buildList() {
+  const day = DAYS.find(x => x.date === selected);
+  const el  = document.getElementById('list');
+  if (!day) { el.innerHTML = ''; return; }
+  const rows = RESPONSES.filter(r => r.meeting_date === selected);
+  const yes  = rows.filter(r => r.attending).sort((a, b) => a.name.localeCompare(b.name));
+  const no   = rows.filter(r => !r.attending).sort((a, b) => a.name.localeCompare(b.name));
+  const quiet = Math.max(0, ROSTER - rows.length);
+
+  document.getElementById('list-label').textContent =
+    (day.past ? 'Who was there · ' : "Who's coming · ") + fmtDay(day.date);
+  document.getElementById('foot-count').textContent =
+    `${rows.length} of ${ROSTER} answered`;
+
+  if (!rows.length) {
+    el.innerHTML = `<div class="list-empty">Nobody has answered for this one yet.</div>`;
+    return;
+  }
+  let html = '';
+  if (yes.length) {
+    html += `<div class="grp-head">${day.past ? 'Was there' : 'Coming'}
+             <span class="chip-count">${yes.length}</span></div>`;
+    html += yes.map(r => personRow(r, 'av-yes', false)).join('');
+  }
+  if (no.length) {
+    html += `<div class="grp-head">${day.past ? "Wasn't there" : 'Not coming'}
+             <span class="chip-count">${no.length}</span></div>`;
+    html += no.map(r => personRow(r, 'av-no', true)).join('');
+  }
+  if (quiet) {
+    html += `<div class="grp-head">Yet to answer <span class="chip-count">${quiet}</span></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function setAnswer(v) { answer = v; buildForm(); }
+function countReason() {
+  const n = document.getElementById('reason').value.length;
+  document.getElementById('reason-count').textContent = n ? `${n}/300` : '';
+}
+function countSummary() {
+  const n = document.getElementById('summary').value.length;
+  document.getElementById('summary-count').textContent = n ? `${n}/1000` : '';
+}
+
+async function save(btn) {
+  if (answer === null) { UCDFS.toast('Pick yes or no first'); return; }
+  const label = document.getElementById('submit-label');
+  const orig  = label.innerHTML;
+  btn.disabled = true; label.innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await fetch('/api/meetings/respond', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ date: selected, attending: answer,
+                             reason: document.getElementById('reason').value }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'failed');
+    UCDFS.toast(answer ? "You're down as coming" : 'Noted, thanks for saying');
+    await load();
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that");
+  }
+  label.innerHTML = orig; btn.disabled = false;
+}
+
+async function saveWeek(btn) {
+  const label = document.getElementById('week-label');
+  const orig  = label.innerHTML;
+  btn.disabled = true; label.innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await fetch('/api/meetings/week-note', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ week_start: weekOf(),
+                             summary: document.getElementById('summary').value }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'failed');
+    UCDFS.toast('Saved');
+    await load();
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that");
+  }
+  label.innerHTML = orig; btn.disabled = false;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('reason').addEventListener('input', countReason);
+  document.getElementById('summary').addEventListener('input', countSummary);
+  UCDFS.gate(user => {
+    me = user;
+    UCDFS.renderPill();
+    load();
+  });
+});
+
+/* The list is shared, so somebody else answering while this is open should
+   show up. Same interval attendance uses. */
+setInterval(() => { if (selected) load(); }, 30000);
+</script>
+</body>
+</html>

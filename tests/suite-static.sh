@@ -13,7 +13,7 @@ set -u
 exec </dev/null
 
 # Every page this suite knows about. One list, so adding a page is one edit.
-PAGES="dashboard login attendance comp pt harness profiles admin flowcharts"
+PAGES="dashboard login attendance meetings comp pt harness profiles admin flowcharts"
 
 # The node checks are written to files and handed their inputs as argv rather
 # than interpolated into `node -e "…"`.

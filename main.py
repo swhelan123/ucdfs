@@ -175,6 +175,30 @@ SUBTEAMS = [
     {"id": "ops",  "name": "Operations", "icon": "📋", "accent": "purple"},
 ]
 
+# ── Scheduled team meetings (migrations/012) ──────────────────────────────────
+# The days the team meets during term. Python weekdays, Monday = 0, so this is
+# Tuesday and Thursday.
+#
+# A constant rather than a row, unlike dashboard blocks and links, because this
+# changes about once a season and a season is also when somebody is already
+# editing this file. If it ever starts moving mid-year, it wants to be data and
+# this comment is the note saying so. Rows already written keep their own dates,
+# so changing it does not rewrite history.
+MEETING_DAYS = (1, 3)
+
+# How far either side of today the page lets you answer. Three weeks, meeting
+# days only, is six buttons — small enough to show at once precisely because
+# filtering to Tuesdays and Thursdays makes it small.
+#
+# It reaches BACK a week, which the attendance page does not. That page is for
+# logging a day you are in, so the past matters less; this one asks people to
+# account for a session they missed, and somebody catching up on Monday has to
+# be able to answer for last Thursday.
+MEETING_WEEKS_BACK = 1
+MEETING_WEEKS_FWD  = 1
+MAX_REASON  = 300
+MAX_SUMMARY = 1000
+
 SUBTEAM_IDS = {s["id"] for s in SUBTEAMS}
 SUBTEAMS_BY_ID = {s["id"]: s for s in SUBTEAMS}
 
@@ -250,6 +274,17 @@ APPLETS = [
         "file":   "attendance.html",
         "blurb":  "Log who's in the workshop and when",
         "accent": "indigo",
+        "status": "live",
+        "subteams": ["all"],
+    },
+    {
+        "id":     "meetings",
+        "name":   "Team Meetings",
+        "icon":   "🗓️",
+        "route":  "/meetings",
+        "file":   "meetings.html",
+        "blurb":  "Say if you're coming Tuesday and Thursday, and what you did if not",
+        "accent": "green",
         "status": "live",
         "subteams": ["all"],
     },
@@ -3375,6 +3410,225 @@ async def delete_log(request: Request):
     return {"reply": f"Entry removed for {name} on {target_date}."}
 
 
+# ── Team meetings (migrations/012) ────────────────────────────────────────────
+# Who is coming on a scheduled meeting day, and what the people who are not did
+# instead. Deliberately separate from `attendance`; see the header of 012 for
+# why one row cannot answer both questions.
+#
+# Everything here goes through sb() rather than the module-global client,
+# because _meetings_tile() runs on the dashboard's pool and nothing it reaches
+# may share the one HTTP/2 connection. sb() is correct on any thread, so making
+# it uniform across a new section is cheaper than leaving that trap for whoever
+# adds the next helper down here.
+
+
+def _monday(d: date) -> date:
+    """The Monday of d's week. Weekly rows key on this, so "the week of the
+    15th" cannot become two rows depending on which day it was filled in."""
+    return d - timedelta(days=d.weekday())
+
+
+def _meeting_dates(today: Optional[date] = None) -> list:
+    """Every scheduled meeting day in the window the page can answer for."""
+    today = today or datetime.now(TEAM_TZ).date()
+    start = _monday(today) - timedelta(weeks=MEETING_WEEKS_BACK)
+    span  = (MEETING_WEEKS_BACK + 1 + MEETING_WEEKS_FWD) * 7
+    return [d for d in (start + timedelta(days=i) for i in range(span))
+            if d.weekday() in MEETING_DAYS]
+
+
+def _people_by_id() -> dict:
+    """{profile id: {name, photo}} for everyone with an account.
+
+    Keyed by id rather than by name, unlike _photo_map, because the tables down
+    here key by id. Names are for display only and never for matching, which is
+    the whole reason 012 keys on the account.
+    """
+    try:
+        rows = sb().table("profiles").select("id,first_name,last_name").execute().data or []
+        details = {d.get("id"): d for d in
+                   (sb().table("profile_details").select("id,photo_ext,photo_rev")
+                    .execute().data or [])}
+    except Exception as e:
+        logger.error(f"[meetings] people lookup failed: {e}")
+        return {}
+    out = {}
+    for r in rows:
+        name = ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip()
+        out[r.get("id")] = {
+            "name":  name,
+            "photo": _avatar_url(r.get("id"), details.get(r.get("id")) or {}),
+        }
+    return out
+
+
+def _meeting_date_or_400(raw) -> date:
+    """A date that is really a scheduled meeting day inside the answerable
+    window. Both halves matter: without the first the table fills with Sundays,
+    and without the second somebody can answer for a session in 2031."""
+    try:
+        d = date.fromisoformat((raw or "").strip())
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    if d not in _meeting_dates():
+        raise HTTPException(400, "That is not one of the meeting days you can answer for")
+    return d
+
+
+def _target_profile(request: Request, body: dict) -> str:
+    """Whose row is being written. Your own, unless you are elevated.
+
+    Mirrors attendance: an admin fixing somebody's row is a real need, and the
+    override is the same one, so it reads the same way and is switched off the
+    same way. Absent a profile_id this is simply you, which is every ordinary
+    write.
+    """
+    me  = current_profile(request)
+    who = (body.get("profile_id") or "").strip() or me["id"]
+    if who != me["id"] and not is_god(request):
+        raise HTTPException(403, "You can only answer for yourself")
+    return who
+
+
+@app.get("/api/meetings")
+async def api_meetings():
+    """Everything the page draws: the days, everyone's answers, everyone's week.
+
+    Answers are visible to the whole team, like attendance already is. That is
+    the point rather than an oversight: a reason your teammates can see is one
+    you stand over, and a private one read only by the principal makes this a
+    different and much worse tool.
+    """
+    days   = _meeting_dates()
+    if not days:
+        return {"days": [], "responses": [], "notes": [], "meeting_days": list(MEETING_DAYS)}
+    weeks  = sorted({_monday(d) for d in days})
+    people = _people_by_id()
+    today  = datetime.now(TEAM_TZ).date()
+
+    try:
+        rows = (sb().table("meeting_responses").select("*")
+                .gte("meeting_date", days[0].isoformat())
+                .lte("meeting_date", days[-1].isoformat()).execute().data or [])
+    except Exception as e:
+        logger.error(f"[meetings] responses failed: {e}")
+        rows = []
+    try:
+        notes = (sb().table("week_notes").select("*")
+                 .gte("week_start", weeks[0].isoformat())
+                 .lte("week_start", weeks[-1].isoformat()).execute().data or [])
+    except Exception as e:
+        logger.error(f"[meetings] notes failed: {e}")
+        notes = []
+
+    def dressed(r):
+        """Names and faces are attached here for display only. The row is
+        keyed by account; nothing downstream matches on the name."""
+        who = people.get(r.get("profile_id")) or {}
+        return {**r, "name": who.get("name") or "Someone", "photo": who.get("photo")}
+
+    return {
+        # `past` is what the page uses to word itself: a day still to come asks
+        # "are you coming", one gone by asks "were you there". Same row either
+        # way; only the question changes.
+        "days": [{"date": d.isoformat(), "past": d < today, "is_today": d == today,
+                  "week_start": _monday(d).isoformat()} for d in days],
+        "weeks":     [w.isoformat() for w in weeks],
+        "responses": [dressed(r) for r in rows],
+        "notes":     [dressed(n) for n in notes],
+        "roster":    len(people),
+    }
+
+
+@app.post("/api/meetings/respond")
+async def api_meetings_respond(request: Request):
+    b   = await request.json()
+    who = _target_profile(request, b)
+    d   = _meeting_date_or_400(b.get("date"))
+    if not isinstance(b.get("attending"), bool):
+        raise HTTPException(400, "attending must be true or false")
+    attending = b["attending"]
+    # Kept even when they are coming, rather than blanked. Somebody who answers
+    # no with a reason and then changes to yes should not have to retype it if
+    # they change back, and a reason on a yes is simply not shown.
+    reason = " ".join((b.get("reason") or "").split())[:MAX_REASON]
+
+    try:
+        sb().table("meeting_responses").upsert({
+            "profile_id": who, "meeting_date": d.isoformat(),
+            "attending": attending, "reason": reason,
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+        }, on_conflict="profile_id,meeting_date").execute()
+    except Exception as e:
+        logger.error(f"[meetings] respond failed for {who} on {d}: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 012 been applied?")
+
+    # Only a fresh answer is feed-worthy. People flip between yes and no as
+    # their week changes, and a line for each would drown the feed in one
+    # person rearranging their Tuesday.
+    name = (_people_by_id().get(who) or {}).get("name") or "Someone"
+    log_activity("meetings", name,
+                 "is coming" if attending else "can't make it",
+                 d.strftime("%a %-d %b"))
+    return {"ok": True}
+
+
+@app.post("/api/meetings/week-note")
+async def api_meetings_week_note(request: Request):
+    b   = await request.json()
+    who = _target_profile(request, b)
+    try:
+        raw = date.fromisoformat((b.get("week_start") or "").strip())
+    except ValueError:
+        raise HTTPException(400, "week_start must be YYYY-MM-DD")
+    # Normalised rather than trusted. The client sends a Monday, but the whole
+    # point of one row per week is that it cannot be two, and that only holds if
+    # the key is derived here.
+    week = _monday(raw)
+    if week not in {_monday(d) for d in _meeting_dates()}:
+        raise HTTPException(400, "That week is outside the window you can answer for")
+    summary = (b.get("summary") or "").strip()[:MAX_SUMMARY]
+
+    try:
+        sb().table("week_notes").upsert({
+            "profile_id": who, "week_start": week.isoformat(), "summary": summary,
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+        }, on_conflict="profile_id,week_start").execute()
+    except Exception as e:
+        logger.error(f"[meetings] week note failed for {who} on {week}: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 012 been applied?")
+    return {"ok": True}
+
+
+def _meetings_tile() -> dict:
+    """The next meeting, and how much of the team has said either way."""
+    today = datetime.now(TEAM_TZ).date()
+    days  = _meeting_dates()
+    # The next one still to come, or the most recent if the window is all past.
+    upcoming = [d for d in days if d >= today]
+    target   = upcoming[0] if upcoming else (days[-1] if days else None)
+    if target is None:
+        return {"detail": "no meetings scheduled"}
+
+    rows = (sb().table("meeting_responses").select("attending")
+            .eq("meeting_date", target.isoformat()).execute().data or [])
+    roster = len(sb().table("profiles").select("id").execute().data or [])
+    yes    = len([r for r in rows if r.get("attending")])
+    no     = len(rows) - yes
+    missing = max(0, roster - len(rows))
+
+    when = "today" if target == today else target.strftime("%a %-d %b")
+    if not rows:
+        detail = f"{when}: nobody has answered yet"
+    elif missing:
+        detail = f"{when}: {yes} in, {no} out, {missing} yet to say"
+    else:
+        detail = f"{when}: {yes} in, {no} out"
+
+    return {"date": target.isoformat(), "when": when, "yes": yes, "no": no,
+            "missing": missing, "roster": roster, "detail": detail}
+
+
 # ── Competition Hub ───────────────────────────────────────────────────────────
 COMP_TZ = ZoneInfo("Europe/London")
 SHOP_CUTOFF_HOUR = 10  # requests in before 10am get same-day delivery; after, next day
@@ -3904,7 +4158,7 @@ def _activity(limit: int = 8) -> list:
 
 @app.get("/api/dashboard")
 async def api_dashboard():
-    # Seven independent tiles, each a few blocking round trips. Run one after
+    # Eight independent tiles, each a few blocking round trips. Run one after
     # another they came to about 700ms, which is most of the wait the dashboard
     # sits behind its veil for. Nothing here depends on anything else here.
     #
@@ -3917,10 +4171,11 @@ async def api_dashboard():
     # and the rest of the dashboard still draws. gather never sees an exception
     # and needs no return_exceptions.
     loop = asyncio.get_running_loop()
-    countdown, activity, attendance, flowcharts, pt, harness, comp = await asyncio.gather(*(
+    (countdown, activity, attendance, meetings, flowcharts,
+     pt, harness, comp) = await asyncio.gather(*(
         loop.run_in_executor(_tile_pool, _tile, fn)
-        for fn in (_countdown, _activity, _attendance_tile, _flowcharts_tile,
-                   _pt_tile, _harness_tile, _comp_tile)
+        for fn in (_countdown, _activity, _attendance_tile, _meetings_tile,
+                   _flowcharts_tile, _pt_tile, _harness_tile, _comp_tile)
     ))
     return {
         # Dublin, not the container's clock, which is UTC, so date.today()
@@ -3931,6 +4186,7 @@ async def api_dashboard():
         "activity":  activity or [],
         "tiles": {
             "attendance": attendance,
+            "meetings":   meetings,
             "flowcharts": flowcharts,
             "pt":         pt,
             "harness":    harness,

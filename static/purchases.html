@@ -151,7 +151,7 @@ const esc = s => UCDFS.esc(s);
 const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
 
 let DATA = null;
-const money = v => v === null || v === undefined || v === '' ? '—'
+const money = v => v === null || v === undefined || v === '' ? 'not given'
   : '€' + Number(v).toFixed(2);
 const STATE_LABEL = {
   submitted:     'Waiting on a captain',
@@ -238,7 +238,7 @@ function card(r) {
      looks broken. */
   const waiting = !r.open_slot ? ''
     : r.awaiting.length ? `Waiting on ${esc(r.awaiting.join(' or '))}`
-    : 'Nobody can approve this yet — its division has no captain set';
+    : 'Nobody can approve this yet. Its division has no captain set';
   const signed = [
     r.dept_name ? `Division: ${esc(r.dept_name)}` : '',
     r.ops_name  ? `Operations: ${esc(r.ops_name)}` : '',
@@ -340,19 +340,19 @@ async function boot() {
     key: 'purchases_v1',
     steps: [
       { t: 'Ask before you buy',
-        p: 'File what you need and why. The why is not paperwork: it is what lets '
-         + 'a captain say yes without having to come and ask you, and it is the same '
-         + 'text the Cost Event wants at the end of the year.',
+        p: 'Say what you need and what it is for. Keep the reason short but real. '
+         + 'It is the bit that lets a captain say yes without having to track you '
+         + 'down and ask what it is for.',
         art: '🧾', sub: 'One screen, two required fields' },
       { t: 'Who has to say yes',
         p: 'Under the threshold your division captain decides on their own, so small '
-         + 'things move quickly. At or over it, it goes to your captain first and then '
-         + 'to Operations, because those two are answering different questions.',
-        art: '✍️ ✍️', sub: 'Nobody ever approves their own large spend' },
-      { t: 'You can see where it got to',
-        p: 'Every request says who it is waiting on, by name. Yours are under Ask, '
-         + 'anything waiting on you is under the second tab, and Everything is the '
-         + 'whole list — including what other divisions are spending.',
+         + 'things move fast. At or over it, your captain signs first and then '
+         + 'Operations. They are checking different things, so you need both.',
+        art: '✍️ ✍️', sub: 'Nobody approves their own big spend' },
+      { t: 'Seeing where it got to',
+        p: 'Every request tells you who it is waiting on, by name. Yours are under '
+         + 'Ask, anything waiting on you is in the second tab, and Everything is the '
+         + 'full list, including what other divisions are spending.',
         art: '⏳ → ✅', sub: 'Turning one down needs a reason' },
     ],
   });

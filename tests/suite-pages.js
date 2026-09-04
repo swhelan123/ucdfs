@@ -10,6 +10,7 @@ const { BASE, check, summary, open, signUp, waitFor } = require('./lib');
 const PAGES = [
   { path: '/',           name: 'dashboard'  },
   { path: '/attendance', name: 'attendance' },
+  { path: '/meetings',   name: 'meetings'   },
   { path: '/comp',       name: 'comp'       },
   { path: '/flowcharts', name: 'flowcharts' },
   { path: '/pt',         name: 'pt'         },

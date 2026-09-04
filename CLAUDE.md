@@ -470,6 +470,7 @@ Three things that look similar and are not:
 | `profile_details.role_label` | what you call yourself on your profile | never; a display string |
 | `profiles.role` | the real permission: member / committee / admin | `require_role()` |
 | `profiles.god_mode` | is this admin currently elevated | `god_on()` |
+| `captaincies` (migrations/014) | permission: who leads each division | `_captain_of()`, `_leads()` |
 
 **`role` is the capability, `god_mode` is the switch** (`migrations/004`). An
 admin who is permanently elevated cannot see what the team sees, and every
@@ -604,6 +605,37 @@ dashboard drops it inside `#load-veil`, which is that page's own full-screen
 treatment and not something every applet wants — and `.ring-block` adds the
 padding to stand in for a list that has not arrived yet. `--ring-accent` tints
 it, defaulting to indigo.
+
+### Captaincy is granted, never claimed
+
+There are two things called "captain" and only one of them grants anything.
+
+`profile_details.role_label` is the job title people put on their own profile.
+It arrives in the body of `/api/profile`, so **anyone can set themselves to
+`captain`**, and 003 says it outright: *"Relevance, never permission."* Perfectly
+fine for a directory.
+
+`captaincies` (migrations/014) is the permission. One row per division, assigned
+from `/admin` by an admin the way roles are, and the reason it exists is that
+the purchase-request design needs "the captain of the requester's department" to
+mean something a member cannot award themselves. `tests/suite-admin.js` pins
+exactly that: a member setting `role_label: 'captain'` still holds no captaincy.
+
+Keyed by subteam rather than a column on profiles, because the primary key *is*
+the rule — a division has one captain and the schema says so. **There is no
+separate ops-captain flag**: the Ops Captain is the captain of the `ops`
+subteam, which is what lets the fallthrough rule in `TODO.md` work without a
+special case.
+
+Two deliberate non-constraints. One person may hold two divisions, because a
+thin year is a real situation and forbidding it would prevent tidiness rather
+than an error. And no captaincy is required for a division to exist — a division
+with an empty slot simply has nobody who can approve its spending, which is
+information the `/admin` page shows rather than hides.
+
+An unapplied 014 reads as **no captains**, so approvals stall rather than being
+granted. That direction is the safe one and is why `_captains()` returns `{}` on
+a failed lookup instead of raising.
 
 ### Hiding a control is not a permission
 

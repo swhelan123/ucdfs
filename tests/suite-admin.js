@@ -47,6 +47,8 @@ const today = new Date().toISOString().slice(0, 10);
     ['the admin page',      '/admin',                null],
     ['the people list',     '/api/admin/people',     null],
     ['handing out roles',   '/api/admin/role',       { id: 'x', role: 'admin' }],
+    ['reading captaincies', '/api/admin/captains',   null],
+    ['handing out captaincies', '/api/admin/captains', { subteam: 'pt', profile_id: 'x' }],
     ['switching god mode',  '/api/admin/god-mode',   { on: true }],
     ['deleting an account', '/api/admin/user/delete',
       { id: 'x', confirm_email: 'x@ucdconnect.ie' }],
@@ -431,6 +433,71 @@ const today = new Date().toISOString().slice(0, 10);
   // it has to create.
   check('a second admin can be appointed',
     (await post('/api/admin/role', { id: victim.id, role: 'admin' })).status === 200);
+
+  /* ── Captaincy ─────────────────────────────────────────────────────────
+     The permission behind purchase approvals, and the point of it is that it is
+     granted rather than claimed. profile_details.role_label already lets
+     anybody call themselves a captain, so the last check here is the one that
+     matters: doing that must grant nothing. */
+  console.log('\ncaptaincy is granted, never claimed');
+  {
+    const before = await json(await fetch(BASE + '/api/admin/captains', { headers: hdrA }));
+    check('an admin can read the captain list',
+      Array.isArray(before.captains), JSON.stringify(before).slice(0, 70));
+    check('every division has a slot, filled or not',
+      (before.captains || []).length === 3,
+      String((before.captains || []).length));
+
+    if (before.ready === false) {
+      console.log('  \u2500\u2500 captaincies table missing; migration 014 not applied, checks skipped \u2500\u2500');
+    } else {
+      const bad = await post('/api/admin/captains', { subteam: 'nope', profile_id: 'x' });
+      check('an unknown division is refused', bad.status === 400, String(bad.status));
+
+      const ghost = await post('/api/admin/captains',
+                               { subteam: 'pt', profile_id: '00000000-0000-0000-0000-000000000000' });
+      check('a captaincy cannot be given to an account that does not exist',
+        ghost.status === 404, String(ghost.status));
+
+      const people = (await json(await fetch(BASE + '/api/admin/people', { headers: hdrA }))).people || [];
+      const target = people.find(p => p.email === b.email);
+      check('found the account to promote', !!target, b.email);
+
+      if (target) {
+        const set = await post('/api/admin/captains', { subteam: 'pt', profile_id: target.id });
+        check('an admin can make somebody a captain', set.ok, String(set.status));
+        const after = await json(await fetch(BASE + '/api/admin/captains', { headers: hdrA }));
+        const pt = (after.captains || []).find(c => c.subteam === 'pt');
+        check('and it sticks against the right division',
+          pt && pt.profile_id === target.id, JSON.stringify(pt || null).slice(0, 80));
+
+        /* role_label arrives in the body of /api/profile, so if it counted,
+           anybody could approve their own spending by editing their profile. */
+        /* A fresh ordinary member, because the point is what a member cannot
+           do and the suite's other accounts are by now variously promoted,
+           demoted or deleted. Empty year/course/tags so this writes no feed
+           line for the cleanup to chase. */
+        const claimer = await signUp('Admin', 'Claimer');
+        const hdrClaim = { Cookie: claimer.setCookies.map(x => x.split(';')[0]).join('; ') };
+        await fetch(BASE + '/api/profile', {
+          method: 'POST', headers: { ...hdrClaim, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role_label: 'captain', subteam: 'mech',
+                                 year: '', course: '', tags: [], is_public: false }),
+        });
+        const claimed = await json(await fetch(BASE + '/api/admin/captains', { headers: hdrA }));
+        const mech = (claimed.captains || []).find(c => c.subteam === 'mech');
+        check('calling yourself a captain on your profile grants nothing',
+          mech && !mech.profile_id, JSON.stringify(mech || null).slice(0, 80));
+
+        const cleared = await post('/api/admin/captains', { subteam: 'pt', profile_id: '' });
+        check('a captaincy can be cleared', cleared.ok, String(cleared.status));
+        const empty = await json(await fetch(BASE + '/api/admin/captains', { headers: hdrA }));
+        const gone = (empty.captains || []).find(c => c.subteam === 'pt');
+        check('and the slot goes back to nobody', gone && !gone.profile_id,
+          JSON.stringify(gone || null).slice(0, 80));
+      }
+    }
+  }
 
   // Losing the capability has to take the elevation with it, or a demoted admin
   // keeps a god_mode flag that silently switches back on the moment somebody

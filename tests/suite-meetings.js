@@ -94,6 +94,25 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
                              { date: target.date, attending: 'yes' });
   check('attending has to be a real boolean', notBool.status === 400, String(notBool.status));
 
+  /* A no without a reason. The page disables its own button, which is why this
+     is checked here: the rule only means something if the endpoint holds it
+     when the form is bypassed. */
+  const noReason = await post('/api/meetings/respond', me.setCookies,
+                              { date: target.date, attending: false });
+  check('a no needs a reason', noReason.status === 400, String(noReason.status));
+  const blankReason = await post('/api/meetings/respond', me.setCookies,
+                                 { date: target.date, attending: false, reason: '   ' });
+  check('and whitespace does not count as one',
+    blankReason.status === 400, String(blankReason.status));
+  const yesNoReason = await post('/api/meetings/respond', me.setCookies,
+                                 { date: target.date, attending: true });
+  check('a yes still needs nothing', yesNoReason.ok, String(yesNoReason.status));
+  /* Put it back. That yes overwrote the row, and the checks below assert this
+     one is still the no with its reason — writing to a shared row and leaving
+     it changed is how a passing check becomes somebody else's failing one. */
+  await post('/api/meetings/respond', me.setCookies,
+             { date: target.date, attending: false, reason: 'lab clashes with it' });
+
   /* The ownership check. Everything else here would pass just as well on an
      endpoint that let anyone write anyone's row. */
   const mineId = (rows[0] || {}).profile_id;
@@ -150,6 +169,68 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
     { week_start: '2020-01-06', summary: 'long ago' });
   check('a week outside the window is refused',
     otherWeek.status === 400, String(otherWeek.status));
+
+  /* ── The personal log ──────────────────────────────────────────────────
+     Its own endpoint rather than a filter over /api/meetings, because that one
+     only returns the three weeks you can still answer for. The check that
+     matters is the last one: reusing the answering window would cap a term at
+     a fortnight and nothing else here would notice. */
+  console.log('\nyour own log');
+  const log = await get('/api/meetings/history', me.setCookies);
+  check('the log comes back', Array.isArray(log.weeks), JSON.stringify(log).slice(0, 80));
+  check('it counts the sessions it has', log.totals && typeof log.totals.in === 'number',
+    JSON.stringify(log.totals || null).slice(0, 90));
+
+  const logged = (log.weeks || []).find(w => w.week_start === target.week_start);
+  check('the week you answered for is in it', !!logged,
+    (log.weeks || []).map(w => w.week_start).join(' ') || 'none');
+  check('with both of that week\'s sessions, answered or not',
+    logged && logged.sessions.length === 2, String(logged ? logged.sessions.length : 0));
+  const sess = logged && logged.sessions.find(x => x.date === target.date);
+  check('and your answer on the right one',
+    sess && sess.answered === true && sess.attending === false,
+    JSON.stringify(sess || null).slice(0, 90));
+  check('the week note rides along', logged && logged.note &&
+    logged.note.summary.length === 1000, JSON.stringify((logged || {}).note || null).slice(0, 60));
+
+  /* created_at is what migration 013 adds, and the reason it exists: edit a
+     typo and updated_at moves, so without it a log cannot say when somebody
+     actually answered. Skipped rather than failed on a database that has 012
+     but not 013, so this suite still passes mid-rollout. */
+  if (sess && sess.created_at) {
+    check('an answer carries when it was first given', !!sess.created_at);
+    /* This row has been rewritten four times by the checks above, so `edited`
+       being true is the flag working, not a fault. Asserting "fresh" on it was
+       my mistake: it is the most-edited row in the suite. Both states are worth
+       pinning, so a day nothing has touched yet supplies the other one. */
+    check('a row that has been rewritten is marked edited',
+      sess.edited === true, String(sess.edited));
+
+    const untouched = days.find(d => d.date !== target.date &&
+                                     d.date !== (another || {}).date);
+    if (untouched) {
+      await post('/api/meetings/respond', me.setCookies,
+                 { date: untouched.date, attending: true });
+      const fresh = (await get('/api/meetings/history', me.setCookies)).weeks
+        .flatMap(w => w.sessions).find(x => x.date === untouched.date);
+      check('and one written once is not',
+        fresh && fresh.edited === false && !!fresh.created_at,
+        JSON.stringify(fresh || null).slice(0, 90));
+      check('a first answer has both stamps equal',
+        fresh && fresh.created_at === fresh.updated_at,
+        fresh ? `${fresh.created_at} vs ${fresh.updated_at}` : 'missing');
+    }
+  } else {
+    console.log('  ── no created_at; migration 013 not applied, timestamp checks skipped ──');
+  }
+
+  const nosey = await fetch(BASE + '/api/meetings/history?profile_id=' + mineId,
+                            { headers: hdr(other.setCookies) });
+  check('you cannot read somebody else\'s log', nosey.status === 403, String(nosey.status));
+
+  const own = await get('/api/meetings/history', other.setCookies);
+  check('and an account with nothing logged gets an empty one, not an error',
+    Array.isArray(own.weeks) && own.weeks.length === 0, JSON.stringify(own).slice(0, 70));
 
   process.exit(summary('meetings') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

@@ -230,7 +230,14 @@ function render() {
     live.length + (live.length === 1 ? ' chart' : ' charts');
 }
 
+/* The same ring the dashboard shows, from shared.css. */
+const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
+
 async function load() {
+  /* This drew nothing at all while the fetch was out, so the list read as an
+     empty account rather than as one that had not arrived — worst on the slow
+     connection where the difference matters most. */
+  el('live-list').innerHTML = RING;
   try {
     const d = await (await fetch('/api/plans')).json();
     CHARTS = d.plans || [];

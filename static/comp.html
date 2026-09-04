@@ -181,7 +181,7 @@
         </div>
       </div>
       <div id="roster-content">
-        <div class="empty-c"><div class="ei">⏳</div>Loading…</div>
+        <div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>
       </div>
     </div>
 
@@ -215,7 +215,7 @@
       <div class="section-row">
         <div class="section-label" id="req-list-label">All requests</div>
       </div>
-      <div id="req-list"><div class="empty-c"><div class="ei">⏳</div>Loading…</div></div>
+      <div id="req-list"><div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div></div>
     </div>
 
     <!-- Expenses -->
@@ -224,7 +224,7 @@
         <div class="section-label">Who owes what</div>
         <span style="font-size:.72rem;color:var(--indigo);cursor:pointer" onclick="loadExpenses()">↻ Refresh</span>
       </div>
-      <div id="exp-list"><div class="empty-c"><div class="ei">⏳</div>Loading…</div></div>
+      <div id="exp-list"><div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div></div>
     </div>
 
     <!-- Schedule -->
@@ -785,7 +785,7 @@ async function undoBought(id){
 /* ── Expenses ── */
 async function loadExpenses(){
   const el=document.getElementById('exp-list');
-  el.innerHTML='<div class="empty-c"><div class="ei">⏳</div>Loading…</div>';
+  el.innerHTML='<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
   try{
     const r=await fetch('/comp/api/expenses'),d=await r.json();
     renderExpenses(d);

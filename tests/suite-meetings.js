@@ -94,6 +94,25 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
                              { date: target.date, attending: 'yes' });
   check('attending has to be a real boolean', notBool.status === 400, String(notBool.status));
 
+  /* A no without a reason. The page disables its own button, which is why this
+     is checked here: the rule only means something if the endpoint holds it
+     when the form is bypassed. */
+  const noReason = await post('/api/meetings/respond', me.setCookies,
+                              { date: target.date, attending: false });
+  check('a no needs a reason', noReason.status === 400, String(noReason.status));
+  const blankReason = await post('/api/meetings/respond', me.setCookies,
+                                 { date: target.date, attending: false, reason: '   ' });
+  check('and whitespace does not count as one',
+    blankReason.status === 400, String(blankReason.status));
+  const yesNoReason = await post('/api/meetings/respond', me.setCookies,
+                                 { date: target.date, attending: true });
+  check('a yes still needs nothing', yesNoReason.ok, String(yesNoReason.status));
+  /* Put it back. That yes overwrote the row, and the checks below assert this
+     one is still the no with its reason — writing to a shared row and leaving
+     it changed is how a passing check becomes somebody else's failing one. */
+  await post('/api/meetings/respond', me.setCookies,
+             { date: target.date, attending: false, reason: 'lab clashes with it' });
+
   /* The ownership check. Everything else here would pass just as well on an
      endpoint that let anyone write anyone's row. */
   const mineId = (rows[0] || {}).profile_id;

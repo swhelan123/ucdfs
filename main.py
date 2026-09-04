@@ -3588,6 +3588,12 @@ async def api_meetings_respond(request: Request):
     # they change back, and a reason on a yes is simply not shown.
     reason = " ".join((b.get("reason") or "").split())[:MAX_REASON]
 
+    # Required on a no, by decision of the team. Enforced here and not only in
+    # the page, because a rule that lives in the form is not a rule: the page
+    # disables its own button, and this is what makes that mean something.
+    if not attending and not reason:
+        raise HTTPException(400, "Say why you can't make it")
+
     try:
         sb().table("meeting_responses").upsert({
             "profile_id": who, "meeting_date": d.isoformat(),

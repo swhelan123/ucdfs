@@ -68,6 +68,8 @@
   border: 1.5px solid var(--border); background: var(--card); color: var(--text); }
 .area:focus { outline: none; border-color: var(--green); }
 .counter { font-size: 0.68rem; color: var(--muted); text-align: right; margin-top: 4px; }
+.req { color: var(--red-text); letter-spacing: 0; }
+.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 /* ── The weekly box ──
    Its own card rather than a third field in the one above, because it answers
@@ -184,7 +186,7 @@
             </button>
           </div>
           <div class="why hidden" id="why">
-            <label for="reason">Why not?</label>
+            <label for="reason">Why not? <span class="req">Required</span></label>
             <textarea class="area" id="reason" maxlength="300"
                       placeholder="Lab clashes with it, away that week, …"></textarea>
             <div class="counter" id="reason-count"></div>
@@ -320,6 +322,15 @@ function buildForm() {
   if (document.activeElement !== reason) reason.value = (row && row.reason) || '';
   countReason();
   document.getElementById('submit-label').textContent = row ? 'Update answer' : 'Save answer';
+  refreshSubmit();
+}
+
+/* A no needs a reason. The button says so by being unavailable rather than by
+   letting someone press it and bounce off a 400, but the server enforces it
+   either way — see api_meetings_respond. */
+function refreshSubmit() {
+  const blank = answer === false && !document.getElementById('reason').value.trim();
+  document.getElementById('submit-btn').disabled = blank;
 }
 
 function buildWeek() {
@@ -472,12 +483,18 @@ function renderHistory() {
       </div>`;
     }).join('');
 
+    /* The stamp line only exists if there is a stamp. Before 013 there is no
+       created_at, and rendering the label anyway left a bare "Written" with
+       nothing after it. */
+    const noteWhen = w.note && w.note.created_at
+      ? `<div class="log-when">Written ${esc(fmtStamp(w.note.created_at))}` +
+        (w.note.edited ? ` \u00b7 last changed ${esc(fmtStamp(w.note.updated_at))}` : '') +
+        `</div>`
+      : '';
     const note = w.note && w.note.summary ? `<div class="log-note">
         <div class="log-note-head">What you did that week</div>
         ${esc(w.note.summary)}
-        <div class="log-when">Written ${esc(fmtStamp(w.note.created_at))}` +
-        (w.note.edited ? ` \u00b7 last changed ${esc(fmtStamp(w.note.updated_at))}` : '') +
-        `</div></div>` : '';
+        ${noteWhen}</div>` : '';
 
     return `<div class="log-week">
       <div class="log-head">Week of ${esc(fmtWeek(w.week_start))}</div>
@@ -498,6 +515,11 @@ function countSummary() {
 
 async function save(btn) {
   if (answer === null) { UCDFS.toast('Pick yes or no first'); return; }
+  if (answer === false && !document.getElementById('reason').value.trim()) {
+    UCDFS.toast("Say why you can't make it");
+    document.getElementById('reason').focus();
+    return;
+  }
   const label = document.getElementById('submit-label');
   const orig  = label.innerHTML;
   btn.disabled = true; label.innerHTML = '<span class="spinner"></span>';
@@ -538,7 +560,7 @@ async function saveWeek(btn) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('reason').addEventListener('input', countReason);
+  document.getElementById('reason').addEventListener('input', () => { countReason(); refreshSubmit(); });
   document.getElementById('summary').addEventListener('input', countSummary);
   UCDFS.gate(user => {
     me = user;

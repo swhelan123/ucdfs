@@ -35,9 +35,10 @@ create table if not exists public.meeting_responses (
   -- meant when they were written.
   meeting_date date        not null,
   attending    boolean     not null,
-  -- Only meaningful when attending is false. Empty is allowed at the database
-  -- level and discouraged at the UI: a required box people cannot get past
-  -- collects "n/a" rather than reasons.
+  -- Only meaningful when attending is false, and required there: the API
+  -- refuses a no with an empty reason. Still nullable-in-effect at this level,
+  -- because the rows that carry a yes legitimately have none and a check
+  -- constraint would have to encode the whole rule to allow them.
   reason       text        not null default '',
   updated_at   timestamptz not null default now(),
   unique (profile_id, meeting_date)

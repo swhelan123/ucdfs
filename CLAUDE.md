@@ -553,6 +553,63 @@ enforced, but any signed-in member could delete anybody's day with one fetch.
 whitespace-collapsed (those rows predate accounts and were typed by hand), with
 god mode as the only override.
 
+**The Competition Hub had the same bug in three places, found 2026-09-01 while
+designing the purchase-request applet.** Worth writing down because the first
+fix did not generalise: it was applied where the bug was found and nowhere else,
+and the shopping list had been sitting there the whole time.
+
+- `/comp/api/requests` took the requester from the body, so a request could be
+  filed in somebody else's name.
+- `/comp/api/requests/edit` and `/delete` took a `name` and compared the row
+  against it — passing the owner's name was the whole check.
+- `/comp/api/requests/update` **had no check at all**, and that was the one that
+  mattered: `price`, `status` and `bought_by` are the entire input to
+  `/comp/api/expenses`, so any signed-in member could mark anything bought at
+  any price in any name and mint a debt owed to themselves.
+
+The gate on pricing is the **shop runner**, not an admin, because that is the
+flow the page implements: somebody says "I'm going", shops, enters prices. A
+committee account can always do it, for when whoever went never declared
+themselves. `/comp/api/runner` needed the same treatment once it became the
+gate — it also took a bare name, so naming somebody else was a way to hand
+yourself the ability to write prices.
+
+Note the shape of the fix: **forcing `bought_by` to the caller is not enough on
+its own.** Self-attribution *is* the attack, because `bought_by` is the person
+everyone else ends up owing. Stamping the field is right, but the control is
+being the runner.
+
+One clause exists purely to match what the page already draws: whoever is
+recorded as the buyer can keep editing that row after standing down as runner,
+because ↩️ is drawn for the buyer and clicking Done is the normal end of a shop
+run. Without it, buying five things and tapping Done locks you out of correcting
+any of them. It cannot invent a debt — the row already names you as who paid.
+**Check the page before writing a gate**: here the UI had it right all along
+(`isRunner` for the price row, `isBuyer` for undo) and the server simply was not
+enforcing what the page was claiming.
+
+`tests/suite-comp.js` pins all of it, negatives first, with one positive control
+— a runner who *can* price a request. Without that, every negative passes just
+as well on an endpoint that refuses everybody.
+
+**Then the same fix was made to generalise, by audit rather than by eye.**
+Walking every POST/PUT/PATCH/DELETE route for a person-shaped field read out of
+the JSON body, and subtracting the ones that already guard, leaves a short list.
+Everything on it was a false positive — `/api/auth/*` is pre-auth by definition,
+and `name` on `/api/plans` and `/api/admin/links` is the *thing's* name — except
+one:
+
+`/pt/api/toggle` took `user_name` from the body and wrote it into `pt_done_log`,
+which is append-only and is the audit trail the build plan is trusted on. Any
+signed-in member could tick a task and sign it as somebody else. `_me_name()` is
+the single helper all of this now goes through, which is why it sits next to
+`current_profile()` rather than in whichever applet needed it first.
+
+The lesson is the reason this section keeps growing: **fixing the instance is
+not fixing the bug.** Attendance was fixed in 2026-07 and the identical hole sat
+in the Comp Hub and the PT log for another month, because nobody swept for the
+pattern. If you fix one of these, run the sweep.
+
 ## Subteams
 
 `SUBTEAMS` in `main.py` (Powertrain / Mechanical / Operations) is the vocabulary

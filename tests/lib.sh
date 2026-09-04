@@ -240,6 +240,35 @@ except Exception as e:
 PY
 }
 
+cleanup_comp_requests() {
+  # Shopping-list rows created by suite-comp (the permission checks).
+  #
+  # Same prefix-matching argument as cleanup_links, plus one of its own: these
+  # rows are owned by test accounts that cleanup_test_accounts has just deleted,
+  # so nothing can reach them through the API again. Only the service key can,
+  # and only from here.
+  #
+  # Not inert either. comp_requests with status 'bought' is the entire input to
+  # /comp/api/expenses, so a leftover priced row is a phantom debt on the
+  # non-prod Competition Hub.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+q = "/rest/v1/comp_requests?item=like." + urllib.parse.quote(prefix + "*", safe="")
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test request(s)")
+except Exception as e:
+    print(f"  cleanup: could not tidy comp requests ({e})")
+PY
+}
+
 cleanup_pt_done_log() {
   local since="${1:-}"
   [ -z "$since" ] && return 0

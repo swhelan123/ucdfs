@@ -158,41 +158,9 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
 #pt-empty h4{font-size:14px;font-weight:800;color:var(--ink);margin-bottom:6px;}
 #pt-empty p{font-size:12px;color:var(--muted);line-height:1.5;}
 
-/* ── First-run tour ──
-   Styles live here, not in shared.css: this page deliberately does not load it
-   (see the note in CLAUDE.md about shared.js carrying its own CSS, the same
-   trap applies to anything a canvas tool draws for itself). */
-#tour-bg{
-  position:fixed;inset:0;background:rgba(20,30,48,.55);z-index:600;
-  display:none;align-items:center;justify-content:center;padding:20px;
-}
-#tour-bg.show{display:flex;}
-#tour{
-  background:#fff;border-radius:18px;width:100%;max-width:420px;padding:22px;
-  box-shadow:0 24px 60px rgba(20,30,48,.4);
-}
-#tour .step-of{font-size:10.5px;font-weight:800;letter-spacing:.08em;
-  text-transform:uppercase;color:var(--muted);}
-#tour h3{font-size:17px;font-weight:800;color:var(--ink);margin:6px 0 8px;}
-#tour p{font-size:13px;line-height:1.6;color:#4a5568;}
-#tour .art{
-  background:var(--bg,#f4f6fb);border:1.5px solid var(--card-border);
-  border-radius:12px;padding:14px;margin:14px 0 4px;text-align:center;
-  font-size:20px;letter-spacing:4px;
-}
-#tour .art small{display:block;letter-spacing:0;font-size:11px;color:var(--muted);margin-top:7px;}
-.tour-dots{display:flex;gap:6px;justify-content:center;margin:16px 0 4px;}
-.tour-dot{width:7px;height:7px;border-radius:50%;background:var(--card-border);}
-.tour-dot.on{background:var(--mfg);}
-.tour-actions{display:flex;gap:8px;align-items:center;margin-top:14px;}
-.tour-actions .spacer{flex:1;}
-.tour-actions button{
-  padding:8px 15px;border:none;border-radius:10px;font-family:inherit;
-  font-size:12.5px;font-weight:700;cursor:pointer;
-}
-#tour-skip{background:transparent;color:var(--muted);padding-left:0;}
-#tour-back{background:#eef2fb;color:var(--ink);}
-#tour-next{background:var(--mfg);color:#fff;}
+/* The ? that reopens the tour. The overlay itself is drawn and styled by
+   shared.js; this button is ours because it sits in this page's own header and
+   has to match it rather than the card pages. */
 .helpbtn{
   width:26px;height:26px;border-radius:8px;border:1.5px solid var(--card-border);
   background:#fff;color:var(--muted);font-size:12px;font-weight:800;
@@ -441,21 +409,7 @@ body{background:var(--bg);font-family:'Segoe UI',Inter,system-ui,-apple-system,s
   </div>
 </div>
 
-<div id="tour-bg">
-  <div id="tour">
-    <div class="step-of" id="tour-count"></div>
-    <h3 id="tour-title"></h3>
-    <p id="tour-text"></p>
-    <div class="art" id="tour-art"></div>
-    <div class="tour-dots" id="tour-dots"></div>
-    <div class="tour-actions">
-      <button id="tour-skip" type="button">Skip</button>
-      <div class="spacer"></div>
-      <button id="tour-back" type="button">Back</button>
-      <button id="tour-next" type="button">Next</button>
-    </div>
-  </div>
-</div>
+
 
 <div id="pt-loading"><div class="spinner"></div></div>
 <div id="scroll"><div id="zoomwrap"><div id="canvas"><svg id="svg-layer"></svg></div></div></div>
@@ -1760,11 +1714,10 @@ async function loadState(){
 // stays out of the way, but the ? in the header brings it back. A tutorial you
 // can only ever see once is one people dismiss by accident and then can't find.
 //
-// "Seen" is in localStorage because it is a per-browser preference and not
-// identity: getting it wrong shows somebody a tour twice, which is why it does
-// not need a column, a migration or a round trip. The key is versioned so
-// rewriting these steps can show them again.
-const TOUR_KEY='ucdfs_pt_tour_v1';
+// The engine is UCDFS.tour() in shared.js, along with the reasoning about where
+// "seen" is kept. Only the content lives here, and should: these five cards are
+// about this canvas, and folding them into a portal-wide tour would make one
+// nobody finishes. Registered at the bottom of INIT.
 const TOUR=[
   {
     t:'Tasks flow upward',
@@ -1803,61 +1756,22 @@ const TOUR=[
     art:'●●●', sub:'← goes back to the list of charts',
   },
 ];
-let tourAt=0;
-const tourBg=document.getElementById('tour-bg');
-function tourRender(){
-  const s=TOUR[tourAt];
-  document.getElementById('tour-count').textContent='Step '+(tourAt+1)+' of '+TOUR.length;
-  document.getElementById('tour-title').textContent=s.t;
-  document.getElementById('tour-text').textContent=s.p;
-  document.getElementById('tour-art').innerHTML=s.art+'<small>'+s.sub+'</small>';
-  // Built as elements rather than by splicing an expression into a class
-  // attribute. suite-static reads those attributes with a regex to check every
-  // class is defined somewhere, and an expression inside one parses as two
-  // nonsense class names, so the check fails on markup that is perfectly fine.
-  // Cheaper to write it this way than to teach the checker to read JavaScript.
-  const dots=document.getElementById('tour-dots');
-  dots.innerHTML='';
-  TOUR.forEach((_,i)=>{
-    const dot=document.createElement('div');
-    dot.className='tour-dot';
-    if(i===tourAt) dot.classList.add('on');
-    dots.appendChild(dot);
-  });
-  document.getElementById('tour-back').style.visibility=tourAt?'':'hidden';
-  document.getElementById('tour-next').textContent=tourAt===TOUR.length-1?'Got it':'Next';
-}
-function tourOpen(at){ tourAt=at||0; tourRender(); tourBg.classList.add('show'); }
-function tourClose(){
-  tourBg.classList.remove('show');
-  try{ localStorage.setItem(TOUR_KEY,'1'); }catch(e){ /* private mode */ }
-}
-document.getElementById('tour-next').addEventListener('click',()=>{
-  if(tourAt===TOUR.length-1) tourClose(); else { tourAt++; tourRender(); }
-});
-document.getElementById('tour-back').addEventListener('click',()=>{
-  if(tourAt) { tourAt--; tourRender(); }
-});
-document.getElementById('tour-skip').addEventListener('click',tourClose);
-document.getElementById('helpbtn').addEventListener('click',()=>tourOpen(0));
-tourBg.addEventListener('mousedown',e=>{ if(e.target===tourBg) tourClose(); });
-document.addEventListener('keydown',e=>{
-  if(!tourBg.classList.contains('show')) return;
-  if(e.key==='Escape') tourClose();
-  if(e.key==='ArrowRight'&&tourAt<TOUR.length-1){ tourAt++; tourRender(); }
-  if(e.key==='ArrowLeft'&&tourAt>0){ tourAt--; tourRender(); }
-});
 
 // ── INIT ──────────────────────────────────────────────────────────────
 (async()=>{
   await loadState();
   scroll.scrollTop=40;
   wsConnect();
-  // After the canvas is up, so the tour is shown over the thing it describes
-  // rather than over a spinner.
-  let seen=true;
-  try{ seen=!!localStorage.getItem(TOUR_KEY); }catch(e){ /* private mode: don't nag */ }
-  if(!seen) tourOpen(0);
+  // Registered here rather than at parse time, so the tour is shown over the
+  // thing it describes rather than over a spinner. shared.js also holds it back
+  // until the subteam question is done with the screen.
+  //
+  // One-time carry-over of the flag this page used to set for itself, so nobody
+  // who already sat through the tour is shown it again by the move.
+  try{
+    if(localStorage.getItem('ucdfs_pt_tour_v1')) localStorage.setItem('ucdfs_tour_pt_v1','1');
+  }catch(e){ /* private mode */ }
+  UCDFS.tour({ key:'pt_v1', steps:TOUR, button:'#helpbtn' });
 })();
 </script>
 </body>

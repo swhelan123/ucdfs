@@ -38,6 +38,15 @@
 
   var obStarted = false;    // the subteam step is raised at most once per page
   var obCallbacks = [];     // pages that want to hear which one was picked
+  /* Settles when nothing this file owns is holding the screen, so a tour does
+     not open underneath the subteam question. Null means idle already: the
+     common case is a signed-in member who answered weeks ago, and they should
+     not wait on a promise to find that out. See whenOnboardingIdle(). */
+  var obIdle = null;
+  var obIdleDone = null;
+
+  var tourCfg = null;       // the tour this page registered, if any
+  var tourAt  = 0;          // which card is on screen
 
   // ── Identity ─────────────────────────────────────────────────────────────
 
@@ -354,7 +363,48 @@
       'font-weight:700;text-align:center;text-decoration:none;cursor:pointer;}' +
     '.ob-later{width:100%;padding:11px;background:none;border:none;font-family:inherit;' +
       'font-size:.8rem;color:var(--muted,#64748b);cursor:pointer;border-radius:10px;}' +
-    '.ob-later:hover{background:var(--bg,#f1f5f9);color:var(--text,#0f172a);}';
+    '.ob-later:hover{background:var(--bg,#f1f5f9);color:var(--text,#0f172a);}' +
+
+    /* The ? that reopens a tour. Injected into .header-inner on the card pages;
+       the canvas tools pass their own button instead, because they style one to
+       match their own header rather than this one. */
+    '.ucdfs-help{width:26px;height:26px;border-radius:8px;flex-shrink:0;' +
+      'border:1.5px solid var(--border,#e2e8f0);background:var(--card,#fff);' +
+      'color:var(--muted,#64748b);font-family:inherit;font-size:12px;font-weight:800;' +
+      'cursor:pointer;line-height:1;}' +
+    '.ucdfs-help:hover{border-color:var(--indigo,#4f46e5);color:var(--indigo,#4f46e5);}' +
+
+    /* Below .ob-wrap on purpose. The two should never be on screen together and
+       whenOnboardingIdle() is what makes sure of it, but if that ever fails the
+       question people cannot get past should be the one on top. */
+    '.ucdfs-tour-bg{position:fixed;inset:0;z-index:1990;background:rgba(15,23,42,.55);' +
+      '-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);' +
+      'display:none;align-items:center;justify-content:center;padding:20px;' +
+      'overflow-y:auto;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}' +
+    '.ucdfs-tour-bg.show{display:flex;}' +
+    '.ucdfs-tour{background:var(--card,#fff);color:var(--text,#0f172a);' +
+      'border-radius:18px;width:100%;max-width:420px;padding:22px;margin:auto;' +
+      'box-shadow:0 24px 60px rgba(15,23,42,.4);}' +
+    '.ucdfs-tour-count{font-size:10.5px;font-weight:800;letter-spacing:.08em;' +
+      'text-transform:uppercase;color:var(--muted,#64748b);}' +
+    '.ucdfs-tour-h{font-size:17px;font-weight:800;margin:6px 0 8px;}' +
+    '.ucdfs-tour-p{font-size:13px;line-height:1.6;color:var(--muted,#4a5568);margin:0;}' +
+    '.ucdfs-tour-art{background:var(--bg,#f4f6fb);border:1.5px solid var(--border,#e2e8f0);' +
+      'border-radius:12px;padding:14px;margin:14px 0 4px;text-align:center;' +
+      'font-size:20px;letter-spacing:4px;}' +
+    '.ucdfs-tour-art small{display:block;letter-spacing:0;font-size:11px;' +
+      'color:var(--muted,#64748b);margin-top:7px;}' +
+    '.ucdfs-tour-dots{display:flex;gap:6px;justify-content:center;margin:16px 0 4px;}' +
+    '.ucdfs-tour-dot{width:7px;height:7px;border-radius:50%;background:var(--border,#e2e8f0);}' +
+    '.ucdfs-tour-dot.on{background:var(--indigo,#4f46e5);}' +
+    '.ucdfs-tour-actions{display:flex;gap:8px;align-items:center;margin-top:14px;}' +
+    '.ucdfs-tour-spacer{flex:1;}' +
+    '.ucdfs-tour-actions button{padding:8px 15px;border:none;border-radius:10px;' +
+      'font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;}' +
+    '.ucdfs-tour-skip{background:transparent;color:var(--muted,#64748b);padding-left:0;}' +
+    '.ucdfs-tour-back{background:var(--bg,#eef2fb);color:var(--text,#0f172a);}' +
+    '.ucdfs-tour-next{background:var(--indigo,#4f46e5);color:#fff;}';
 
   function ensureRuntimeStyles() {
     if (document.getElementById('ucdfs-runtime-css')) return;
@@ -400,15 +450,33 @@
     if (obStarted) return;
     obStarted = true;
 
+    /* From here we might put something on screen, and we will not know which
+       for a round trip. Anything else that wants the screen waits on this
+       rather than racing the answer. */
+    obIdle = new Promise(function (r) { obIdleDone = r; });
+
     fetch('/api/profile/me')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (meta) {
         /* !ready means 003 isn't applied. Asking someone to pick and then
            failing to save it is worse than not asking. */
-        if (!meta || !meta.ready || meta.onboarded) return;
+        if (!meta || !meta.ready || meta.onboarded) return obIdleDone();
         raise(meta.subteams || []);
       })
-      .catch(function () { /* never block a page over this */ });
+      .catch(function () { obIdleDone(); /* never block a page over this */ });
+  }
+
+  /**
+   * Resolves once the subteam question is done with the screen.
+   *
+   * A brand-new member meets the subteam step and then a profile nudge on their
+   * first sign-in. A tour that auto-opens is a third overlay, and without this
+   * the three race each other in whatever order their fetches land. The order
+   * is fixed and deliberate: identity, then orientation, then the profile nudge
+   * that already sends people off-page anyway.
+   */
+  function whenOnboardingIdle() {
+    return obIdle || Promise.resolve();
   }
 
   function raise(subteams) {
@@ -479,7 +547,166 @@
     var later = wrap.querySelector('#ob-later');
     later.disabled = false;
     later.textContent = 'Later';
-    later.onclick = function () { wrap.remove(); };
+    later.onclick = function () { wrap.remove(); obIdleDone(); };
+  }
+
+  // ── Tours ────────────────────────────────────────────────────────────────
+
+  /**
+   * A card-by-card walkthrough, with a ? in the header that brings it back.
+   *
+   * Lifted out of pt.html, which had the whole thing self-contained and proved
+   * the shape works. What moved here is the ENGINE. The steps stay with the
+   * page, deliberately: pt's five cards are good precisely because they are
+   * about that canvas, and concatenating every applet's steps into one portal
+   * tour would produce something nobody finishes.
+   *
+   *   UCDFS.tour({ key: 'portal_v1', steps: [...] })
+   *
+   *   key     namespaced into localStorage, and VERSIONED by convention, so
+   *           rewriting the steps shows them again to people who saw the old
+   *           ones.
+   *   steps   [{ t: title, p: body, art: glyph, sub: caption }]
+   *   button  an existing help button, element or selector. The canvas tools
+   *           style their own to match their header; everything else gets one
+   *           injected into .header-inner.
+   *
+   * Seen-ness is a per-browser preference and not identity. Getting it wrong
+   * shows somebody a tour twice, which is not worth a column, a migration and a
+   * round trip. The corollary, and it is a real limitation rather than an
+   * oversight: this records NOTHING about who has been onboarded. A new browser
+   * shows it again and nothing is auditable. That is right for orientation and
+   * would be wrong the day any of this carries safety induction or tools
+   * training, which are records and want a column on the profile. Add that
+   * separately when it is needed; do not quietly grow this into it.
+   *
+   * Call it at the point the page is actually ready, not at parse time: the
+   * tour describes what is on screen, and opening it over a spinner is how you
+   * get someone reading about a grid that has not drawn yet.
+   */
+  function tour(cfg) {
+    if (!cfg || !cfg.steps || !cfg.steps.length) return;
+    tourCfg = cfg;
+    tourMountButton(cfg);
+    if (cfg.auto === false || tourSeen(cfg.key)) return;
+    /* Never underneath the subteam question. See whenOnboardingIdle(). */
+    whenOnboardingIdle().then(function () { tourOpen(0); });
+  }
+
+  function tourSeen(key) {
+    /* A read that throws is private mode, and the honest answer there is "we
+       cannot remember". Treat it as seen: a tour that reopens on every single
+       page load is worse than one somebody never sees. */
+    try { return !!localStorage.getItem('ucdfs_tour_' + key); } catch (e) { return true; }
+  }
+
+  function tourMountButton(cfg) {
+    var btn = cfg.button;
+    if (typeof btn === 'string') btn = document.querySelector(btn);
+    if (!btn) {
+      /* No header to hang it off is not an error. The canvas tools that pass
+         their own button have already returned above, and a page without a
+         header still gets the tour, just without a way to reopen it. */
+      var inner = document.querySelector('.header-inner');
+      if (!inner || inner.querySelector('.ucdfs-help')) return;
+      ensureRuntimeStyles();
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ucdfs-help';
+      btn.id = 'ucdfs-help';
+      btn.textContent = '?';
+      btn.title = 'How this works';
+      btn.setAttribute('aria-label', 'How this works');
+      /* Before the name pill, so it reads as part of the page's own controls
+         rather than as something bolted onto the account menu. */
+      var pill = inner.querySelector('.name-pill');
+      if (pill) inner.insertBefore(btn, pill); else inner.appendChild(btn);
+    }
+    btn.addEventListener('click', function () { tourOpen(0); });
+  }
+
+  function tourBuild() {
+    var bg = document.getElementById('ucdfs-tour-bg');
+    if (bg) return bg;
+    ensureRuntimeStyles();
+    bg = document.createElement('div');
+    bg.className = 'ucdfs-tour-bg';
+    bg.id = 'ucdfs-tour-bg';
+    bg.innerHTML =
+      '<div class="ucdfs-tour" role="dialog" aria-modal="true"' +
+          ' aria-labelledby="ucdfs-tour-title">' +
+        '<div class="ucdfs-tour-count" id="ucdfs-tour-count"></div>' +
+        '<h3 class="ucdfs-tour-h" id="ucdfs-tour-title"></h3>' +
+        '<p class="ucdfs-tour-p" id="ucdfs-tour-text"></p>' +
+        '<div class="ucdfs-tour-art" id="ucdfs-tour-art"></div>' +
+        '<div class="ucdfs-tour-dots" id="ucdfs-tour-dots"></div>' +
+        '<div class="ucdfs-tour-actions">' +
+          '<button class="ucdfs-tour-skip" id="ucdfs-tour-skip" type="button">Skip</button>' +
+          '<div class="ucdfs-tour-spacer"></div>' +
+          '<button class="ucdfs-tour-back" id="ucdfs-tour-back" type="button">Back</button>' +
+          '<button class="ucdfs-tour-next" id="ucdfs-tour-next" type="button">Next</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(bg);
+
+    bg.querySelector('#ucdfs-tour-next').addEventListener('click', function () {
+      if (tourAt === tourCfg.steps.length - 1) tourClose();
+      else { tourAt++; tourRender(); }
+    });
+    bg.querySelector('#ucdfs-tour-back').addEventListener('click', function () {
+      if (tourAt) { tourAt--; tourRender(); }
+    });
+    bg.querySelector('#ucdfs-tour-skip').addEventListener('click', tourClose);
+    bg.addEventListener('mousedown', function (e) { if (e.target === bg) tourClose(); });
+    document.addEventListener('keydown', function (e) {
+      if (!bg.classList.contains('show')) return;
+      if (e.key === 'Escape') tourClose();
+      if (e.key === 'ArrowRight' && tourAt < tourCfg.steps.length - 1) { tourAt++; tourRender(); }
+      if (e.key === 'ArrowLeft'  && tourAt > 0)                        { tourAt--; tourRender(); }
+    });
+    return bg;
+  }
+
+  function tourRender() {
+    var steps = tourCfg.steps, s = steps[tourAt];
+    document.getElementById('ucdfs-tour-count').textContent =
+      'Step ' + (tourAt + 1) + ' of ' + steps.length;
+    document.getElementById('ucdfs-tour-title').textContent = s.t;
+    document.getElementById('ucdfs-tour-text').textContent  = s.p;
+    /* esc() because a step is page-authored content and this is innerHTML. The
+       <small> is the only markup here that has to survive. */
+    document.getElementById('ucdfs-tour-art').innerHTML =
+      esc(s.art || '') + '<small>' + esc(s.sub || '') + '</small>';
+
+    var dots = document.getElementById('ucdfs-tour-dots');
+    dots.innerHTML = '';
+    steps.forEach(function (_, i) {
+      var dot = document.createElement('div');
+      dot.className = 'ucdfs-tour-dot';
+      if (i === tourAt) dot.classList.add('on');
+      dots.appendChild(dot);
+    });
+
+    document.getElementById('ucdfs-tour-back').style.visibility = tourAt ? '' : 'hidden';
+    document.getElementById('ucdfs-tour-next').textContent =
+      tourAt === steps.length - 1 ? 'Got it' : 'Next';
+  }
+
+  function tourOpen(at) {
+    if (!tourCfg) return;
+    tourAt = at || 0;
+    var bg = tourBuild();
+    tourRender();
+    bg.classList.add('show');
+  }
+
+  function tourClose() {
+    var bg = document.getElementById('ucdfs-tour-bg');
+    if (bg) bg.classList.remove('show');
+    /* Skipping counts as seen. A tutorial that reopens because you dismissed it
+       is one people learn to dread; the ? is how you get it back. */
+    try { localStorage.setItem('ucdfs_tour_' + tourCfg.key, '1'); }
+    catch (e) { /* private mode */ }
   }
 
   // ── God mode ─────────────────────────────────────────────────────────────
@@ -575,6 +802,7 @@
     appletGroups: appletGroups,
     favourites: favourites,
     onboard: onboard,
+    tour: tour,
     godBar: godBar,
     photos: photos,
     photoFor: photoFor,

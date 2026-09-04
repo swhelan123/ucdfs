@@ -340,5 +340,70 @@ const PAGES = [
       arrived ? '' : 'the response never arrived, so nothing was proved');
   }
 
+  /* ── The portal tour, and the queue it has to wait in ──────────────────
+     UCDFS.tour() is the third thing that can put an overlay on screen, after
+     the subteam question and the profile nudge it chains into. Before the
+     queue existed they raced each other on whatever order their fetches
+     landed in, so a new member's first sign-in could show them a tour of a
+     page with a modal already sitting on top of it.
+
+     jsdom has no layout, which is fine: every check here is about which
+     elements exist and when, not about how they look. The one that matters is
+     the negative, and it is only worth anything next to the positive below —
+     "the tour did not open" passes just as well when the tour is broken. */
+  console.log('\nfirst-run overlays queue rather than stack');
+  {
+    // A brand-new account has not answered the subteam question, so that is
+    // what should be on screen, alone.
+    const { w, d } = await open('/', { setCookies, failOnPrompt: true });
+    const asked = await waitFor(() => d.querySelector('.ob-wrap'));
+    check('a new account is asked which division', asked);
+    // Generous: a racing tour would have shown up long before this.
+    await new Promise(r => setTimeout(r, 1200));
+    check('the tour does not stack on top of it',
+      !d.querySelector('.ucdfs-tour-bg.show'));
+    w.close();
+  }
+  {
+    // The positive control. Same page, but this account has answered, so
+    // nothing is holding the screen and the tour should open by itself.
+    const other = await signUp('Tour', 'Seen');
+    const hdr = other.setCookies.map(c => c.split(';')[0]).join('; ');
+    const r = await fetch(BASE + '/api/profile/subteam', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: hdr },
+      body: JSON.stringify({ subteam: 'pt' }),
+    });
+    // The answer comes back as a re-issued profile cookie; it has to land in
+    // the jar after the ones signUp handed out or the old one wins.
+    const answered = [...other.setCookies,
+                      ...(r.headers.getSetCookie ? r.headers.getSetCookie() : [])];
+
+    const { w, d } = await open('/', { setCookies: answered, failOnPrompt: true });
+    const up = await waitFor(() => d.querySelector('.ucdfs-tour-bg.show'));
+    check('it opens for someone who is past onboarding', up);
+    check('the ? is mounted in the header',
+      !!d.querySelector('.header-inner .ucdfs-help'));
+    const dots = d.querySelectorAll('.ucdfs-tour-dot').length;
+    const steps = w.eval('document.getElementById("ucdfs-tour-count").textContent');
+    check('one dot per step', dots > 0 && steps === `Step 1 of ${dots}`,
+      `${dots} dots, count says "${steps}"`);
+    w.close();
+
+    // And having seen it once is the end of it. Seeded rather than clicked
+    // through: what is under test is that the stored flag suppresses the
+    // auto-open, not that six Next clicks work.
+    const seen = await open('/', {
+      setCookies: answered, failOnPrompt: true,
+      storage: { ucdfs_tour_portal_v1: '1' },
+    });
+    await new Promise(r => setTimeout(r, 1200));
+    check('a tour already seen does not reopen',
+      !seen.d.querySelector('.ucdfs-tour-bg.show'));
+    check('but the ? is still there to bring it back',
+      !!seen.d.querySelector('.ucdfs-help'));
+    seen.w.close();
+  }
+
   process.exit(summary('pages') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

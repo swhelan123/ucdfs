@@ -924,6 +924,66 @@ async function draw(user) {
     if (picked) setFilter(picked);
     renderGreeting(UCDFS.refreshUser() || user);
   });
+
+  /* Registered after the paint above, so the tour describes a page that has
+     actually drawn. shared.js holds it back until the subteam question is done
+     with the screen, so a brand-new member gets one overlay at a time in a
+     fixed order rather than three racing their fetches.
+
+     Six cards on the portal itself. Deliberately NOT a tour of every applet:
+     each of those describes its own canvas from its own ? button, and stapling
+     them together makes something nobody reaches the end of. */
+  UCDFS.tour({
+    key: 'portal_v1',
+    steps: [
+      {
+        t: 'Everything in one place',
+        p: 'This is the team portal: every tool we run, behind one sign-in. It holds '
+         + 'the things with a status, an owner or a deadline. Chat and files stay in '
+         + 'Teams, and anything that is really a document is linked from here rather '
+         + 'than copied into it.',
+        art: '⌂', sub: 'Teams for talking, this for tracking',
+      },
+      {
+        t: 'The grid is your tools',
+        p: 'Each card opens a tool, and most show a live number on the front so you can '
+         + 'see where something is without opening it. You only see what your account '
+         + 'can actually open, so the grid is shorter for some people than others and '
+         + 'nothing here will refuse you.',
+        art: '▦ ▦ ▦', sub: 'Dimmed cards are real but dormant',
+      },
+      {
+        t: 'Filter to your division',
+        p: 'The chips under Tools narrow the page to what matters to your division, and '
+         + 'start on the one you picked when you signed up. All shows everything. It is '
+         + 'about relevance and never about permission: nothing is hidden from you by a '
+         + 'chip, it is only pushed out of the way.',
+        art: '🏎️ ⚙️ 📋', sub: 'Remembered per device, not per account',
+      },
+      {
+        t: 'Pin what you use',
+        p: 'The ☆ on any card copies it to Favourites at the top of the page. Most people '
+         + 'live in two or three tools and scroll past the rest, so pin those on your '
+         + 'first day and the page becomes about half as long.',
+        art: '☆ → ★', sub: 'Follows your account onto any device',
+      },
+      {
+        t: 'What is happening now',
+        p: 'The top of the page carries the countdown to competition, who is in the '
+         + 'workshop right now, and Recent activity underneath: who ticked off what, '
+         + 'across every tool. It is the fastest way to see whether anything moved while '
+         + 'you were away.',
+        art: '⏳ ⚡', sub: 'Every tick you make shows up here',
+      },
+      {
+        t: 'Who everyone is',
+        p: 'Team Profiles is the directory: names, faces, what people are into and what '
+         + 'they know how to do. Worth filling in yours early, because it is how somebody '
+         + 'finds the one person who has done this before.',
+        art: '?', sub: 'The ? up top brings this back any time',
+      },
+    ],
+  });
 }
 
 UCDFS.gate(boot);

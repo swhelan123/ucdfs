@@ -702,6 +702,15 @@ publish the real dates.
 - Test accounts must use the `ucdfs-test-` prefix so cleanup can find them.
 - Run `./tests/run.sh` before saying something works. The suite is fast and has
   caught real bugs that looked fine by inspection.
+- **Only one run at a time on this machine, and the script enforces it.** CI is
+  a self-hosted runner on this same box running this same script, against a
+  fixed container name on a fixed port that `start_test_container` `docker rm
+  -f`s first. So a local run started while CI is going does not queue behind it,
+  it deletes CI's container mid-suite — and the failure looks like a bug in
+  whatever branch CI happened to be testing, not like a collision. That is what
+  reddened PR #21, whose code was fine. `run.sh` now takes an flock on
+  `/tmp/ucdfs-tests.lock` and waits; if it says it is waiting, that is CI or
+  another terminal, and `lsof` on that file says which.
 
 ## Environments
 

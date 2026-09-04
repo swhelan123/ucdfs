@@ -17,6 +17,13 @@ screenshotted and looked at rather than asserted. Drive it the same way
 
 ## How it works
 
+Runs are **serialised by a lock** (`/tmp/ucdfs-tests.lock`). CI runs on a
+self-hosted runner on this same machine and uses this same script, so a local
+run started while CI is going would otherwise `docker rm -f` CI's container out
+from under it — and the failure looks like a bug in whatever branch CI was
+testing, not like a collision. If a run says it is waiting, that is CI, or
+another terminal; `lsof /tmp/ucdfs-tests.lock` says which.
+
 A throwaway container is built from the working tree and served on **:3979**.
 The live container on **:3978 is never touched**.
 

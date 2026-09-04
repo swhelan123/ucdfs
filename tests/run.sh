@@ -47,9 +47,18 @@ if [ "$needs_node" = "1" ] && [ ! -d "$ROOT/tests/node_modules" ]; then
     echo "npm install failed" >&2; exit 1; }
 fi
 
+# Set only once this run has the lock AND has started its own container. Every
+# teardown below is gated on it, because until then there is nothing of ours to
+# tear down and quite possibly something of somebody else's: a run that blocks
+# on the lock and is then Ctrl-C'd would otherwise fire this trap and delete the
+# container, the accounts and the feed lines belonging to the run it was waiting
+# for. That is the same bug the lock exists to prevent, coming in through the
+# EXIT trap instead of through docker rm.
+OWNS_CONTAINER=0
+
 cleanup() {
   local code=$?
-  if [ "$needs_container" = "1" ]; then
+  if [ "$OWNS_CONTAINER" = "1" ]; then
     echo
     cleanup_test_accounts
     cleanup_activity_log "$RUN_STARTED"
@@ -66,9 +75,44 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── One test run at a time on this machine ────────────────────────────────
+# The container name and port are fixed, and start_test_container does a
+# `docker rm -f` first, so a second run does not queue behind the first: it
+# destroys it. CI runs on a self-hosted runner on this same machine, so
+# "somebody ran the suite locally" and "CI is running" is a collision — and it
+# does not look like one. The container vanishes mid-run and every suite after
+# it dies on `fetch failed / SocketError: other side closed`, which reads as a
+# bug in whatever branch CI happened to be testing. That is exactly what
+# happened to PR #21, whose code was fine.
+#
+# Serialising rather than picking a free port per run, because the port is not
+# the only thing shared. Every run points at the one non-prod Supabase project,
+# and some of that state is singular: comp_meta's `runner` is a single row, and
+# suite-comp borrows it.
+#
+# The lock is an fd held for the life of the process, so it releases on exit,
+# on Ctrl-C, and on kill -9 alike. Nothing to clean up and nothing to go stale.
+if [ "$needs_container" = "1" ]; then
+  # A fixed path, not $TMPDIR: the whole job of this lock is to exclude runs
+  # across different checkouts and different shells on one machine, and a
+  # per-job or per-session TMPDIR would give each of them a private lock that
+  # excludes nothing. Both the CI runner and a human shell here run as the same
+  # user, so one file works for both.
+  LOCKFILE="/tmp/ucdfs-tests.lock"
+  exec 9>"$LOCKFILE" || { echo "Cannot open $LOCKFILE" >&2; exit 1; }
+  if ! flock -n 9; then
+    echo "Another test run holds the container (CI, or another terminal). Waiting…"
+    flock -w 1800 9 || {
+      echo "Gave up waiting for $LOCKFILE after 30 minutes." >&2
+      echo "Nothing actually running? See who holds it: lsof $LOCKFILE" >&2
+      exit 1; }
+  fi
+fi
+
 if [ "$needs_container" = "1" ]; then
   echo "Starting test container on port $TEST_PORT…"
   start_test_container
+  OWNS_CONTAINER=1
 fi
 
 total_fail=0

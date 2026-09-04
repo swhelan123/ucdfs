@@ -3598,7 +3598,17 @@ async def api_meetings_respond(request: Request):
         sb().table("meeting_responses").upsert({
             "profile_id": who, "meeting_date": d.isoformat(),
             "attending": attending, "reason": reason,
-            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+            # updated_at is deliberately NOT sent. It has a default of now()
+            # and a BEFORE UPDATE trigger, so the database owns it on both
+            # branches of the upsert — and that is what makes created_at and
+            # updated_at exactly equal on a first write, since now() is the
+            # transaction timestamp and both defaults read the same one.
+            #
+            # Sending it from here broke that: the payload carried Python's
+            # clock, taken before the round trip, while created_at took
+            # Postgres's at insert. They landed microseconds apart and in
+            # either order, so `edited` — which is created_at != updated_at —
+            # was true for every row that had never been edited.
         }, on_conflict="profile_id,meeting_date").execute()
     except Exception as e:
         logger.error(f"[meetings] respond failed for {who} on {d}: {e}")
@@ -3633,7 +3643,8 @@ async def api_meetings_week_note(request: Request):
     try:
         sb().table("week_notes").upsert({
             "profile_id": who, "week_start": week.isoformat(), "summary": summary,
-            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+            # Left to the database, for the reason above api_meetings_respond's
+            # upsert: the app's clock and Postgres's are not the same clock.
         }, on_conflict="profile_id,week_start").execute()
     except Exception as e:
         logger.error(f"[meetings] week note failed for {who} on {week}: {e}")

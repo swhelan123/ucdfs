@@ -1498,6 +1498,138 @@ async def api_admin_role(request: Request):
 # they record what happened rather than who exists, the same rule that keeps
 # activity subjects as text. The feed's own delete below is how you tidy those.
 
+# ── Captaincy (migrations/014) ────────────────────────────────────────────────
+# Which account leads each division, and the only notion of "captain" that
+# grants anything. profile_details.role_label is the display string people set
+# on themselves; it is not this and must never be read as this.
+#
+# Assigned from /admin by an admin, like roles. The purchase-request applet
+# needs it, and so does anything that wants to let a captain see their own
+# division's work rather than only their own.
+
+
+def _captains() -> dict:
+    """{subteam id: profile id}. Empty when 014 has not been applied.
+
+    Empty is the safe failure here, and worth being explicit about: every caller
+    treats "no captain for this division" as nobody being able to approve, which
+    stalls a request. The other direction — an unreadable table meaning anyone
+    may approve — is the one that would matter.
+    """
+    try:
+        rows = sb().table("captaincies").select("subteam,profile_id").execute().data or []
+    except Exception as e:
+        logger.error(f"[captains] lookup failed: {e}")
+        return {}
+    return {r["subteam"]: r["profile_id"] for r in rows if r.get("subteam") and r.get("profile_id")}
+
+
+def _captain_of(subteam: Optional[str]) -> Optional[str]:
+    """Who leads that division, if anyone does."""
+    return _captains().get(subteam or "")
+
+
+def _leads(profile_id: str) -> list:
+    """Which divisions this account leads. Usually none or one; two is allowed,
+    because a thin year is a real situation and a unique constraint that
+    forbids it would be preventing tidiness rather than an error."""
+    return sorted(s for s, pid in _captains().items() if pid == profile_id)
+
+
+@app.get("/api/admin/captains")
+async def api_admin_captains(request: Request):
+    """Current captaincies, plus everyone who could hold one."""
+    require_role(request, "admin")
+    try:
+        rows = supabase.table("profiles").select(
+            "id,first_name,last_name,email,subteam").execute().data or []
+    except Exception as e:
+        logger.error(f"[admin] captain list failed: {e}")
+        raise HTTPException(503, "Couldn't load the team.")
+    held = _captains()
+    people = sorted(
+        ({"id": r.get("id"),
+          "name": ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip(),
+          "email": r.get("email") or "",
+          "subteam": r.get("subteam")} for r in rows),
+        key=lambda p: p["name"].lower())
+    by_id = {p["id"]: p for p in people}
+    return {
+        # One entry per division whether or not it has a captain, so the page
+        # draws an empty slot rather than silently omitting a division nobody
+        # leads — which is exactly the one somebody needs to notice.
+        "captains": [{
+            "subteam": s["id"], "label": s["name"], "icon": s["icon"],
+            "profile_id": held.get(s["id"]),
+            "name": (by_id.get(held.get(s["id"])) or {}).get("name"),
+        } for s in SUBTEAMS],
+        "people": people,
+        "ready": bool(held) or _captaincies_table_ready(),
+    }
+
+
+def _captaincies_table_ready() -> bool:
+    """Whether 014 has been applied. Distinguishes "no captains yet" from "no
+    table", which otherwise look identical and send whoever is setting this up
+    to the wrong place."""
+    try:
+        sb().table("captaincies").select("subteam").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+@app.post("/api/admin/captains")
+async def api_admin_captain_set(request: Request):
+    """Give a division its captain, or clear the slot.
+
+    Admin-only, and deliberately not committee: this is the permission that
+    signs off spending, so handing it out is an admin action the way granting a
+    role is. Nobody can make themselves a captain by editing their profile,
+    which is the whole reason this table exists.
+    """
+    me = require_role(request, "admin")
+    b  = await request.json()
+    subteam = (b.get("subteam") or "").strip()
+    target  = (b.get("profile_id") or "").strip()
+
+    if subteam not in SUBTEAM_IDS:
+        raise HTTPException(400, "Unknown division")
+
+    if not target:
+        try:
+            supabase.table("captaincies").delete().eq("subteam", subteam).execute()
+        except Exception as e:
+            logger.error(f"[admin] clearing {subteam} captain failed: {e}")
+            raise HTTPException(503, "Couldn't save that. Has migration 014 been applied?")
+        log_activity("admin", _public_profile(me).get("name"),
+                     "cleared the captain for", SUBTEAMS_BY_ID[subteam]["name"])
+        return {"ok": True, "captain": None}
+
+    # Checked rather than trusted: a profile_id that matches nobody would sit in
+    # the table as a captaincy no one holds, and the approval path would read it
+    # as a real person who never answers.
+    row = (supabase.table("profiles").select("id,first_name,last_name")
+           .eq("id", target).execute().data or [])
+    if not row:
+        raise HTTPException(404, "No such account")
+    name = ((row[0].get("first_name") or "") + " " + (row[0].get("last_name") or "")).strip()
+
+    try:
+        supabase.table("captaincies").upsert({
+            "subteam": subteam, "profile_id": target,
+            "assigned_at": datetime.now(TEAM_TZ).isoformat(),
+            "assigned_by": me.get("id"),
+        }, on_conflict="subteam").execute()
+    except Exception as e:
+        logger.error(f"[admin] setting {subteam} captain failed: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 014 been applied?")
+
+    log_activity("admin", _public_profile(me).get("name"),
+                 "made " + name + " captain of", SUBTEAMS_BY_ID[subteam]["name"])
+    return {"ok": True, "captain": {"subteam": subteam, "profile_id": target, "name": name}}
+
+
 @app.post("/api/admin/user/delete")
 async def api_admin_delete_user(request: Request):
     """Erase an account: the login, the profile, the details, the photo.

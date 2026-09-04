@@ -203,6 +203,20 @@
     <div class="section-label">Everyone</div>
     <div class="card" id="people"></div>
 
+    <div class="section-label">Division captains</div>
+    <div class="card" id="captains"></div>
+
+    <div class="note">
+      <b>Captains approve spending.</b> This is the only "captain" that grants
+      anything: the one people type into their own profile is a job title and
+      gates nothing. A division with no captain here has nobody who can approve
+      its requests, so an empty slot is worth filling before anyone starts
+      asking for parts.
+      <br><br>
+      The <b>Operations</b> captain is also the second signature on anything
+      over the threshold, so that slot carries more than its own division.
+    </div>
+
     <div class="section-label">Dashboard blocks</div>
     <div class="card"><div id="groups"></div></div>
     <button class="lnk-add" id="grp-add" type="button">+ Add a block</button>
@@ -788,11 +802,67 @@ async function load() {
   ME     = j.me;
   renderPeople();
   renderGod();
+  await loadCaptains();
+}
+
+/* ── Division captains ──
+   The permission behind purchase approvals. Kept next to roles because it is
+   the same kind of thing: something an admin grants, never something anyone
+   claims for themselves. */
+let CAPTAINS = [];
+
+async function loadCaptains() {
+  const el = document.getElementById('captains');
+  const r  = await fetch('/api/admin/captains');
+  if (!r.ok) { el.innerHTML = '<div class="who-mail">Could not load captains.</div>'; return; }
+  const j = await r.json();
+  CAPTAINS = j.captains || [];
+  if (!j.ready) {
+    /* "No captains yet" and "no table" look identical from here, and sending
+       somebody hunting through /admin when the answer is a migration is the
+       kind of hour nobody gets back. */
+    el.innerHTML = '<div class="who-mail">Not set up yet \u2014 apply migration 014.</div>';
+    return;
+  }
+  el.innerHTML = CAPTAINS.map(c => `
+    <div class="who">
+      ${UCDFS.avatar(c.name || '?', null, 'av av38 av-indigo')}
+      <div class="who-body">
+        <div class="who-name">${UCDFS.esc(c.icon + ' ' + c.label)}</div>
+        <div class="who-mail">${c.name ? UCDFS.esc(c.name) : 'No captain set'}</div>
+      </div>
+      <select class="who-role" data-subteam="${UCDFS.esc(c.subteam)}">
+        <option value="">\u2014 nobody \u2014</option>
+        ${(j.people || []).map(p => `<option value="${UCDFS.esc(p.id)}"
+           ${p.id === c.profile_id ? 'selected' : ''}>${UCDFS.esc(p.name)}</option>`).join('')}
+      </select>
+    </div>`).join('');
+}
+
+async function setCaptain(subteam, profileId) {
+  const r = await fetch('/api/admin/captains', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subteam, profile_id: profileId }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    UCDFS.toast(d.detail || 'Could not save that');
+  } else {
+    UCDFS.toast(profileId ? 'Captain set' : 'Captain cleared');
+  }
+  await loadCaptains();
 }
 
 async function boot() {
   UCDFS.renderPill();
   document.getElementById('god-switch').addEventListener('click', toggleGod);
+
+  /* Delegated for the same reason the link rows are: this list is redrawn
+     after every change. */
+  document.getElementById('captains').addEventListener('change', e => {
+    const sel = e.target.closest('select[data-subteam]');
+    if (sel) setCaptain(sel.dataset.subteam, sel.value);
+  });
 
   /* Delegated, because the rows are redrawn after every change and per-row
      listeners would be re-bound each time or leak. */

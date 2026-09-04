@@ -3635,6 +3635,120 @@ async def api_meetings_week_note(request: Request):
     return {"ok": True}
 
 
+def _meeting_days_between(start: date, end: date) -> list:
+    """Every scheduled meeting day in a closed range.
+
+    Deliberately not _meeting_dates(): that answers "what can still be answered
+    for" and is three weeks wide. This answers "what has happened", which is the
+    whole term, and wiring the log to the answering window would silently cap
+    somebody's history at a fortnight.
+    """
+    if end < start:
+        return []
+    span = (end - start).days + 1
+    return [d for d in (start + timedelta(days=i) for i in range(span))
+            if d.weekday() in MEETING_DAYS]
+
+
+@app.get("/api/meetings/history")
+async def api_meetings_history(request: Request, profile_id: str = ""):
+    """One person's own record, week by week, newest first.
+
+    Your own unless you are elevated, matching the write path. A captain being
+    able to read somebody's term is a fair thing to want and is not this: it
+    would want its own decision about who counts as a captain, which is the
+    permission the purchase-request design is waiting on too.
+    """
+    me  = current_profile(request)
+    who = (profile_id or "").strip() or me["id"]
+    if who != me["id"] and not is_god(request):
+        raise HTTPException(403, "You can only read your own log")
+
+    try:
+        rows = (sb().table("meeting_responses").select("*")
+                .eq("profile_id", who).execute().data or [])
+        notes = (sb().table("week_notes").select("*")
+                 .eq("profile_id", who).execute().data or [])
+    except Exception as e:
+        # Same degradation as the rest of this applet: an empty log on a site
+        # running ahead of its migration, not a 500 on the page that draws it.
+        logger.error(f"[meetings] history failed for {who}: {e}")
+        return {"weeks": [], "totals": {}, "ready": False}
+
+    # Unbounded on purpose. Two sessions and one note a week is about 75 rows a
+    # season, and a cap here would be an arbitrary number that quietly truncates
+    # somebody's year the first time it was wrong.
+    by_date = {r.get("meeting_date"): r for r in rows}
+    notes_by_week = {n.get("week_start"): n for n in notes}
+
+    today = datetime.now(TEAM_TZ).date()
+
+    def as_date(v):
+        try:
+            return date.fromisoformat(str(v)[:10])
+        except (TypeError, ValueError):
+            return None
+
+    seen = [d for d in (as_date(r.get("meeting_date")) for r in rows) if d]
+    seen += [d for d in (as_date(n.get("week_start")) for n in notes) if d]
+    if not seen:
+        return {"weeks": [], "totals": {"sessions": 0, "in": 0, "out": 0,
+                                        "unanswered": 0, "notes": 0}, "ready": True}
+
+    # From the first week they ever logged anything to now, so a week they said
+    # nothing at all still appears rather than closing the gap and reading as
+    # though the term ran two sessions shorter than it did.
+    start = _monday(min(seen))
+    end   = max(today, max(seen))
+
+    weeks: dict = {}
+    for d in _meeting_days_between(start, end):
+        wk  = _monday(d).isoformat()
+        row = by_date.get(d.isoformat())
+        first = as_date((row or {}).get("created_at"))
+        weeks.setdefault(wk, {"week_start": wk, "sessions": [], "note": None})
+        weeks[wk]["sessions"].append({
+            "date":       d.isoformat(),
+            "answered":   row is not None,
+            "attending":  (row or {}).get("attending"),
+            "reason":     (row or {}).get("reason") or "",
+            "created_at": (row or {}).get("created_at"),
+            "updated_at": (row or {}).get("updated_at"),
+            # Answered after the session had already happened. The reason this
+            # is worth showing at all is that updated_at cannot tell you: edit a
+            # typo today and an answer given last week looks like it was given
+            # today. created_at is what 013 added.
+            "late":       bool(row and first and first > d),
+            # The created_at guard is not redundant: before 013 the column does
+            # not exist, and None != updated_at would flag every row as edited.
+            "edited":     bool(row and row.get("created_at")
+                               and row.get("created_at") != row.get("updated_at")),
+            "past":       d < today,
+        })
+
+    for wk, note in notes_by_week.items():
+        weeks.setdefault(wk, {"week_start": wk, "sessions": [], "note": None})
+        weeks[wk]["note"] = {
+            "summary":    note.get("summary") or "",
+            "created_at": note.get("created_at"),
+            "updated_at": note.get("updated_at"),
+            "edited":     bool(note.get("created_at")
+                               and note.get("created_at") != note.get("updated_at")),
+        }
+
+    ordered = sorted(weeks.values(), key=lambda w: w["week_start"], reverse=True)
+
+    past = [s for w in ordered for s in w["sessions"] if s["past"]]
+    totals = {
+        "sessions":   len(past),
+        "in":         len([s for s in past if s["answered"] and s["attending"]]),
+        "out":        len([s for s in past if s["answered"] and s["attending"] is False]),
+        "unanswered": len([s for s in past if not s["answered"]]),
+        "notes":      len([w for w in ordered if w["note"] and w["note"]["summary"]]),
+    }
+    return {"weeks": ordered, "totals": totals, "ready": True}
+
+
 def _meetings_tile() -> dict:
     """The next meeting, and how much of the team has said either way."""
     today = datetime.now(TEAM_TZ).date()

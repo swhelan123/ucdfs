@@ -151,5 +151,47 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
   check('a week outside the window is refused',
     otherWeek.status === 400, String(otherWeek.status));
 
+  /* ── The personal log ──────────────────────────────────────────────────
+     Its own endpoint rather than a filter over /api/meetings, because that one
+     only returns the three weeks you can still answer for. The check that
+     matters is the last one: reusing the answering window would cap a term at
+     a fortnight and nothing else here would notice. */
+  console.log('\nyour own log');
+  const log = await get('/api/meetings/history', me.setCookies);
+  check('the log comes back', Array.isArray(log.weeks), JSON.stringify(log).slice(0, 80));
+  check('it counts the sessions it has', log.totals && typeof log.totals.in === 'number',
+    JSON.stringify(log.totals || null).slice(0, 90));
+
+  const logged = (log.weeks || []).find(w => w.week_start === target.week_start);
+  check('the week you answered for is in it', !!logged,
+    (log.weeks || []).map(w => w.week_start).join(' ') || 'none');
+  check('with both of that week\'s sessions, answered or not',
+    logged && logged.sessions.length === 2, String(logged ? logged.sessions.length : 0));
+  const sess = logged && logged.sessions.find(x => x.date === target.date);
+  check('and your answer on the right one',
+    sess && sess.answered === true && sess.attending === false,
+    JSON.stringify(sess || null).slice(0, 90));
+  check('the week note rides along', logged && logged.note &&
+    logged.note.summary.length === 1000, JSON.stringify((logged || {}).note || null).slice(0, 60));
+
+  /* created_at is what migration 013 adds, and the reason it exists: edit a
+     typo and updated_at moves, so without it a log cannot say when somebody
+     actually answered. Skipped rather than failed on a database that has 012
+     but not 013, so this suite still passes mid-rollout. */
+  if (sess && sess.created_at) {
+    check('an answer carries when it was first given', !!sess.created_at);
+    check('a fresh answer is not marked edited', sess.edited === false, String(sess.edited));
+  } else {
+    console.log('  ── no created_at; migration 013 not applied, timestamp checks skipped ──');
+  }
+
+  const nosey = await fetch(BASE + '/api/meetings/history?profile_id=' + mineId,
+                            { headers: hdr(other.setCookies) });
+  check('you cannot read somebody else\'s log', nosey.status === 403, String(nosey.status));
+
+  const own = await get('/api/meetings/history', other.setCookies);
+  check('and an account with nothing logged gets an empty one, not an error',
+    Array.isArray(own.weeks) && own.weeks.length === 0, JSON.stringify(own).slice(0, 70));
+
   process.exit(summary('meetings') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

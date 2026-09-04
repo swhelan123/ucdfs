@@ -104,6 +104,40 @@
 .av-no  { background: var(--red-mid);   color: var(--red-text); }
 .av-none { background: var(--border); color: var(--muted); }
 .list-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 0.86rem; }
+
+/* ── My log ──
+   The same rows the page above writes, read back as a term. Its own view
+   rather than a section under the picker, because the picker is about one
+   session and this is about all of them. */
+.stat-strip { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+.stat { flex: 1; min-width: 92px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 13px 14px; box-shadow: var(--shadow-sm); }
+.stat-n { font-size: 1.35rem; font-weight: 800; line-height: 1.1; }
+.stat-l { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-top: 3px; }
+.stat.warn .stat-n { color: var(--amber-text); }
+.log-week { background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+  box-shadow: var(--shadow-sm); margin-bottom: 14px; overflow: hidden; }
+.log-head { padding: 12px 18px; font-size: 0.78rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+  border-bottom: 1px solid var(--border); }
+.log-row { display: flex; align-items: flex-start; gap: 11px; padding: 12px 18px;
+  border-bottom: 1px solid var(--border); }
+.log-row:last-child { border-bottom: none; }
+.log-mark { font-size: 0.95rem; line-height: 1.3; width: 20px; flex-shrink: 0; text-align: center; }
+.log-body { flex: 1; min-width: 0; }
+.log-day { font-size: 0.88rem; font-weight: 600; }
+.log-why { font-size: 0.82rem; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+.log-when { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+.log-note { padding: 12px 18px; background: var(--bg); font-size: 0.85rem;
+  line-height: 1.55; border-top: 1px solid var(--border); }
+.log-note-head { font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-bottom: 5px; }
+.flag { display: inline-block; font-size: 0.64rem; font-weight: 800; padding: 1px 7px;
+  border-radius: 999px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+.flag-late   { background: var(--amber-bg); color: var(--amber-text); }
+.flag-edited { background: var(--bg); color: var(--muted); }
+.log-empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 0.88rem; }
 </style>
 </head>
 <body>
@@ -126,6 +160,12 @@
   </header>
 
   <div class="page">
+    <div class="tabs">
+      <button class="tab active" id="tab-btn-sessions" type="button" onclick="showTab('sessions')">🗓️ Sessions</button>
+      <button class="tab"        id="tab-btn-log"      type="button" onclick="showTab('log')">📜 My log</button>
+    </div>
+
+    <div id="panel-sessions">
     <div class="section-label">Pick a session</div>
     <div class="day-picker" id="day-picker"></div>
 
@@ -170,6 +210,13 @@
         <div class="section-label" id="list-label">Who's coming</div>
         <div class="list-card" id="list"></div>
       </div>
+    </div>
+
+    </div><!-- /panel-sessions -->
+
+    <div id="panel-log" style="display:none">
+      <div class="stat-strip" id="log-stats"></div>
+      <div id="log-weeks"></div>
     </div>
 
     <div class="foot">UCD Formula Student · <span id="foot-count"></span></div>
@@ -354,6 +401,91 @@ function buildList() {
   el.innerHTML = html;
 }
 
+/* ── My log ──────────────────────────────────────────────────────────────
+   The rows the page above writes, read back as a term. Its own endpoint, not
+   a filter over /api/meetings: that one only ever returns the three weeks you
+   can still answer for, and reusing it would quietly cap a term at a
+   fortnight. */
+let HISTORY = null;
+
+const fmtStamp = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-IE', {day:'numeric', month:'short'}) + ', ' +
+         d.toLocaleTimeString('en-IE', {hour:'2-digit', minute:'2-digit'});
+};
+
+function showTab(which) {
+  document.getElementById('panel-sessions').style.display = which === 'sessions' ? '' : 'none';
+  document.getElementById('panel-log').style.display      = which === 'log'      ? '' : 'none';
+  document.getElementById('tab-btn-sessions').classList.toggle('active', which === 'sessions');
+  document.getElementById('tab-btn-log').classList.toggle('active', which === 'log');
+  if (which === 'log') loadHistory();
+}
+
+async function loadHistory() {
+  const el = document.getElementById('log-weeks');
+  if (!HISTORY) el.innerHTML = '<div class="log-empty">Loading…</div>';
+  const d = await fetch('/api/meetings/history').then(r => r.json()).catch(() => null);
+  if (!d) { el.innerHTML = '<div class="log-empty">Couldn\u2019t load your log.</div>'; return; }
+  HISTORY = d;
+  renderHistory();
+}
+
+function renderHistory() {
+  const t  = HISTORY.totals || {};
+  const el = document.getElementById('log-weeks');
+  document.getElementById('log-stats').innerHTML = (HISTORY.weeks || []).length ? `
+    <div class="stat"><div class="stat-n">${t.in || 0}</div><div class="stat-l">Sessions in</div></div>
+    <div class="stat"><div class="stat-n">${t.out || 0}</div><div class="stat-l">Missed</div></div>
+    <div class="stat${t.unanswered ? ' warn' : ''}"><div class="stat-n">${t.unanswered || 0}</div><div class="stat-l">No answer</div></div>
+    <div class="stat"><div class="stat-n">${t.notes || 0}</div><div class="stat-l">Weeks written up</div></div>` : '';
+
+  if (!(HISTORY.weeks || []).length) {
+    el.innerHTML = `<div class="log-empty">Nothing logged yet. Answer for a session and it shows up here.</div>`;
+    return;
+  }
+
+  el.innerHTML = HISTORY.weeks.map(w => {
+    /* A session still to come is not a gap in the record, so it draws as
+       pending rather than as an unanswered one you should feel bad about. */
+    const rows = w.sessions.map(sn => {
+      const mark = !sn.past && !sn.answered ? '·'
+                 : !sn.answered            ? '—'
+                 : sn.attending            ? '\u2705' : '\u274c';
+      const what = !sn.answered ? (sn.past ? 'No answer given' : 'Not answered yet')
+                 : sn.attending ? 'You were there' : 'You were not there';
+      const flags = (sn.late   ? '<span class="flag flag-late">after the session</span>' : '') +
+                    (sn.edited ? '<span class="flag flag-edited">edited</span>' : '');
+      const when = sn.created_at
+        ? `<div class="log-when">Answered ${esc(fmtStamp(sn.created_at))}` +
+          (sn.edited ? ` · last changed ${esc(fmtStamp(sn.updated_at))}` : '') + `</div>`
+        : '';
+      return `<div class="log-row">
+        <div class="log-mark">${mark}</div>
+        <div class="log-body">
+          <div class="log-day">${esc(fmtDay(sn.date))}${flags}</div>
+          <div class="log-why">${esc(what)}${sn.reason ? ' \u00b7 ' + esc(sn.reason) : ''}</div>
+          ${when}
+        </div>
+      </div>`;
+    }).join('');
+
+    const note = w.note && w.note.summary ? `<div class="log-note">
+        <div class="log-note-head">What you did that week</div>
+        ${esc(w.note.summary)}
+        <div class="log-when">Written ${esc(fmtStamp(w.note.created_at))}` +
+        (w.note.edited ? ` \u00b7 last changed ${esc(fmtStamp(w.note.updated_at))}` : '') +
+        `</div></div>` : '';
+
+    return `<div class="log-week">
+      <div class="log-head">Week of ${esc(fmtWeek(w.week_start))}</div>
+      ${rows}${note}
+    </div>`;
+  }).join('');
+}
+
 function setAnswer(v) { answer = v; buildForm(); }
 function countReason() {
   const n = document.getElementById('reason').value.length;
@@ -378,6 +510,7 @@ async function save(btn) {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'failed');
     UCDFS.toast(answer ? "You're down as coming" : 'Noted, thanks for saying');
     await load();
+    if (HISTORY) await loadHistory();
   } catch (e) {
     UCDFS.toast(e.message || "Couldn't save that");
   }
@@ -397,6 +530,7 @@ async function saveWeek(btn) {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'failed');
     UCDFS.toast('Saved');
     await load();
+    if (HISTORY) await loadHistory();
   } catch (e) {
     UCDFS.toast(e.message || "Couldn't save that");
   }

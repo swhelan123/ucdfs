@@ -2,7 +2,7 @@
 # UCDFS test runner.
 #
 #   ./tests/run.sh                 everything
-#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|comp|harness|profiles|admin|plans)
+#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|purchases|comp|harness|profiles|admin|plans|links)
 #   ./tests/run.sh --keep          leave the test container up afterwards
 #
 # Runs against a throwaway container on :3979 built from the working tree.
@@ -22,7 +22,7 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings comp harness profiles admin plans links)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings purchases comp harness profiles admin plans links)
 
 # Stamped before anything runs, so cleanup can find exactly the rows this run
 # wrote to the shared activity feed and nothing older.
@@ -38,7 +38,7 @@ for s in "${SUITES[@]}"; do [ "$s" != "static" ] && needs_container=1; done
 
 needs_node=0
 for s in "${SUITES[@]}"; do
-  case "$s" in static|pages|login|comp|plans) needs_node=1 ;; esac
+  case "$s" in static|pages|login|meetings|purchases|comp|plans) needs_node=1 ;; esac
 done
 
 if [ "$needs_node" = "1" ] && [ ! -d "$ROOT/tests/node_modules" ]; then
@@ -126,6 +126,7 @@ for suite in "${SUITES[@]}"; do
     pages)  TEST_BASE="$BASE" node "$ROOT/tests/suite-pages.js" || total_fail=$((total_fail+1)) ;;
     login)  TEST_BASE="$BASE" node "$ROOT/tests/suite-login.js" || total_fail=$((total_fail+1)) ;;
     meetings) TEST_BASE="$BASE" node "$ROOT/tests/suite-meetings.js" || total_fail=$((total_fail+1)) ;;
+    purchases) TEST_BASE="$BASE" node "$ROOT/tests/suite-purchases.js" || total_fail=$((total_fail+1)) ;;
     comp)   TEST_BASE="$BASE" node "$ROOT/tests/suite-comp.js"  || total_fail=$((total_fail+1)) ;;
     harness) TEST_BASE="$BASE" node "$ROOT/tests/suite-harness.js" || total_fail=$((total_fail+1)) ;;
     profiles) TEST_BASE="$BASE" node "$ROOT/tests/suite-profiles.js" || total_fail=$((total_fail+1)) ;;

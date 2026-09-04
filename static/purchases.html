@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Purchase Requests</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Purchases-only styles. Tokens, header, buttons, tabs, ring, toast and empty
+   states all come from shared.css. */
+:root { --page-max: 1100px; }
+
+.form-card { background: var(--card); border-radius: 20px; padding: 20px;
+  border: 1px solid var(--border); box-shadow: var(--shadow-md); margin-bottom: 8px; }
+.f-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.f-field { flex: 1; min-width: 150px; }
+.f-field label { display: block; font-size: 0.72rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 5px; }
+.f-hint { font-size: 0.72rem; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+.f-req { color: var(--red-text); letter-spacing: 0; }
+
+/* One request. The status strip down the left is the fastest way to scan a
+   list of these for the one that needs you. */
+.pr { display: flex; gap: 0; background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow-sm); margin-bottom: 12px; overflow: hidden; }
+.pr-strip { width: 5px; flex-shrink: 0; background: var(--border); }
+.pr.s-submitted .pr-strip,
+.pr.s-dept_approved .pr-strip { background: var(--amber); }
+.pr.s-approved  .pr-strip { background: var(--green); }
+.pr.s-rejected  .pr-strip { background: var(--red); }
+.pr.s-withdrawn .pr-strip { background: var(--border); }
+.pr-body { flex: 1; min-width: 0; padding: 14px 16px; }
+.pr-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.pr-ref { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; color: var(--muted); }
+.pr-item { font-size: 0.95rem; font-weight: 700; }
+.pr-cost { margin-left: auto; font-size: 0.95rem; font-weight: 800; }
+.pr-why { font-size: 0.84rem; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+.pr-meta { font-size: 0.74rem; color: var(--muted); margin-top: 7px; line-height: 1.6; }
+.pr-state { display: inline-block; font-size: 0.66rem; font-weight: 800; padding: 2px 8px;
+  border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em; }
+.st-submitted, .st-dept_approved { background: var(--amber-bg); color: var(--amber-text); }
+.st-approved  { background: var(--green-bg); color: var(--green-text); }
+.st-rejected  { background: var(--red-bg);   color: var(--red-text); }
+.st-withdrawn { background: var(--bg);       color: var(--muted); }
+.pr-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.pr-note { flex: 1; min-width: 160px; }
+.pr-hist { font-size: 0.72rem; color: var(--muted); margin-top: 10px; line-height: 1.7;
+  border-top: 1px solid var(--border); padding-top: 9px; }
+.tab-count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px;
+  border-radius: 999px; background: var(--amber); color: #fff;
+  font-size: 0.66rem; font-weight: 800; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo">🧾</div>
+      <div class="header-text">
+        <div class="header-title">Purchase Requests</div>
+        <div class="header-sub" id="header-sub">Ask before you buy</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="tabs">
+      <button class="tab active" id="tab-btn-ask"   type="button" onclick="showTab('ask')">🧾 Ask</button>
+      <button class="tab"        id="tab-btn-queue" type="button" onclick="showTab('queue')">✍️ Waiting on you<span class="tab-count" id="queue-count" style="display:none"></span></button>
+      <button class="tab"        id="tab-btn-all"   type="button" onclick="showTab('all')">📋 Everything</button>
+    </div>
+
+    <div id="panel-ask">
+      <div class="section-label">Ask for something</div>
+      <div class="form-card">
+        <div class="f-row">
+          <div class="f-field" style="flex:2">
+            <label for="f-item">What do you need? <span class="f-req">Required</span></label>
+            <input class="text-input" id="f-item" maxlength="160" placeholder="e.g. Bosch MAP sensor">
+          </div>
+          <div class="f-field" style="max-width:110px">
+            <label for="f-qty">How many</label>
+            <input class="text-input" id="f-qty" type="number" min="1" value="1">
+          </div>
+          <div class="f-field" style="max-width:140px">
+            <label for="f-est">Roughly, €</label>
+            <input class="text-input" id="f-est" type="number" min="0" step="0.01" placeholder="0.00">
+          </div>
+        </div>
+        <div class="f-row">
+          <div class="f-field">
+            <label for="f-reason">What's it for? <span class="f-req">Required</span></label>
+            <input class="text-input" id="f-reason" maxlength="600"
+                   placeholder="e.g. the new pedal box needs a second sensor">
+          </div>
+        </div>
+        <div class="f-row">
+          <div class="f-field">
+            <label for="f-url">Link to it</label>
+            <input class="text-input" id="f-url" placeholder="optional">
+          </div>
+          <div class="f-field" style="max-width:180px">
+            <label for="f-needed">Needed by</label>
+            <input class="text-input" id="f-needed" type="date">
+          </div>
+          <div class="f-field" style="max-width:180px">
+            <label for="f-subsystem">Subsystem</label>
+            <input class="text-input" id="f-subsystem" maxlength="80" placeholder="optional">
+          </div>
+        </div>
+        <button class="btn btn-dark btn-full" id="submit-btn" onclick="fileRequest(this)">
+          <span id="submit-label">File request</span>
+        </button>
+        <div class="f-hint" id="who-approves"></div>
+      </div>
+
+      <div class="section-label">Your requests</div>
+      <div id="mine"></div>
+    </div>
+
+    <div id="panel-queue" style="display:none">
+      <div class="section-label">Waiting on your decision</div>
+      <div id="queue"></div>
+    </div>
+
+    <div id="panel-all" style="display:none">
+      <div class="section-label">Every request</div>
+      <div id="all"></div>
+    </div>
+
+    <div class="foot">UCD Formula Student · <span id="foot-count"></span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+const esc = s => UCDFS.esc(s);
+const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
+
+let DATA = null;
+const money = v => v === null || v === undefined || v === '' ? 'not given'
+  : '€' + Number(v).toFixed(2);
+const STATE_LABEL = {
+  submitted:     'Waiting on a captain',
+  dept_approved: 'Waiting on Operations',
+  approved:      'Approved',
+  rejected:      'Turned down',
+  withdrawn:     'Withdrawn',
+};
+
+function showTab(which) {
+  for (const t of ['ask', 'queue', 'all']) {
+    document.getElementById('panel-' + t).style.display = t === which ? '' : 'none';
+    document.getElementById('tab-btn-' + t).classList.toggle('active', t === which);
+  }
+}
+
+async function load() {
+  if (!DATA) { document.getElementById('mine').innerHTML = RING; }
+  const d = await fetch('/api/purchases').then(r => r.json()).catch(() => null);
+  if (!d) { document.getElementById('mine').innerHTML =
+    '<div class="empty"><div class="empty-text">Couldn’t load requests.</div></div>'; return; }
+  DATA = d;
+  render();
+}
+
+function render() {
+  const rows = DATA.requests || [];
+  const mine  = rows.filter(r => r.is_mine);
+  const queue = rows.filter(r => r.can_approve);
+
+  document.getElementById('mine').innerHTML  = list(mine,
+    'Nothing yet. Ask for something above and it shows up here.');
+  document.getElementById('queue').innerHTML = list(queue,
+    'Nothing is waiting on you.');
+  document.getElementById('all').innerHTML   = list(rows,
+    'No requests have been filed yet.');
+
+  const badge = document.getElementById('queue-count');
+  badge.textContent = queue.length;
+  badge.style.display = queue.length ? '' : 'none';
+
+  /* Told up front, because the one thing people want to know before filing is
+     who has to say yes and how long that is likely to take. */
+  const t = Number(DATA.threshold || 100);
+  const un = DATA.uncaptained || [];
+  const mineUncaptained = un.includes(DATA.my_subteam);
+  const label = id => (DATA.subteams.find(s => s.id === id) || {}).name || id;
+  document.getElementById('who-approves').innerHTML =
+    `Under €${t} your division captain decides on their own. ` +
+    `At €${t} or more it goes to them first, then to Operations.` +
+    (un.length
+      ? `<br><b>No captain set for ${esc(un.map(label).join(', '))}.</b> ` +
+        (mineUncaptained
+          ? 'Anything you file will wait until an admin assigns one in /admin.'
+          : 'Requests from those divisions cannot be approved until an admin assigns one.')
+      : '');
+
+  document.getElementById('foot-count').textContent =
+    rows.length + (rows.length === 1 ? ' request' : ' requests');
+}
+
+function list(rows, emptyText) {
+  if (!rows.length) return `<div class="empty"><div class="empty-text">${esc(emptyText)}</div></div>`;
+  return rows.map(card).join('');
+}
+
+function card(r) {
+  const acts = [];
+  if (r.can_approve) {
+    acts.push(`<input class="text-input pr-note" id="note-${r.id}" maxlength="400"
+                 placeholder="Note (required to turn down)">`);
+    acts.push(`<button class="btn btn-green btn-sm" onclick="decide(${r.id},'approve')">Approve</button>`);
+    acts.push(`<button class="btn btn-ghost btn-sm" onclick="decide(${r.id},'reject')">Turn down</button>`);
+  }
+  if (r.can_withdraw) {
+    acts.push(`<button class="btn btn-ghost btn-sm" onclick="withdraw(${r.id})">Withdraw</button>`);
+  }
+
+  /* Named, not "pending". Not knowing where a request has got to is the
+     universal complaint about this kind of system. */
+  /* Nobody eligible is a real state, not an empty one: with no captain set for
+     a division, its requests are filed and then wait on no-one. Saying so is
+     the difference between a fixable configuration problem and a tool that
+     looks broken. */
+  const waiting = !r.open_slot ? ''
+    : r.awaiting.length ? `Waiting on ${esc(r.awaiting.join(' or '))}`
+    : 'Nobody can approve this yet. Its division has no captain set';
+  const signed = [
+    r.dept_name ? `Division: ${esc(r.dept_name)}` : '',
+    r.ops_name  ? `Operations: ${esc(r.ops_name)}` : '',
+  ].filter(Boolean).join(' · ');
+
+  return `<div class="pr s-${esc(r.status)}">
+    <div class="pr-strip"></div>
+    <div class="pr-body">
+      <div class="pr-top">
+        <span class="pr-ref">${esc(r.ref)}</span>
+        <span class="pr-item">${esc(r.item)}${r.quantity > 1 ? ' ×' + r.quantity : ''}</span>
+        <span class="pr-cost">${esc(money(r.est_eur))}</span>
+      </div>
+      <div class="pr-why">${esc(r.reason)}</div>
+      <div class="pr-meta">
+        <span class="pr-state st-${esc(r.status)}">${esc(STATE_LABEL[r.status] || r.status)}</span>
+        ${waiting ? ' · ' + waiting : ''}
+        ${signed ? '<br>' + signed : ''}
+        ${r.decided_note ? '<br>“' + esc(r.decided_note) + '”' : ''}
+        <br>Asked by ${esc(r.requester)}${r.needed_by ? ' · needed by ' + esc(r.needed_by) : ''}
+        ${r.supplier_url ? ' · <a href="' + esc(r.supplier_url) + '" rel="noopener noreferrer" target="_blank">link</a>' : ''}
+      </div>
+      ${acts.length ? `<div class="pr-acts">${acts.join('')}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function fileRequest(btn) {
+  const item   = document.getElementById('f-item').value.trim();
+  const reason = document.getElementById('f-reason').value.trim();
+  if (!item)   { UCDFS.toast('Say what you need'); return; }
+  if (!reason) { UCDFS.toast("Say what it's for"); return; }
+
+  const orig = document.getElementById('submit-label').textContent;
+  btn.disabled = true;
+  document.getElementById('submit-label').innerHTML = '<span class="spinner"></span>';
+  const r = await fetch('/api/purchases', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      item, reason,
+      quantity:     document.getElementById('f-qty').value,
+      est_eur:      document.getElementById('f-est').value,
+      supplier_url: document.getElementById('f-url').value.trim(),
+      needed_by:    document.getElementById('f-needed').value,
+      subsystem:    document.getElementById('f-subsystem').value.trim(),
+    }),
+  });
+  btn.disabled = false;
+  document.getElementById('submit-label').textContent = orig;
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    UCDFS.toast(d.detail || 'Could not file that');
+    return;
+  }
+  const d = await r.json().catch(() => ({}));
+  for (const id of ['f-item', 'f-reason', 'f-url', 'f-subsystem', 'f-needed']) {
+    document.getElementById(id).value = '';
+  }
+  document.getElementById('f-qty').value = '1';
+  document.getElementById('f-est').value = '';
+  UCDFS.toast('Filed as ' + (d.ref || 'a request'));
+  await load();
+}
+
+async function decide(id, action) {
+  const note = (document.getElementById('note-' + id) || {}).value || '';
+  if (action === 'reject' && !note.trim()) {
+    UCDFS.toast("Say why you're turning it down");
+    return;
+  }
+  const r = await fetch('/api/purchases/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, action, note }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    UCDFS.toast(d.detail || 'Could not save that');
+    return;
+  }
+  UCDFS.toast(action === 'approve' ? 'Approved' : 'Turned down');
+  await load();
+}
+
+async function withdraw(id) {
+  if (!confirm('Withdraw this request?')) return;
+  const r = await fetch('/api/purchases/withdraw', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!r.ok) { UCDFS.toast('Could not withdraw that'); return; }
+  UCDFS.toast('Withdrawn');
+  await load();
+}
+
+async function boot() {
+  UCDFS.renderPill();
+  await load();
+  UCDFS.tour({
+    key: 'purchases_v1',
+    steps: [
+      { t: 'Ask before you buy',
+        p: 'Say what you need and what it is for. Keep the reason short but real. '
+         + 'It is the bit that lets a captain say yes without having to track you '
+         + 'down and ask what it is for.',
+        art: '🧾', sub: 'One screen, two required fields' },
+      { t: 'Who has to say yes',
+        p: 'Under the threshold your division captain decides on their own, so small '
+         + 'things move fast. At or over it, your captain signs first and then '
+         + 'Operations. They are checking different things, so you need both.',
+        art: '✍️ ✍️', sub: 'Nobody approves their own big spend' },
+      { t: 'Seeing where it got to',
+        p: 'Every request tells you who it is waiting on, by name. Yours are under '
+         + 'Ask, anything waiting on you is in the second tab, and Everything is the '
+         + 'full list, including what other divisions are spending.',
+        art: '⏳ → ✅', sub: 'Turning one down needs a reason' },
+    ],
+  });
+}
+
+UCDFS.gate(boot);
+</script>
+</body>
+</html>

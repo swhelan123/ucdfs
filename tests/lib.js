@@ -200,11 +200,33 @@ async function submit(d) {
  */
 async function signUp(first = 'Test', last = 'Bot') {
   const email = `ucdfs-test-${Date.now()}-${Math.floor(Math.random() * 1e5)}@ucdconnect.ie`;
-  const r = await fetch(BASE + '/api/auth/signup', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ first_name: first, last_name: last, email, password: 'TestPassword123!' }),
-  });
-  if (!r.ok) throw new Error('signup failed: ' + r.status + ' ' + await r.text());
+  let r, body = '';
+  /* Supabase caps sign-ups per hour per IP, and a full run is close to that cap
+     on its own: about two dozen accounts across the suites. CI runs on this
+     same machine, so a local run and the CI run that follows it share one
+     ceiling, and the second one starts failing partway through.
+     
+     The retry is for a short burst rather than that hour-long window, which no
+     amount of waiting inside one run will clear. What it mostly buys is the
+     message below: three suites crashing on "signup failed: 400" reads as a
+     code fault, and this says what it actually is. */
+  for (let attempt = 0; attempt < 4; attempt++) {
+    r = await fetch(BASE + '/api/auth/signup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ first_name: first, last_name: last, email, password: 'TestPassword123!' }),
+    });
+    if (r.ok) break;
+    body = await r.text();
+    if (!/rate limit/i.test(body)) break;
+    await new Promise(res => setTimeout(res, 2000 * Math.pow(2, attempt)));
+  }
+  if (!r.ok && /rate limit/i.test(body)) {
+    throw new Error(
+      'signup rate-limited by Supabase. A full run creates about two dozen ' +
+      'accounts and the cap is per hour per IP, which CI shares with this ' +
+      'machine. Wait for the window, or run fewer suites.');
+  }
+  if (!r.ok) throw new Error('signup failed: ' + r.status + ' ' + body);
   const setCookies = r.headers.getSetCookie ? r.headers.getSetCookie() : [];
   if (!setCookies.length) throw new Error('signup returned no Set-Cookie headers');
   return { email, setCookies };

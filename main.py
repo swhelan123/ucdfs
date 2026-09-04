@@ -9,6 +9,7 @@ import base64
 import binascii
 import logging
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 from typing import Optional
 from urllib.parse import quote, urlparse
@@ -65,7 +66,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_
 # before, on the main thread and off it.
 _tile_local = threading.local()
 
-_TILE_WORKERS = 8
+_TILE_WORKERS = 10   # one per tile, with room for the next one
 _tile_pool = ThreadPoolExecutor(max_workers=_TILE_WORKERS, thread_name_prefix="tile")
 
 
@@ -292,6 +293,17 @@ APPLETS = [
         "file":   "meetings.html",
         "blurb":  "Say if you're coming Tuesday and Thursday, and what you did if not",
         "accent": "green",
+        "status": "live",
+        "subteams": ["all"],
+    },
+    {
+        "id":     "purchases",
+        "name":   "Purchase Requests",
+        "icon":   "🧾",
+        "route":  "/purchases",
+        "file":   "purchases.html",
+        "blurb":  "Ask for something the team needs, and see where a request got to",
+        "accent": "amber",
         "status": "live",
         "subteams": ["all"],
     },
@@ -1628,6 +1640,43 @@ async def api_admin_captain_set(request: Request):
     log_activity("admin", _public_profile(me).get("name"),
                  "made " + name + " captain of", SUBTEAMS_BY_ID[subteam]["name"])
     return {"ok": True, "captain": {"subteam": subteam, "profile_id": target, "name": name}}
+
+
+@app.get("/api/admin/settings")
+async def api_admin_settings(request: Request):
+    require_role(request, "admin")
+    return {"threshold_eur": str(_threshold_eur())}
+
+
+@app.post("/api/admin/settings")
+async def api_admin_settings_set(request: Request):
+    """Change the approval threshold.
+
+    Data rather than a constant because it will be argued about and changing it
+    must not be a deploy. It does not reach back: every open request froze the
+    threshold it was filed under, so moving this decides what happens next
+    rather than silently rewriting what a queue of pending requests needs.
+    """
+    me = require_role(request, "admin")
+    b  = await request.json()
+    try:
+        v = Decimal(str(b.get("threshold_eur")))
+    except (InvalidOperation, ValueError, TypeError):
+        raise HTTPException(400, "That is not a number")
+    if v < 0:
+        raise HTTPException(400, "A threshold cannot be negative")
+    try:
+        supabase.table("settings").upsert({
+            "key": "finance.threshold_eur", "value": str(v),
+            "updated_at": datetime.now(TEAM_TZ).isoformat(),
+            "updated_by": me.get("id"),
+        }, on_conflict="key").execute()
+    except Exception as e:
+        logger.error(f"[admin] threshold save failed: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 015 been applied?")
+    log_activity("admin", _public_profile(me).get("name"),
+                 "set the approval threshold to", f"EUR {v}")
+    return {"ok": True, "threshold_eur": str(v)}
 
 
 @app.post("/api/admin/user/delete")
@@ -3927,6 +3976,402 @@ def _meetings_tile() -> dict:
             "missing": missing, "roster": roster, "detail": detail}
 
 
+# ── Purchase requests (migrations/015) ────────────────────────────────────────
+# "May I buy this?", asked before the money moves. Approval is a delegation of
+# authority rather than a budget, so it needs no budget to work:
+#
+#     under the threshold   the captain of the requester's division, alone, and
+#                           they may authorise their own spend
+#     at or over it         that captain first, then the Ops Captain, who is
+#                           always a second person
+#
+# Everything here goes through sb(), because _purchases_tile() runs on the
+# dashboard's pool and nothing it reaches may share the one HTTP/2 connection.
+
+PR_STATUSES = ("submitted", "dept_approved", "approved", "rejected", "withdrawn")
+MAX_PR_ITEM   = 160
+MAX_PR_REASON = 600
+MAX_PR_NOTE   = 400
+DEFAULT_THRESHOLD_EUR = Decimal("100")
+
+
+def _setting(key: str, default: str = "") -> str:
+    """One setting, with the caller's default when the row or the table is
+    missing. A site running ahead of its migration falls back rather than 500s."""
+    try:
+        rows = sb().table("settings").select("value").eq("key", key).execute().data or []
+    except Exception as e:
+        logger.error(f"[settings] read of {key} failed: {e}")
+        return default
+    return (rows[0]["value"] if rows else default) or default
+
+
+def _threshold_eur() -> Decimal:
+    """The amount at or above which the Ops Captain is a second signature."""
+    raw = _setting("finance.threshold_eur", str(DEFAULT_THRESHOLD_EUR))
+    try:
+        v = Decimal(str(raw))
+        return v if v >= 0 else DEFAULT_THRESHOLD_EUR
+    except (InvalidOperation, ValueError):
+        logger.error(f"[settings] threshold {raw!r} is not a number; using the default")
+        return DEFAULT_THRESHOLD_EUR
+
+
+def _season_of(when: datetime) -> str:
+    """The season a date falls in, as '2627'. September starts a new one."""
+    y = when.year if when.month >= 9 else when.year - 1
+    return f"{y % 100:02d}{(y + 1) % 100:02d}"
+
+
+def _pr_ref(row: dict) -> str:
+    """PR-2627-014, for people to say out loud.
+
+    The number is the row id, so it is unique, never changes, and needs no
+    counter that two simultaneous requests could race for. It does not restart
+    each season, which is the accepted cost: a reference that always means the
+    same request is worth more than one that counts from one.
+    """
+    try:
+        when = datetime.fromisoformat(str(row.get("created_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        when = datetime.now(TEAM_TZ)
+    return f"PR-{_season_of(when)}-{int(row.get('id') or 0):03d}"
+
+
+def _needs_ops(row: dict) -> bool:
+    """Does this one need the Ops Captain as well?
+
+    Against the threshold frozen onto the row at submission, not today's. The
+    threshold is data and will be changed; a request has to keep being judged by
+    the rule that applied when it was filed, or editing one number silently
+    rewrites what every open request needs.
+    """
+    try:
+        est = Decimal(str(row.get("est_eur") or 0))
+        bar = Decimal(str(row.get("threshold_eur") or DEFAULT_THRESHOLD_EUR))
+    except (InvalidOperation, ValueError):
+        return True     # unreadable numbers get the stricter path, not the looser
+    return est >= bar
+
+
+def _slot_candidates(row: dict, slot: str) -> set:
+    """Every account that may fill this approval slot.
+
+    A set rather than one name, because of the fallthrough rule: where the
+    natural approver is the requester, or is already filling the other slot, the
+    slot falls through to *any other captain*. That is one rule instead of three
+    special cases, and it covers all three ways the two slots collapse — an Ops
+    member's request, the Ops Captain's own request, and a captain requesting a
+    large item for their own division.
+    """
+    caps      = _captains()
+    requester = row.get("requester_id")
+    natural   = caps.get(row.get("subteam") or "") if slot == "dept" else caps.get("ops")
+
+    # Below the threshold a captain may authorise their own division's spend,
+    # including their own. That is the entire reason the threshold exists: a
+    # captain who decides an €80 part is necessary should buy it, not queue.
+    if slot == "dept" and not _needs_ops(row) and natural and natural == requester:
+        return {natural}
+
+    blocked = {requester}
+    other   = row.get("ops_by") if slot == "dept" else row.get("dept_by")
+    if other:
+        blocked.add(other)
+
+    if not natural:
+        # No captain for this division, so nobody may fill this slot.
+        #
+        # Deliberately NOT a fallthrough. The rule falls through when the
+        # natural holder is *unavailable* — they are the requester, or already
+        # in the other slot — not when the post is vacant. Routing around a
+        # vacancy would silently hand approval over one division's spending to
+        # the captains of the others, which is a permission nobody granted, and
+        # it would hide the actual problem: somebody has to be assigned.
+        #
+        # Stalling is the safe direction and the one 014 and 015 both claim.
+        return set()
+    if natural not in blocked:
+        return {natural}
+    return {pid for pid in caps.values() if pid not in blocked}
+
+
+def _open_slot(row: dict) -> Optional[str]:
+    """Which slot is waiting, if the request is still live.
+
+    Department first, always. The Ops Captain's queue then only ever holds
+    things a division has already backed, which is the point of ordering them:
+    the two are answering different questions and the second should not be spent
+    on something the first would have refused.
+    """
+    if row.get("status") in ("approved", "rejected", "withdrawn"):
+        return None
+    if not row.get("dept_by"):
+        return "dept"
+    return "ops" if _needs_ops(row) and not row.get("ops_by") else None
+
+
+def _may_approve(row: dict, profile_id: str) -> bool:
+    slot = _open_slot(row)
+    return bool(slot) and profile_id in _slot_candidates(row, slot)
+
+
+def _pr_log(row: dict, actor: dict, action: str,
+            to_status: str = "", note: str = "") -> None:
+    """Append to the audit trail. Never raises into the caller: losing a history
+    line is worth far less than failing an approval that actually happened."""
+    try:
+        sb().table("purchase_events").insert({
+            "request_id":  row.get("id"),
+            "actor_id":    actor.get("id"),
+            "actor_name":  _public_profile(actor).get("name") or "",
+            "action":      action,
+            "from_status": row.get("status") or "",
+            "to_status":   to_status or row.get("status") or "",
+            "note":        note[:MAX_PR_NOTE],
+        }).execute()
+    except Exception as e:
+        logger.error(f"[purchases] event log failed for {row.get('id')}: {e}")
+
+
+def _pr_dress(row: dict, me_id: str, people: dict) -> dict:
+    """One request as the page wants it: the row, who it is waiting on, and
+    whether *this* caller can act on it."""
+    slot  = _open_slot(row)
+    cands = _slot_candidates(row, slot) if slot else set()
+    who   = people.get(row.get("requester_id")) or {}
+    return {
+        **row,
+        "ref":          _pr_ref(row),
+        "requester":    who.get("name") or "Someone",
+        "photo":        who.get("photo"),
+        "needs_ops":    _needs_ops(row),
+        "open_slot":    slot,
+        # Named, so the page can say "waiting on Aoife" rather than "pending".
+        # The universal complaint about this kind of system is not knowing where
+        # your request has got to, and a name is most of the answer.
+        "awaiting":     sorted((people.get(p) or {}).get("name") or "?" for p in cands),
+        "can_approve":  me_id in cands,
+        "can_withdraw": row.get("requester_id") == me_id
+                        and row.get("status") in ("submitted", "dept_approved"),
+        "is_mine":      row.get("requester_id") == me_id,
+        "dept_name":    (people.get(row.get("dept_by")) or {}).get("name"),
+        "ops_name":     (people.get(row.get("ops_by")) or {}).get("name"),
+    }
+
+
+@app.get("/api/purchases")
+async def api_purchases(request: Request):
+    """Every request, with what this caller may do to each.
+
+    Everyone sees everything, deliberately. Below the threshold the control is
+    not a gate but visibility — a captain's own spend is meant to be in front of
+    the team rather than in front of nobody — and a ledger only half the team can
+    read is not that.
+    """
+    me = current_profile(request)
+    try:
+        rows = (sb().table("purchase_requests").select("*")
+                .order("created_at", desc=True).execute().data or [])
+    except Exception as e:
+        logger.error(f"[purchases] list failed: {e}")
+        return {"requests": [], "ready": False, "threshold": str(_threshold_eur())}
+    people = _people_by_id()
+    dressed = [_pr_dress(r, me["id"], people) for r in rows]
+    caps = _captains()
+    return {
+        "requests":  dressed,
+        "threshold": str(_threshold_eur()),
+        "mine":      me["id"],
+        "leads":     _leads(me["id"]),
+        "subteams":  SUBTEAMS,
+        # Divisions with nobody to approve for them. Sent so the page can say
+        # that out loud: with no captains a request is filed and then sits
+        # waiting on nobody, and "Waiting on a captain" with no name is the
+        # least useful thing it could say to whoever has to fix it.
+        "uncaptained": [x["id"] for x in SUBTEAMS if x["id"] not in caps],
+        "my_subteam": me.get("subteam") or "",
+        "ready":     True,
+    }
+
+
+@app.post("/api/purchases")
+async def api_purchases_create(request: Request):
+    me = current_profile(request)
+    b  = await request.json()
+
+    item   = " ".join((b.get("item") or "").split())[:MAX_PR_ITEM]
+    reason = " ".join((b.get("reason") or "").split())[:MAX_PR_REASON]
+    if not item:
+        raise HTTPException(400, "Say what you need")
+    # Required, and not merely encouraged. It is what makes an approval possible
+    # at all, and the same text is what the Cost Event wants next June.
+    if not reason:
+        raise HTTPException(400, "Say what it's for")
+
+    try:
+        est = Decimal(str(b.get("est_eur"))) if b.get("est_eur") not in (None, "") else None
+        if est is not None and est < 0:
+            raise HTTPException(400, "An estimate cannot be negative")
+    except (InvalidOperation, ValueError):
+        raise HTTPException(400, "That estimate is not a number")
+
+    needed_by = (b.get("needed_by") or "").strip() or None
+    if needed_by:
+        try:
+            date.fromisoformat(needed_by)
+        except ValueError:
+            raise HTTPException(400, "needed_by must be YYYY-MM-DD")
+
+    subteam = _clean_subteam(b.get("subteam")) or me.get("subteam") or ""
+    row = {
+        "requester_id": me["id"],
+        "subteam":      subteam,
+        "item":         item,
+        "reason":       reason,
+        "quantity":     _parse_quantity(b.get("quantity")),
+        "est_eur":      str(est) if est is not None else None,
+        "supplier_url": (b.get("supplier_url") or "").strip()[:500],
+        "needed_by":    needed_by,
+        "subsystem":    " ".join((b.get("subsystem") or "").split())[:80],
+        "status":       "submitted",
+        # Frozen now. See _needs_ops: a request keeps being judged by the rule
+        # that applied when it was filed.
+        "threshold_eur": str(_threshold_eur()),
+    }
+    try:
+        made = (sb().table("purchase_requests").insert(row).execute().data or [{}])[0]
+    except Exception as e:
+        logger.error(f"[purchases] create failed for {me['id']}: {e}")
+        raise HTTPException(503, "Couldn't file that. Has migration 015 been applied?")
+
+    _pr_log(made, me, "filed", "submitted")
+    log_activity("purchases", _public_profile(me).get("name"), "asked for", item)
+    return {"ok": True, "id": made.get("id"), "ref": _pr_ref(made)}
+
+
+@app.post("/api/purchases/decide")
+async def api_purchases_decide(request: Request):
+    """Approve or reject, filling whichever slot is open.
+
+    The gate is _may_approve, which is the fallthrough rule: the slot's natural
+    holder unless that is the requester or the person already in the other slot,
+    and any other captain when it is. Nothing here trusts a slot name from the
+    body — which slot is being filled is decided from the row.
+    """
+    me = current_profile(request)
+    b  = await request.json()
+    req_id  = b.get("id")
+    action  = (b.get("action") or "").strip()
+    note    = " ".join((b.get("note") or "").split())[:MAX_PR_NOTE]
+    if action not in ("approve", "reject"):
+        raise HTTPException(400, "action must be approve or reject")
+    if req_id is None:
+        raise HTTPException(400, "id required")
+
+    rows = sb().table("purchase_requests").select("*").eq("id", req_id).execute().data or []
+    if not rows:
+        raise HTTPException(404, "No such request")
+    row = rows[0]
+
+    if not _may_approve(row, me["id"]):
+        # Deliberately one message for "not your turn", "not a captain" and
+        # "that is your own request". Which of the three it is tells a caller
+        # more about the approval graph than they need from a 403.
+        raise HTTPException(403, "That one isn't yours to decide")
+
+    if action == "reject":
+        # Mandatory, and the reason is a courtesy as much as an audit need:
+        # a rejection with no explanation is how people stop filing requests.
+        if not note:
+            raise HTTPException(400, "Say why you're rejecting it")
+        upd = {"status": "rejected", "decided_note": note}
+        _pr_log(row, me, "rejected", "rejected", note)
+    else:
+        slot = _open_slot(row)
+        now  = datetime.now(TEAM_TZ).isoformat()
+        upd  = {f"{slot}_by": me["id"], f"{slot}_at": now}
+        after = {**row, **upd}
+        # Derived from the row after this approval rather than assumed from the
+        # slot: below the threshold the department slot is the only one, and
+        # above it the ops slot is the last.
+        upd["status"] = "approved" if _open_slot(after) is None else "dept_approved"
+        if note:
+            upd["decided_note"] = note
+        _pr_log(row, me, f"approved ({slot})", upd["status"], note)
+
+    try:
+        sb().table("purchase_requests").update(upd).eq("id", req_id).execute()
+    except Exception as e:
+        logger.error(f"[purchases] decide failed on {req_id}: {e}")
+        raise HTTPException(503, "Couldn't save that decision")
+
+    if upd["status"] in ("approved", "rejected"):
+        log_activity("purchases", _public_profile(me).get("name"),
+                     "approved" if upd["status"] == "approved" else "turned down",
+                     row.get("item") or "")
+    return {"ok": True, "status": upd["status"]}
+
+
+@app.post("/api/purchases/withdraw")
+async def api_purchases_withdraw(request: Request):
+    """Take your own request back, while it is still open."""
+    me = current_profile(request)
+    b  = await request.json()
+    rows = (sb().table("purchase_requests").select("*")
+            .eq("id", b.get("id")).execute().data or [])
+    if not rows:
+        raise HTTPException(404, "No such request")
+    row = rows[0]
+    if row.get("requester_id") != me["id"] and not is_god(request):
+        raise HTTPException(403, "You can only withdraw your own requests")
+    if row.get("status") not in ("submitted", "dept_approved"):
+        raise HTTPException(400, "That one is already decided")
+    try:
+        sb().table("purchase_requests").update({"status": "withdrawn"}).eq("id", row["id"]).execute()
+    except Exception as e:
+        logger.error(f"[purchases] withdraw failed on {row['id']}: {e}")
+        raise HTTPException(503, "Couldn't withdraw that")
+    _pr_log(row, me, "withdrawn", "withdrawn")
+    return {"ok": True}
+
+
+@app.get("/api/purchases/events")
+async def api_purchases_events(request: Request, id: int = 0):
+    """One request's history. Readable by anyone who can see the request, which
+    is everyone: an audit trail only its subject can read is not much of one."""
+    current_profile(request)
+    if not id:
+        raise HTTPException(400, "id required")
+    try:
+        rows = (sb().table("purchase_events").select("*")
+                .eq("request_id", id).order("created_at").execute().data or [])
+    except Exception as e:
+        logger.error(f"[purchases] events failed for {id}: {e}")
+        rows = []
+    return {"events": rows}
+
+
+def _purchases_tile() -> dict:
+    """What is waiting, and on whom."""
+    try:
+        rows = (sb().table("purchase_requests")
+                .select("status,est_eur,threshold_eur,dept_by,ops_by,subteam,requester_id")
+                .execute().data or [])
+    except Exception as e:
+        logger.error(f"[purchases] tile failed: {e}")
+        return {"detail": "not set up yet"}
+    open_rows = [r for r in rows if r.get("status") in ("submitted", "dept_approved")]
+    approved  = len([r for r in rows if r.get("status") == "approved"])
+    if open_rows:
+        detail = f"{len(open_rows)} waiting on approval"
+    elif approved:
+        detail = f"{approved} approved, nothing waiting"
+    else:
+        detail = "nothing requested yet"
+    return {"open": len(open_rows), "approved": approved, "detail": detail}
+
+
 # ── Competition Hub ───────────────────────────────────────────────────────────
 COMP_TZ = ZoneInfo("Europe/London")
 SHOP_CUTOFF_HOUR = 10  # requests in before 10am get same-day delivery; after, next day
@@ -4525,7 +4970,7 @@ def _activity(limit: int = 8) -> list:
 
 @app.get("/api/dashboard")
 async def api_dashboard():
-    # Eight independent tiles, each a few blocking round trips. Run one after
+    # Nine independent tiles, each a few blocking round trips. Run one after
     # another they came to about 700ms, which is most of the wait the dashboard
     # sits behind its veil for. Nothing here depends on anything else here.
     #
@@ -4538,11 +4983,12 @@ async def api_dashboard():
     # and the rest of the dashboard still draws. gather never sees an exception
     # and needs no return_exceptions.
     loop = asyncio.get_running_loop()
-    (countdown, activity, attendance, meetings, flowcharts,
+    (countdown, activity, attendance, meetings, purchases, flowcharts,
      pt, harness, comp) = await asyncio.gather(*(
         loop.run_in_executor(_tile_pool, _tile, fn)
         for fn in (_countdown, _activity, _attendance_tile, _meetings_tile,
-                   _flowcharts_tile, _pt_tile, _harness_tile, _comp_tile)
+                   _purchases_tile, _flowcharts_tile, _pt_tile, _harness_tile,
+                   _comp_tile)
     ))
     return {
         # Dublin, not the container's clock, which is UTC, so date.today()
@@ -4554,6 +5000,7 @@ async def api_dashboard():
         "tiles": {
             "attendance": attendance,
             "meetings":   meetings,
+            "purchases":  purchases,
             "flowcharts": flowcharts,
             "pt":         pt,
             "harness":    harness,

@@ -154,7 +154,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Plans Check,Links Member,Links Boss,Test Bot'
+TEST_ACTORS='Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Admin Claimer,Plans Check,Links Member,Links Boss,Test Bot,Purchase Member,Purchase Deptcap,Purchase Opscap,Purchase Bystander'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time

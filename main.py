@@ -170,7 +170,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # A person's subteam may be null ("not sure yet"), which is a supported state
 # during September recruitment and not a gap to be filled in.
 SUBTEAMS = [
-    {"id": "pt",   "name": "Powertrain", "icon": "🏎️", "accent": "teal"},
+    # The id stays "pt" now that the division is called Electrical, and that is
+    # deliberate rather than an oversight. The id is written into data: every
+    # profiles.subteam on this division, the subteams_extra arrays beside them,
+    # the registry tags below, activity_log.applet and the plans/pt_* tables.
+    # Renaming it means a migration over all of that to change something no
+    # member can see. Same split the override banner already makes: "god mode"
+    # in the code and the schema, "Admin override" on screen.
+    {"id": "pt",   "name": "Electrical", "icon": "🏎️", "accent": "teal"},
     {"id": "mech", "name": "Mechanical", "icon": "⚙️", "accent": "green"},
     {"id": "ops",  "name": "Operations", "icon": "📋", "accent": "purple"},
 ]

@@ -181,10 +181,10 @@ a.logo:hover { transform:translateY(-2px); }
 .av28 { width:28px; height:28px; font-size:.6rem; }
 .av32 { width:32px; height:32px; font-size:.65rem; }
 .av38 { width:38px; height:38px; font-size:.65rem; letter-spacing:.03em; }
-.av-purple { background:var(--purple-bg); color:var(--purple); }
-.av-indigo { background:var(--indigo-bg); color:var(--indigo); }
-.av-green  { background:var(--green-mid); color:var(--green-text); }
-.av-red    { background:var(--red-mid);   color:var(--red-text); }
+.av-purple { background-color:var(--purple-bg); color:var(--purple); }
+.av-indigo { background-color:var(--indigo-bg); color:var(--indigo); }
+.av-green  { background-color:var(--green-mid); color:var(--green-text); }
+.av-red    { background-color:var(--red-mid);   color:var(--red-text); }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tabs { display:flex; gap:5px; background:var(--border); padding:4px; border-radius:14px; margin-bottom:24px; }

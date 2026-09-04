@@ -62,6 +62,46 @@ for (const p of pages) {
 console.log(bad.length ? bad.join(' ') : 'none');
 JS
 
+cat > "$JS_DIR/avatar-photo.js" <<'JS'
+/* UCDFS.avatar() must put the photo's sizing in the inline style attribute.
+ *
+ * It used to rely on .has-photo in shared.css for background-size:cover. That
+ * broke every list avatar on /attendance and /meetings: their colour classes
+ * (.av-in, .av-yes, …) used the `background:` shorthand, which resets
+ * background-size to auto and background-position to 0% 0%, and a page <style>
+ * block loads after shared.css so it won the cascade. Photos rendered at
+ * natural size in a 34px circle. Inline wins over every stylesheet rule
+ * whatever the order, so keeping it inline is what makes that unrepeatable.
+ *
+ * jsdom cannot judge a cascade, but it parses a style attribute exactly, and
+ * the attribute is the whole invariant here. */
+const fs = require('fs');
+// This file is written to a mktemp dir, so a bare require('jsdom') resolves
+// from there and finds nothing. Point at the suite's own node_modules.
+const { JSDOM } = require(process.argv[2] + '/tests/node_modules/jsdom');
+const [root] = process.argv.slice(2);
+const dom = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only' });
+dom.window.eval(fs.readFileSync(root + '/static/shared.js', 'utf8'));
+const bad = [];
+const html = dom.window.UCDFS.avatar('Ada Byron', '/photo.jpg', 'avatar av-yes');
+dom.window.document.body.innerHTML = html;
+const el = dom.window.document.body.firstElementChild;
+if (!el) bad.push('no-element');
+else {
+  if (el.style.backgroundSize !== 'cover') bad.push('size=' + (el.style.backgroundSize || 'unset'));
+  if (el.style.backgroundPosition !== 'center') bad.push('position=' + (el.style.backgroundPosition || 'unset'));
+  if (!el.classList.contains('av-yes')) bad.push('lost-caller-class');
+  // A caller-supplied style still comes last, so it can still override sizing
+  // deliberately. What it must not do is get dropped.
+  const withStyle = dom.window.UCDFS.avatar('Ada Byron', '/p.jpg', 'avatar', 'width:28px');
+  dom.window.document.body.innerHTML = withStyle;
+  const el2 = dom.window.document.body.firstElementChild;
+  if (el2.style.width !== '28px') bad.push('dropped-caller-style');
+  if (el2.style.backgroundSize !== 'cover') bad.push('caller-style-lost-size');
+}
+console.log(bad.length ? bad.join(' ') : 'none');
+JS
+
 echo "── syntax ──"
 ck "main.py parses" \
    "$(python3 -c "import ast;ast.parse(open('$ROOT/main.py').read());print('ok')" 2>/dev/null)" "ok"
@@ -78,6 +118,16 @@ echo
 echo "── CSS classes used vs defined ──"
 ck "no undefined classes" \
    "$(node "$JS_DIR/css-classes.js" "$ROOT" $PAGES 2>/dev/null)" "none"
+
+# A colour class that uses the `background:` shorthand resets background-size,
+# so it must never be the thing a photo avatar depends on. avatar() sizes
+# inline now, which makes that safe, but the shorthand is still the wrong
+# declaration for a rule that only means to set a colour.
+ck "avatar sizes the photo inline" \
+   "$(node "$JS_DIR/avatar-photo.js" "$ROOT" 2>/dev/null)" "none"
+
+ck "no background shorthand on .av- classes" \
+   "$(grep -hE '^\.av-[a-z]+ *\{ *background:' "$ROOT/static/shared.css" "$ROOT"/static/*.html | wc -l | tr -d ' ')" "0"
 
 echo
 echo "── secrets ──"

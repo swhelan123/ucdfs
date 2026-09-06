@@ -336,27 +336,6 @@ document.addEventListener('DOMContentLoaded', () => {
     UCDFS.renderPill();
     load();
   });
-
-  UCDFS.tour({
-    key: 'org_v1',
-    steps: [
-      { t: 'The shape of the team',
-        p: 'Team Principal at the top, Technical Director beside them, then the '
-         + 'three division captains, their vice captains, and everyone else '
-         + 'underneath. Tap any person to open their profile card.',
-        art: '🏛️', sub: 'One picture of who reports to whom' },
-      { t: 'Where the boxes come from',
-        p: 'The captain boxes are set by an admin and are the same captains who '
-         + 'approve purchase requests. Every other box is what a person put on '
-         + 'their own profile, so if you are in the wrong place, edit your card.',
-        art: '✍️', sub: 'Fix your own box in Team Profiles' },
-      { t: 'Not in a division yet',
-        p: 'Anyone who has not picked a division sits in a row at the bottom '
-         + 'rather than disappearing. Picking one on your profile moves you up '
-         + 'into the tree.',
-        art: '📍', sub: 'Retired members are not shown' },
-    ],
-  });
 });
 </script>
 </body>

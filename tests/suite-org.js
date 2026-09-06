@@ -192,7 +192,7 @@ let restoreCaptains = async () => {};
     check('you are marked as you', !!d.querySelector(`.is-me[data-id="${ids.member}"]`));
     check('a member sees no flags', d.querySelectorAll('.flag').length === 0);
     check('nor the tidy-up list', !d.getElementById('tidy'));
-    check('the ? is mounted in the header', !!d.getElementById('ucdfs-help'));
+    check('no tour, so no ? in the header', !d.getElementById('ucdfs-help'));
     w.close();
   }
   {

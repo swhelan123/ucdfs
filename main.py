@@ -319,6 +319,17 @@ APPLETS = [
         "subteams": ["all"],
     },
     {
+        "id":     "org",
+        "name":   "Org Chart",
+        "icon":   "🏛️",
+        "route":  "/org",
+        "file":   "org.html",
+        "blurb":  "Who reports to whom, from the principal down to every division",
+        "accent": "indigo",
+        "status": "live",
+        "subteams": ["all"],
+    },
+    {
         "id":     "flowcharts",
         "name":   "Flowcharts",
         "icon":   "🗺️",
@@ -2406,6 +2417,145 @@ async def api_profiles(request: Request):
         "limits":   {"prompts": MAX_PROMPTS, "tags": MAX_TAGS,
                      "answer": MAX_ANSWER, "photo_bytes": MAX_AVATAR_BYTES},
     }
+
+
+# ── Org chart ────────────────────────────────────────────────────────────────
+# A read-only picture of the team, derived from the directory. Nothing here
+# grants anything. The boxes come from two sources with different standing, and
+# the page is told which is which:
+#
+#   captaincies                  granted in /admin. The captain boxes come from
+#                                here and nowhere else, so a captain box is a
+#                                fact about who may approve a purchase.
+#   profile_details.role_label   what a person set on their own card. Team
+#                                Principal, Technical Director and Vice Captain
+#                                have no granted source yet, so those boxes are
+#                                self-declared. An admin sees a flag wherever
+#                                the two sources disagree; everyone else just
+#                                sees the chart.
+#
+# One box per person, with one deliberate exception: a granted captain who also
+# says they hold a team-wide seat appears in both, because both can be true and
+# hiding either would be the chart lying.
+
+ORG_TEAM_ROLES = ("principal", "td")
+
+
+def _org_person(p: dict) -> dict:
+    """The subset of a directory entry the chart draws.
+
+    Email is left out on purpose. The chart is a picture of the team, not a
+    contact list, and every box links to the profile for anyone who wants more.
+    """
+    return {k: p.get(k) for k in
+            ("id", "name", "photo", "subteam", "role_label", "role_name",
+             "year_label", "course")}
+
+
+def _org_chart(me: dict) -> dict:
+    admin = is_admin(me)
+    try:
+        rows = supabase.table("profiles").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"[org] roster query failed: {e}")
+        rows = []
+    details_by_id: dict = {}
+    try:
+        for d in (supabase.table("profile_details").select("*").execute().data or []):
+            details_by_id[d.get("id")] = d
+    except Exception as e:
+        logger.debug(f"[org] details unavailable: {e}")
+
+    people = {r.get("id"): _person(r, details_by_id.get(r.get("id")) or {}, [])
+              for r in rows if r.get("id")}
+    caps = _captains()                                   # {subteam: profile id}
+    cap_of = {pid: st for st, pid in caps.items()}      # {profile id: subteam}
+
+    flags: dict = {}
+
+    def flag(pid, text):
+        flags.setdefault(pid, []).append(text)
+
+    def retired(p):
+        return p.get("year") == "Alum"
+
+    # A granted captain is drawn whatever their card says, retired included:
+    # the captaincy is the fact, and an admin is told to go and fix it.
+    def captain_box(st):
+        p = people.get(caps.get(st))
+        if not p:
+            return None
+        name = SUBTEAMS_BY_ID[st]["name"]
+        if p.get("role_label") != "captain":
+            flag(p["id"], f"Captain of {name} in /admin, but their profile says "
+                          f"{p.get('role_name') or 'nothing'}")
+        if p.get("subteam") and p.get("subteam") != st:
+            flag(p["id"], f"Captain of {name}, but their profile puts them in "
+                          f"{SUBTEAMS_BY_ID.get(p['subteam'], {}).get('name', p['subteam'])}")
+        if retired(p):
+            flag(p["id"], f"Holds the {name} captaincy but is marked as retired")
+        return _org_person(p)
+
+    active = [p for p in people.values() if not retired(p)]
+    by_name = lambda p: p["name"].lower()
+
+    top = {}
+    for role in ORG_TEAM_ROLES:
+        seat = sorted((p for p in active if p.get("role_label") == role), key=by_name)
+        if len(seat) > 1:
+            label = ROLES_BY_VALUE[role]["label"]
+            for p in seat:
+                flag(p["id"], f"More than one person says {label}")
+        top[role] = [_org_person(p) for p in seat]
+
+    divisions = []
+    for s in SUBTEAMS:
+        st = s["id"]
+        here = [p for p in active
+                if p.get("subteam") == st
+                and p["id"] not in cap_of
+                and p.get("role_label") not in ORG_TEAM_ROLES]
+        vices, members = [], []
+        for p in sorted(here, key=by_name):
+            if p.get("role_label") == "vice":
+                vices.append(_org_person(p))
+            else:
+                if p.get("role_label") == "captain":
+                    flag(p["id"], "Says Captain, but no captaincy is set for them in /admin")
+                members.append(_org_person(p))
+        divisions.append({
+            "id": st, "name": s["name"], "icon": s["icon"], "accent": s["accent"],
+            "captain": captain_box(st),
+            "vices":   vices,
+            "members": members,
+        })
+
+    unassigned = []
+    for p in sorted(active, key=by_name):
+        if p.get("subteam") or p["id"] in cap_of or p.get("role_label") in ORG_TEAM_ROLES:
+            continue
+        if p.get("role_label") in ("vice", "captain"):
+            flag(p["id"], f"Says {p['role_name']} but has not picked a division")
+        unassigned.append(_org_person(p))
+
+    return {
+        "principal":  top["principal"],
+        "td":         top["td"],
+        "divisions":  divisions,
+        "unassigned": unassigned,
+        "me":         me.get("id"),
+        "admin":      admin,
+        # Only an admin can act on these, so only an admin is sent them. A
+        # member seeing "so-and-so says Captain but is not one" is gossip.
+        "flags":      flags if admin else {},
+        "people":     len(active),
+    }
+
+
+@app.get("/api/org")
+async def api_org(request: Request):
+    """The org chart, for anyone signed in. See the note above _org_chart."""
+    return _org_chart(current_profile(request))
 
 
 @app.post("/api/profile")

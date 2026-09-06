@@ -20,6 +20,7 @@ const PAGES = [
   { path: '/plan/pt',   name: 'plan/pt'     },
   { path: '/harness',    name: 'harness'    },
   { path: '/profiles',   name: 'profiles'   },
+  { path: '/org',        name: 'org'        },
 ];
 
 (async () => {

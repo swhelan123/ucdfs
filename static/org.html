@@ -137,12 +137,6 @@
 .tidy a { color: inherit; }
 .tidy-note { font-size: 0.74rem; color: var(--muted); margin-top: 8px; }
 
-.legend {
-  display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.74rem; color: var(--muted);
-  margin: 18px 0 0; justify-content: center;
-}
-.legend b { color: var(--text); font-weight: 700; }
-
 .error-box { text-align: center; color: var(--red-text); padding: 30px 16px; font-weight: 600; }
 
 /* ── Narrow screens ──
@@ -305,12 +299,7 @@ function render() {
     <div class="trunk"></div>
     <div class="tier tier-divisions">${d.divisions.map(division).join('')}</div>
     ${holding}
-    ${tidyList()}
-    <div class="legend">
-      <span><b>Captains</b> are set by an admin.</span>
-      <span>Everything else is what people put on their own profile.</span>
-      <span>Tap anyone to open their card.</span>
-    </div>`;
+    ${tidyList()}`;
 }
 
 async function load() {

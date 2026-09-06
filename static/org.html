@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Org Chart</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Page-local only. The header, the name pill, the ring, buttons and the empty
+   state all come from shared.css. */
+
+.page { max-width: 1180px; }
+
+/* ── The tree ──
+   Three equal columns, one per division, and the same three columns for the
+   top tier so the Team Principal sits over the middle of the captains and the
+   Technical Director to the right. The lines are borders on pseudo-elements,
+   which is all an org chart needs; nothing here is drawn on a canvas. */
+.chart { position: relative; padding-top: 6px; }
+.tier { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.tier-top { align-items: start; }
+.seat { display: flex; justify-content: center; position: relative; }
+.seat-principal { grid-column: 2; }
+.seat-td        { grid-column: 3; }
+/* The TD's line runs left to the principal's box. Drawn on the TD's cell so
+   it cannot exist without a TD to end at. The left end is the principal box's
+   right edge: one column and the gap back to that column's centre, then half a
+   box (84px) forward. Percentages here resolve against this cell's width, and
+   the columns are equal, so 50% is half of the neighbour too. */
+.seat-td::before {
+  content: ''; position: absolute; top: 44px; right: 50%; left: calc(84px - 50% - 18px);
+  border-top: 2px solid var(--border); z-index: 0;
+}
+.seat-td .box { z-index: 1; }
+
+/* Trunk down from the principal, then a bar across the three captains and a
+   stub down into each. The bar spans column centre to column centre. */
+.trunk { width: 2px; height: 30px; background: var(--border); margin: 0 auto; }
+.tier-divisions { position: relative; padding-top: 30px; }
+.tier-divisions::before {
+  content: ''; position: absolute; top: 0;
+  left: calc(100% / 6); right: calc(100% / 6);
+  border-top: 2px solid var(--border);
+}
+.division { position: relative; min-width: 0; }
+.division::before {
+  content: ''; position: absolute; top: -30px; left: 50%; height: 30px;
+  border-left: 2px solid var(--border);
+}
+
+/* A division column: captain on top, vices, then a wrap of members. */
+.div-head {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent, var(--muted)); margin-bottom: 8px;
+}
+.div-count { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.div-body {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px 12px 12px; border-top: 3px solid var(--accent, var(--border));
+}
+.div-body .box { margin: 0 auto; }
+.rank-label {
+  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); text-align: center; margin: 14px 0 6px;
+}
+.vices { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.vices .box { margin: 0; }
+.members { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+
+/* ── One person ──
+   A box is a link to their profile, so the whole thing is one hit target.
+   Colour classes use background-color, never the shorthand, because the
+   avatar's photo sizing has to survive them (see shared.js avatar()). */
+.box {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 6px; width: 168px; max-width: 100%; padding: 12px 10px 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text); text-decoration: none; position: relative;
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+.box:hover { border-color: var(--accent, var(--indigo)); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+.box-top { border-color: var(--dark); }
+.box-name { font-weight: 700; font-size: 0.86rem; line-height: 1.25; }
+.box-role { font-size: 0.72rem; font-weight: 600; color: var(--accent, var(--indigo)); }
+.box-sub  { font-size: 0.7rem; color: var(--muted); line-height: 1.3; }
+.box-empty {
+  border-style: dashed; color: var(--muted); font-size: 0.78rem; font-weight: 600;
+  justify-content: center; min-height: 92px; cursor: default;
+}
+.box-empty:hover { border-color: var(--border); box-shadow: none; transform: none; }
+.org-av {
+  width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.03em;
+  flex-shrink: 0; color: #fff;
+}
+
+/* A member is a chip: avatar and name, nothing else, so a division of thirty
+   is a paragraph rather than a wall. */
+.chip-person {
+  display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 4px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  font-size: 0.78rem; font-weight: 600; color: var(--text); text-decoration: none;
+  max-width: 100%; position: relative;
+  transition: border-color 0.12s, background 0.12s;
+}
+.chip-person:hover { border-color: var(--accent, var(--indigo)); background: var(--card); }
+.chip-person span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-av {
+  width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 0.55rem; font-weight: 800; flex-shrink: 0; color: #fff;
+}
+.is-me { outline: 2px solid var(--accent, var(--indigo)); outline-offset: 1px; }
+
+/* Only an admin is sent flags, so only an admin ever sees one of these. */
+.flag {
+  position: absolute; top: -7px; right: -7px; width: 20px; height: 20px;
+  border-radius: 50%; background: #fde68a; color: #92400e; font-size: 0.7rem;
+  display: flex; align-items: center; justify-content: center; border: 2px solid var(--card);
+  cursor: help;
+}
+.chip-person .flag { top: -6px; right: -6px; width: 16px; height: 16px; font-size: 0.58rem; }
+
+/* People with no division yet, and the admin tidy-up list. */
+.holding { margin-top: 26px; }
+.holding .members { justify-content: flex-start; }
+.tidy {
+  margin-top: 26px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px;
+  padding: 14px 16px;
+}
+.tidy-title { font-weight: 800; font-size: 0.86rem; color: #92400e; margin-bottom: 8px; }
+.tidy ul { margin: 0; padding-left: 18px; font-size: 0.82rem; line-height: 1.6; color: var(--text); }
+.tidy a { color: inherit; }
+.tidy-note { font-size: 0.74rem; color: var(--muted); margin-top: 8px; }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.74rem; color: var(--muted);
+  margin: 18px 0 0; justify-content: center;
+}
+.legend b { color: var(--text); font-weight: 700; }
+
+.error-box { text-align: center; color: var(--red-text); padding: 30px 16px; font-weight: 600; }
+
+/* ── Narrow screens ──
+   The tree stacks. The connectors are the first thing to go: a bar drawn for
+   three columns is nonsense over one, and a stacked list reads as a hierarchy
+   on its own. */
+@media (max-width: 760px) {
+  .tier { grid-template-columns: 1fr; gap: 14px; }
+  .seat-principal, .seat-td { grid-column: 1; }
+  .seat-td::before, .tier-divisions::before, .division::before { display: none; }
+  .trunk { display: none; }
+  .tier-divisions { padding-top: 6px; }
+  .box { width: 100%; max-width: 320px; }
+}
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo logo-indigo">🏛️</div>
+      <div class="header-text">
+        <div class="header-title">Org Chart</div>
+        <div class="header-sub" id="header-sub">Who reports to whom</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div id="loading">
+      <div class="ring ring-block" role="status" aria-label="Loading">
+        <svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg>
+      </div>
+    </div>
+    <div id="chart" class="chart" hidden></div>
+    <div id="error" class="error-box" hidden></div>
+  </div>
+</div>
+
+<script src="/static/shared.js"></script>
+<script>
+const esc = s => UCDFS.esc(s);
+let DATA = null;
+
+/* Every person on the chart links to their card in Team Profiles. The chart is
+   for seeing the shape of the team; the card is where the detail lives. */
+const profileHref = p => '/profiles#' + encodeURIComponent(p.id);
+
+function flagBadge(p) {
+  const f = (DATA.flags || {})[p.id];
+  if (!f || !f.length) return '';
+  return `<span class="flag" title="${esc(f.join('\n'))}" aria-label="Needs tidying">!</span>`;
+}
+
+function box(p, roleText, extraClass) {
+  if (!p) {
+    return `<div class="box box-empty">${esc(roleText)}<br><span style="font-weight:500">nobody has set this yet</span></div>`;
+  }
+  const sub = [p.year_label, p.course].filter(Boolean).join(' · ');
+  const me  = p.id === DATA.me ? ' is-me' : '';
+  return `<a class="box${extraClass ? ' ' + extraClass : ''}${me}" href="${profileHref(p)}" data-id="${esc(p.id)}">
+    ${UCDFS.avatar(p.name, p.photo, 'org-av')}
+    <div class="box-name">${esc(p.name)}</div>
+    <div class="box-role">${esc(roleText)}</div>
+    ${sub ? `<div class="box-sub">${esc(sub)}</div>` : ''}
+    ${flagBadge(p)}
+  </a>`;
+}
+
+function chip(p) {
+  const me = p.id === DATA.me ? ' is-me' : '';
+  return `<a class="chip-person${me}" href="${profileHref(p)}" data-id="${esc(p.id)}" title="${esc(p.name)}">
+    ${UCDFS.avatar(p.name, p.photo, 'chip-av')}<span>${esc(p.name)}</span>${flagBadge(p)}
+  </a>`;
+}
+
+function seat(list, roleText, cls) {
+  /* More than one person in a team-wide seat is drawn as more than one box,
+     side by side. The chart shows what the profiles say; the admin flag says
+     it needs sorting. */
+  if (!list.length) return box(null, roleText);
+  return list.map(p => box(p, roleText, cls)).join('');
+}
+
+function division(d) {
+  const n = (d.captain ? 1 : 0) + d.vices.length + d.members.length;
+  const vices = d.vices.length
+    ? `<div class="rank-label">Vice captain${d.vices.length > 1 ? 's' : ''}</div>
+       <div class="vices">${d.vices.map(p => box(p, 'Vice captain')).join('')}</div>`
+    : '';
+  const members = d.members.length
+    ? `<div class="rank-label">Members</div>
+       <div class="members">${d.members.map(chip).join('')}</div>`
+    : `<div class="rank-label">No members yet</div>`;
+  return `<div class="division" data-subteam="${esc(d.id)}" style="${accentVars(d.accent)}">
+    <div class="div-head">${d.icon} ${esc(d.name)} <span class="div-count">· ${n}</span></div>
+    <div class="div-body">
+      ${box(d.captain, 'Captain')}
+      ${vices}
+      ${members}
+    </div>
+  </div>`;
+}
+
+/* Maps an applet accent name to the shared.css tokens. Same table the dashboard
+   uses for its tiles, so a division is the same colour here as on the home
+   page. */
+function accentVars(name) {
+  const t = {
+    teal:   ['var(--teal)',   'var(--teal-bg)'],
+    green:  ['var(--green)',  'var(--green-bg)'],
+    purple: ['var(--purple)', 'var(--purple-bg)'],
+    red:    ['var(--red)',    'var(--red-bg)'],
+    amber:  ['var(--amber)',  'var(--amber-bg)'],
+    indigo: ['var(--indigo)', 'var(--indigo-bg)'],
+  }[name] || ['var(--indigo)', 'var(--indigo-bg)'];
+  return `--accent:${t[0]};--accent-bg:${t[1]}`;
+}
+
+function tidyList() {
+  const flags = DATA.flags || {};
+  const ids = Object.keys(flags);
+  if (!ids.length) return '';
+  const everyone = [...DATA.principal, ...DATA.td, ...DATA.unassigned];
+  DATA.divisions.forEach(d => { if (d.captain) everyone.push(d.captain); everyone.push(...d.vices, ...d.members); });
+  const nameOf = id => (everyone.find(p => p.id === id) || {}).name || 'Someone';
+  const items = ids.flatMap(id => flags[id].map(t =>
+    `<li><a href="/profiles#${encodeURIComponent(id)}">${esc(nameOf(id))}</a>: ${esc(t)}</li>`));
+  return `<div class="tidy" id="tidy">
+    <div class="tidy-title">Things that don't line up</div>
+    <ul>${items.join('')}</ul>
+    <div class="tidy-note">Only admins see this. Captains are set in /admin; everything else is what people put on their own profile.</div>
+  </div>`;
+}
+
+function render() {
+  const d = DATA;
+  document.getElementById('header-sub').textContent =
+    `${d.people} ${d.people === 1 ? 'person' : 'people'} · ${d.divisions.length} divisions`;
+
+  const holding = d.unassigned.length
+    ? `<div class="holding">
+         <div class="section-label">Not in a division yet · ${d.unassigned.length}</div>
+         <div class="members">${d.unassigned.map(chip).join('')}</div>
+       </div>`
+    : '';
+
+  document.getElementById('chart').innerHTML = `
+    <div class="tier tier-top">
+      <div class="seat seat-principal">${seat(d.principal, 'Team Principal', 'box-top')}</div>
+      <div class="seat seat-td">${seat(d.td, 'Technical Director', 'box-top')}</div>
+    </div>
+    <div class="trunk"></div>
+    <div class="tier tier-divisions">${d.divisions.map(division).join('')}</div>
+    ${holding}
+    ${tidyList()}
+    <div class="legend">
+      <span><b>Captains</b> are set by an admin.</span>
+      <span>Everything else is what people put on their own profile.</span>
+      <span>Tap anyone to open their card.</span>
+    </div>`;
+}
+
+async function load() {
+  const loading = document.getElementById('loading');
+  const chart   = document.getElementById('chart');
+  const err     = document.getElementById('error');
+  try {
+    const r = await fetch('/api/org');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    DATA = await r.json();
+    render();
+    chart.hidden = false;
+  } catch (e) {
+    err.textContent = 'Could not load the chart. Try again in a moment.';
+    err.hidden = false;
+  } finally {
+    loading.hidden = true;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  UCDFS.gate(() => {
+    UCDFS.renderPill();
+    load();
+  });
+});
+</script>
+</body>
+</html>

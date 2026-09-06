@@ -1074,7 +1074,17 @@ async function load() {
   LIMITS   = j.limits   || LIMITS;
   ME       = j.me;
   render();
+  openFromHash();
 }
+
+/* /profiles#<id> opens that person's card. The org chart links here for every
+   box, and a link somebody pastes into a chat should land on the person, not
+   on the top of the grid. An id that matches nobody just shows the grid. */
+function openFromHash() {
+  const id = decodeURIComponent((location.hash || '').slice(1));
+  if (id) openViewer(id);
+}
+window.addEventListener('hashchange', openFromHash);
 
 async function boot(user) {
   UCDFS.renderPill();

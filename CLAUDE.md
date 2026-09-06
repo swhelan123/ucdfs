@@ -637,6 +637,39 @@ An unapplied 014 reads as **no captains**, so approvals stall rather than being
 granted. That direction is the safe one and is why `_captains()` returns `{}` on
 a failed lookup instead of raising.
 
+### The org chart draws from two sources, and says which
+
+`/org` is a read-only picture of the team built in `_org_chart()`. It grants
+nothing and is checked by nothing. What matters is that its boxes come from two
+sources with different standing, and the page never blurs them:
+
+- **Captain boxes come from `captaincies`** and nowhere else. A captain box is
+  the same fact that decides who may approve a purchase.
+- **Team Principal, Technical Director and Vice Captain come from
+  `profile_details.role_label`**, which anyone sets on their own card. There is
+  no granted source for those seats yet. When one is wanted, it is a migration
+  alongside `captaincies` and a picker in `/admin`, not a rule that trusts the
+  label.
+
+Placement rules, in order: retired members (`year = 'Alum'`) are off the chart;
+a granted captain is drawn in their captain box whatever their card says; a
+person who says `principal` or `td` sits in the top tier and not in a division;
+`vice` goes under their division's captain; everyone else with a division is a
+member chip; no division means the holding row at the bottom. One box per
+person, except a granted captain who also claims a team seat, who appears in
+both because both may be true.
+
+Wherever the two sources disagree, `_org_chart()` records a flag against the
+person: says Captain but holds no captaincy, holds one but the card says
+member, holds one for a division the card does not put them in, two people
+saying Team Principal. **Flags are sent only to admins.** A member seeing
+"so-and-so says Captain but is not one" is gossip, not information they can act
+on. `suite-org` checks both halves: a member gets an empty `flags`, an admin
+gets the populated one.
+
+Every box links to `/profiles#<id>`, which opens that card. That hash handling
+lives in `profiles.html`, so any page can deep-link a person.
+
 ### Hiding a control is not a permission
 
 `/api/log` and `/api/log/delete` took a name from the request body and wrote it.

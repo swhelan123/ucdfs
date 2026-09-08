@@ -124,6 +124,18 @@ let restoreCaptains = async () => {};
         !has(mech.members, 'Org Principal') && !has(mech.vices, 'Org Principal'),
         JSON.stringify(names(mech.members)));
 
+  console.log('\nthe shape');
+  // Who hangs off whom is the server's answer, so it is asserted here rather
+  // than left to the page to know. The TD carries the two engineering
+  // divisions; Operations sits beside the TD, under the principal.
+  check('Electrical answers to the Technical Director', pt.reports_to === 'td', pt.reports_to);
+  check('so does Mechanical', mech.reports_to === 'td', mech.reports_to);
+  check('Operations answers to the Team Principal',
+        div(asMember, 'ops').reports_to === 'principal', div(asMember, 'ops').reports_to);
+  check('every division is placed somewhere',
+        (asMember.divisions || []).every(x => ['td', 'principal'].includes(x.reports_to)),
+        JSON.stringify((asMember.divisions || []).map(x => [x.id, x.reports_to])));
+
   console.log('\nthe captain box');
   check('the granted captain gets the box, though their card says member',
         pt.captain && pt.captain.name === 'Org Captain', JSON.stringify(pt.captain));
@@ -190,6 +202,13 @@ let restoreCaptains = async () => {};
           !!d.querySelector(`.chip-person[data-id="${ids.claimer}"]`) &&
           !d.querySelector(`.box[data-id="${ids.claimer}"]`));
     check('you are marked as you', !!d.querySelector(`.is-me[data-id="${ids.member}"]`));
+    check('the engineering divisions are drawn under the TD',
+          !!d.querySelector('.branch[data-branch="td"] .division[data-subteam="pt"]') &&
+          !!d.querySelector('.branch[data-branch="td"] .division[data-subteam="mech"]'));
+    check('with the TD seat above them', !!d.querySelector('.branch[data-branch="td"] .seat .box'));
+    check('Operations is drawn beside the TD, not under',
+          !!d.querySelector('.division[data-subteam="ops"]') &&
+          !d.querySelector('.branch[data-branch="td"] .division[data-subteam="ops"]'));
     check('a member sees no flags', d.querySelectorAll('.flag').length === 0);
     check('nor the tidy-up list', !d.getElementById('tidy'));
     check('no tour, so no ? in the header', !d.getElementById('ucdfs-help'));

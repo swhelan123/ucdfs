@@ -2440,6 +2440,16 @@ async def api_profiles(request: Request):
 
 ORG_TEAM_ROLES = ("principal", "td")
 
+# Where each division hangs off the chart. Mechanical and Electrical answer to
+# the Technical Director; Operations sits beside the TD, under the Principal.
+#
+# A map here rather than a field on SUBTEAMS because this is the only place the
+# shape matters: SUBTEAMS is returned wholesale by half a dozen endpoints and
+# none of the others has any use for it. A division missing from this map hangs
+# off the Principal, so adding one to SUBTEAMS and forgetting this line draws it
+# in the wrong place rather than dropping it off the chart.
+ORG_REPORTS_TO = {"mech": "td", "pt": "td", "ops": "principal"}
+
 
 def _org_person(p: dict) -> dict:
     """The subset of a directory entry the chart draws.
@@ -2525,6 +2535,7 @@ def _org_chart(me: dict) -> dict:
                 members.append(_org_person(p))
         divisions.append({
             "id": st, "name": s["name"], "icon": s["icon"], "accent": s["accent"],
+            "reports_to": ORG_REPORTS_TO.get(st, "principal"),
             "captain": captain_box(st),
             "vices":   vices,
             "members": members,

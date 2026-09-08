@@ -651,6 +651,14 @@ sources with different standing, and the page never blurs them:
   alongside `captaincies` and a picker in `/admin`, not a rule that trusts the
   label.
 
+The shape is `ORG_REPORTS_TO`, beside `SUBTEAMS`: the Principal at the top, the
+Technical Director and Operations below them, and Mechanical and Electrical
+below the TD. It comes down to the page as `reports_to` on each division, so
+`org.html` draws a hierarchy rather than knowing one — the whole tree is one CSS
+rule (`.fan`) applied at each level. A division missing from the map hangs off
+the Principal, so adding one to `SUBTEAMS` and forgetting the map puts it in the
+wrong place rather than dropping it off the chart.
+
 Placement rules, in order: retired members (`year = 'Alum'`) are off the chart;
 a granted captain is drawn in their captain box whatever their card says; a
 person who says `principal` or `td` sits in the top tier and not in a division;

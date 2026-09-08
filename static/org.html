@@ -16,41 +16,41 @@
 .page { max-width: 1180px; }
 
 /* ── The tree ──
-   Three equal columns, one per division, and the same three columns for the
-   top tier so the Team Principal sits over the middle of the captains and the
-   Technical Director to the right. The lines are borders on pseudo-elements,
-   which is all an org chart needs; nothing here is drawn on a canvas. */
-.chart { position: relative; padding-top: 6px; }
-.tier { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-.tier-top { align-items: start; }
-.seat { display: flex; justify-content: center; position: relative; }
-.seat-principal { grid-column: 2; }
-.seat-td        { grid-column: 3; }
-/* The TD's line runs left to the principal's box. Drawn on the TD's cell so
-   it cannot exist without a TD to end at. The left end is the principal box's
-   right edge: one column and the gap back to that column's centre, then half a
-   box (84px) forward. Percentages here resolve against this cell's width, and
-   the columns are equal, so 50% is half of the neighbour too. */
-.seat-td::before {
-  content: ''; position: absolute; top: 44px; right: 50%; left: calc(84px - 50% - 18px);
-  border-top: 2px solid var(--border); z-index: 0;
-}
-.seat-td .box { z-index: 1; }
+   The Principal at the top; below, the Technical Director beside Operations;
+   below the TD, the two engineering divisions. That shape comes down from the
+   server as reports_to, so the page draws a hierarchy rather than knowing one.
 
-/* Trunk down from the principal, then a bar across the three captains and a
-   stub down into each. The bar spans column centre to column centre. */
+   One rule does the drawing at every level: a .fan is a row of children with a
+   bar across them and a stub down into each. The bar is inset half a column at
+   both ends so it runs centre to centre, and the column count arrives as an
+   inline variable because the divisions are data — a fourth one is a wider row,
+   not a new rule. Borders on pseudo-elements throughout; nothing is on canvas. */
+.chart { position: relative; padding-top: 6px; }
+.seat { display: flex; justify-content: center; flex-wrap: wrap; gap: 18px; }
 .trunk { width: 2px; height: 30px; background: var(--border); margin: 0 auto; }
-.tier-divisions { position: relative; padding-top: 30px; }
-.tier-divisions::before {
-  content: ''; position: absolute; top: 0;
-  left: calc(100% / 6); right: calc(100% / 6);
+
+.fan {
+  display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr));
+  gap: 18px; position: relative; padding-top: 30px;
+}
+.fan::before {
+  content: ''; position: absolute; top: 0; left: var(--edge); right: var(--edge);
   border-top: 2px solid var(--border);
 }
-.division { position: relative; min-width: 0; }
-.division::before {
+.fan > * { position: relative; min-width: 0; }
+.fan > *::before {
   content: ''; position: absolute; top: -30px; left: 50%; height: 30px;
   border-left: 2px solid var(--border);
 }
+
+/* A division is the same width wherever it lands, so Operations up beside the
+   Technical Director is the same card as Electrical a row below it, and the
+   stub above each meets the middle of one. */
+.division { width: 100%; max-width: 320px; margin: 0 auto; }
+
+/* A branch is one column of a fan that has a fan of its own below it: the
+   Technical Director with the divisions that answer to them. */
+.branch { display: flex; flex-direction: column; }
 
 /* A division column: captain on top, vices, then a wrap of members. */
 .div-head {
@@ -137,12 +137,6 @@
 .tidy a { color: inherit; }
 .tidy-note { font-size: 0.74rem; color: var(--muted); margin-top: 8px; }
 
-.legend {
-  display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.74rem; color: var(--muted);
-  margin: 18px 0 0; justify-content: center;
-}
-.legend b { color: var(--text); font-weight: 700; }
-
 .error-box { text-align: center; color: var(--red-text); padding: 30px 16px; font-weight: 600; }
 
 /* ── Narrow screens ──
@@ -150,11 +144,11 @@
    three columns is nonsense over one, and a stacked list reads as a hierarchy
    on its own. */
 @media (max-width: 760px) {
-  .tier { grid-template-columns: 1fr; gap: 14px; }
-  .seat-principal, .seat-td { grid-column: 1; }
-  .seat-td::before, .tier-divisions::before, .division::before { display: none; }
-  .trunk { display: none; }
-  .tier-divisions { padding-top: 6px; }
+  /* Beats the inline --cols: that only sets the variable, and this sets the
+     property itself, later in the same sheet. */
+  .fan { grid-template-columns: 1fr; gap: 14px; padding-top: 6px; }
+  .fan::before, .fan > *::before, .trunk { display: none; }
+  .division { max-width: 100%; }
   .box { width: 100%; max-width: 320px; }
 }
 </style>
@@ -285,6 +279,15 @@ function tidyList() {
   </div>`;
 }
 
+/* A row of children under the box above: the bar and the stubs are CSS, and all
+   this has to hand over is how many columns to divide the row into. The inset
+   is half a column, which is where the first and last centres are. */
+function fan(children) {
+  if (!children.length) return '';
+  return `<div class="fan" style="--cols:${children.length};--edge:calc(100% / ${children.length * 2})">
+    ${children.join('')}</div>`;
+}
+
 function render() {
   const d = DATA;
   document.getElementById('header-sub').textContent =
@@ -297,20 +300,22 @@ function render() {
        </div>`
     : '';
 
-  document.getElementById('chart').innerHTML = `
-    <div class="tier tier-top">
-      <div class="seat seat-principal">${seat(d.principal, 'Team Principal', 'box-top')}</div>
-      <div class="seat seat-td">${seat(d.td, 'Technical Director', 'box-top')}</div>
-    </div>
-    <div class="trunk"></div>
-    <div class="tier tier-divisions">${d.divisions.map(division).join('')}</div>
-    ${holding}
-    ${tidyList()}
-    <div class="legend">
-      <span><b>Captains</b> are set by an admin.</span>
-      <span>Everything else is what people put on their own profile.</span>
-      <span>Tap anyone to open their card.</span>
+  /* Which divisions sit where is the server's answer, not the page's. The TD
+     is drawn even when nobody holds the seat, because the divisions under it
+     have to hang off something. */
+  const under = who => d.divisions.filter(x => x.reports_to === who);
+  const engineering = under('td');
+  const td = `<div class="branch" data-branch="td">
+      <div class="seat">${seat(d.td, 'Technical Director', 'box-top')}</div>
+      ${engineering.length ? '<div class="trunk"></div>' + fan(engineering.map(division)) : ''}
     </div>`;
+
+  document.getElementById('chart').innerHTML = `
+    <div class="seat">${seat(d.principal, 'Team Principal', 'box-top')}</div>
+    <div class="trunk"></div>
+    ${fan([td, ...under('principal').map(division)])}
+    ${holding}
+    ${tidyList()}`;
 }
 
 async function load() {

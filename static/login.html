@@ -64,6 +64,14 @@ body { display: flex; align-items: center; justify-content: center;
 .submit-btn:hover  { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .submit-btn:active { transform: scale(0.97); transition-duration: 0.05s; }
 .submit-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+
+/* "Forgot your password?", tucked under the password on the sign-in step. */
+.aux { display: flex; justify-content: flex-end; margin: -4px 0 12px; }
+.text-btn {
+  background: none; border: none; font-family: inherit; font-size: 0.76rem;
+  font-weight: 600; color: var(--indigo); cursor: pointer; padding: 4px 2px;
+}
+.text-btn:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -106,11 +114,20 @@ body { display: flex; align-items: center; justify-content: center;
       </div>
     </div>
 
-    <!-- Step 2 -->
+    <!-- Step 2, and choosing a new password from a reset link -->
     <div class="field" id="password-field" style="display:none">
-      <label for="password">Password</label>
+      <label for="password" id="password-label">Password</label>
       <input id="password" class="text-input" type="password"
              placeholder="At least 8 characters" minlength="8">
+    </div>
+    <div class="aux" id="forgot-row" style="display:none">
+      <button type="button" class="text-btn" id="forgot-btn">Forgot your password?</button>
+    </div>
+
+    <!-- Signup and reset only: typed twice, compared here, never sent -->
+    <div class="field" id="confirm-field" style="display:none">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" class="text-input" type="password" placeholder="Same again">
     </div>
 
     <button class="submit-btn" id="submit-btn" type="submit">
@@ -129,13 +146,19 @@ body { display: flex; align-items: center; justify-content: center;
  * no account record, so it pushed an existing user through signup. localStorage
  * is per-device and says nothing about whether an account exists. Only the
  * server knows that, so we ask it.
+ *
+ * Steps: email → login | signup, then signup → sent when the account has to be
+ * confirmed by email. A link from one of those emails comes back to this page
+ * with a session in the URL fragment: a reset link opens the reset step, a
+ * confirmation link is handed straight to the server for a cookie.
  * ──────────────────────────────────────────────────────────────────────────── */
 const NEXT       = new URLSearchParams(location.search).get('next') || '/';
 const LAST_EMAIL = 'ucdfs_last_email';   // per-device convenience, not identity
 
-let step  = 'email';         // 'email' | 'login' | 'signup'
+let step  = 'email';         // 'email' | 'login' | 'signup' | 'sent' | 'reset'
 let email = '';
 let knownFirst = null;       // first name, from the server or old localStorage
+let link  = null;            // the session off a reset link, until it is used
 
 const $ = id => document.getElementById(id);
 
@@ -146,15 +169,22 @@ function clearMsg()   { $('auth-error').classList.remove('show'); $('auth-ok').c
 function render() {
   const onEmail  = step === 'email';
   const isSignup = step === 'signup';
+  const isLogin  = step === 'login';
+  const isSent   = step === 'sent';
+  const isReset  = step === 'reset';
 
   $('email-field').style.display    = onEmail ? '' : 'none';
-  $('identity').style.display       = onEmail ? 'none' : '';
-  $('password-field').style.display = onEmail ? 'none' : '';
+  $('identity').style.display       = (isLogin || isSignup || isSent) ? '' : 'none';
   $('name-field').style.display     = isSignup ? '' : 'none';
+  $('password-field').style.display = (isLogin || isSignup || isReset) ? '' : 'none';
+  $('confirm-field').style.display  = (isSignup || isReset) ? '' : 'none';
+  $('forgot-row').style.display     = isLogin ? '' : 'none';
 
   $('email').required    = onEmail;
-  $('password').required = !onEmail;
+  $('password').required = isLogin || isSignup || isReset;
+  $('confirm').required  = isSignup || isReset;
   $('first').required    = isSignup;
+  $('password-label').textContent = isReset ? 'New password' : 'Password';
 
   if (onEmail) {
     $('auth-title').textContent = 'Welcome to UCDFS';
@@ -167,6 +197,15 @@ function render() {
       : 'No account on this email yet. Pick a password and you\'re in.';
     $('password').setAttribute('autocomplete', 'new-password');
     $('submit-label').textContent = 'Create my account';
+  } else if (isSent) {
+    $('auth-title').textContent = 'Check your email';
+    $('auth-sub').textContent   = 'Open the link in it to finish setting up your account. It can take a minute to arrive.';
+    $('submit-label').textContent = 'Resend the email';
+  } else if (isReset) {
+    $('auth-title').textContent = 'Choose a new password';
+    $('auth-sub').textContent   = "At least 8 characters. You'll be signed in straight after.";
+    $('password').setAttribute('autocomplete', 'new-password');
+    $('submit-label').textContent = 'Set new password';
   } else {
     $('auth-title').textContent = knownFirst ? `Welcome back, ${knownFirst}` : 'Welcome back';
     $('auth-sub').textContent   = 'Enter your password to carry on.';
@@ -174,7 +213,7 @@ function render() {
     $('submit-label').textContent = 'Sign in';
   }
 
-  if (!onEmail) {
+  if (!onEmail && !isReset) {
     $('identity-mail').textContent = email;
     $('identity-av').textContent   = UCDFS.initials(knownFirst || email);
   }
@@ -182,7 +221,7 @@ function render() {
 
 function backToEmail() {
   step = 'email'; knownFirst = null;
-  $('password').value = '';
+  $('password').value = ''; $('confirm').value = '';
   clearMsg(); render();
   $('email').focus();
 }
@@ -198,14 +237,25 @@ async function busy(fn) {
   }
 }
 
+const post = (path, body) => fetch(path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+/* The second password box exists to catch a typo before it becomes the
+   password. Compared here and only here; the server gets one password. */
+function passwordsMatch() {
+  if ($('password').value === $('confirm').value) return true;
+  showError("Those passwords don't match.");
+  $('confirm').focus(); $('confirm').select();
+  return false;
+}
+
 /* Step 1: does this email have an account? */
 async function checkEmail() {
   const value = $('email').value.trim().toLowerCase();
   if (!value) return;
-  const r = await fetch('/api/auth/check', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: value }),
-  });
+  const r = await post('/api/auth/check', { email: value });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { showError(data.detail || 'Could not check that email.'); return; }
 
@@ -227,15 +277,13 @@ async function checkEmail() {
 
 /* Step 2: sign in or create. */
 async function submitCredentials() {
+  if (step === 'signup' && !passwordsMatch()) return;
   const body = step === 'signup'
     ? { first_name: $('first').value, last_name: $('last').value,
         email: email, password: $('password').value }
     : { email: email, password: $('password').value };
 
-  const r = await fetch('/api/auth/' + step, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const r = await post('/api/auth/' + step, body);
   const data = await r.json().catch(() => ({}));
 
   if (!r.ok) {
@@ -247,6 +295,13 @@ async function submitCredentials() {
       $('password').focus();
       return;
     }
+    // Signed up but never opened the link. The sent step is where the resend
+    // lives, so that is where they go, with the reason on top.
+    if (step === 'login' && /confirm your email/i.test(data.detail || '')) {
+      step = 'sent'; render();
+      showError(data.detail);
+      return;
+    }
     showError(data.detail || 'Something went wrong. Try again.');
     return;
   }
@@ -254,18 +309,68 @@ async function submitCredentials() {
   // device and send them round the same wrong loop next time.
   try { localStorage.setItem(LAST_EMAIL, email); } catch (e) {}
 
-  if (data.needs_confirmation) { showOk(data.message || 'Check your email to confirm.'); return; }
+  if (data.needs_confirmation) {
+    step = 'sent'; render();
+    showOk(data.message || 'Check your email to confirm.');
+    return;
+  }
+  location.href = NEXT;
+}
+
+async function resend() {
+  const r = await post('/api/auth/resend', { email });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { showError(data.detail || 'Could not send that. Try again in a minute.'); return; }
+  showOk(data.message || 'Sent. Check your email.');
+}
+
+async function forgot() {
+  const r = await post('/api/auth/forgot', { email });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { showError(data.detail || 'Could not send that. Try again in a minute.'); return; }
+  showOk(data.message || 'Check your email for a link to choose a new password.');
+}
+$('forgot-btn').addEventListener('click', () => {
+  clearMsg();
+  busy(forgot).catch(() => showError('Could not reach the server. Check your connection.'));
+});
+
+/* From a reset link: the new password, with the session that link carried. */
+async function resetPassword() {
+  if (!passwordsMatch()) return;
+  const r = await post('/api/auth/reset', { ...link, password: $('password').value });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { showError(data.detail || 'Could not set that password.'); return; }
+  link = null;
   location.href = NEXT;
 }
 
 $('auth-form').addEventListener('submit', e => {
   e.preventDefault();
   clearMsg();
-  busy(step === 'email' ? checkEmail : submitCredentials)
-    .catch(() => showError('Could not reach the server. Check your connection.'));
+  const action = { email: checkEmail, sent: resend, reset: resetPassword }[step] || submitCredentials;
+  busy(action).catch(() => showError('Could not reach the server. Check your connection.'));
 });
 
+/* What an email link left in the URL fragment, if anything, and then nothing:
+   a session does not belong in the address bar, the history, or a screenshot.
+   GoTrue puts either tokens there or an error, never both. */
+function readLink() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  if (!raw) return null;
+  const q = new URLSearchParams(raw);
+  if (!q.has('access_token') && !q.has('error') && !q.has('error_description')) return null;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  return {
+    access_token:  q.get('access_token') || '',
+    refresh_token: q.get('refresh_token') || '',
+    type:          q.get('type') || '',
+    error:         q.get('error_description') || q.get('error') || '',
+  };
+}
+
 (async function init() {
+  const fromLink = readLink();
   render();
 
   try {
@@ -275,6 +380,28 @@ $('auth-form').addEventListener('submit', e => {
       $('email').placeholder = 'you@' + allowed_domains[0];
     }
   } catch (e) { /* hint is a nicety */ }
+
+  if (fromLink) {
+    if (fromLink.error) {
+      showError(fromLink.error);
+    } else if (fromLink.type === 'recovery') {
+      link = { access_token: fromLink.access_token, refresh_token: fromLink.refresh_token };
+      step = 'reset'; render();
+      $('password').focus();
+      return;
+    } else {
+      // A confirmation link. The session is real if the server says so.
+      try {
+        const r = await post('/api/auth/session',
+          { access_token: fromLink.access_token, refresh_token: fromLink.refresh_token });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) { location.href = NEXT; return; }
+        showError(data.detail || 'That link did not work. Sign in instead.');
+      } catch (e) {
+        showError('Could not reach the server. Check your connection.');
+      }
+    }
+  }
 
   // Signed in on this device before? Skip straight past the email step.
   let remembered = null;

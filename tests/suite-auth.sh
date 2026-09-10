@@ -7,15 +7,51 @@ set -u
 CJ="$WORK/cookies.txt"; rm -f "$CJ"
 EMAIL="$(test_email)"
 
-echo "── signup ──"
+# Whether the project confirms email addresses is a dashboard toggle the app
+# cannot see and the suite must not assume. Signup answers differently in each
+# mode and both answers are right, so the checks below follow the setting.
+AUTOCONFIRM=$(curl -s -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/auth/v1/settings" \
+  | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("mailer_autoconfirm")).lower())' 2>/dev/null)
+
+echo "── signup (confirm email is $([ "$AUTOCONFIRM" = "true" ] && echo off || echo on)) ──"
 code=$(curl -s -c "$CJ" -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/signup" \
   -H 'Content-Type: application/json' \
   -d "{\"first_name\":\"Test\",\"last_name\":\"Bot\",\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")
 ck "signup succeeds" "$code" "200"
-ck "httpOnly session cookie set"    "$(grep -c 'ucdfs_session' "$CJ")" "1"
-ck "readable profile cookie set"    "$(grep -c 'ucdfs_profile' "$CJ")" "1"
-ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
-ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
+if [ "$AUTOCONFIRM" = "true" ]; then
+  ck "httpOnly session cookie set"    "$(grep -c 'ucdfs_session' "$CJ")" "1"
+  ck "readable profile cookie set"    "$(grep -c 'ucdfs_profile' "$CJ")" "1"
+  ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
+  ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
+else
+  ck "no session until the email is confirmed" "$(grep -c 'ucdfs_session' "$CJ")" "0"
+  ck "and the page is told so" \
+     "$(python3 -c 'import json;print(json.load(open("'"$WORK/o.json"'")).get("needs_confirmation"))')" "True"
+  ck "signing in before confirming is refused" \
+     "$(curl -s -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+        -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "400"
+  ck "with the reason" "$(grep -c -i 'confirm your email' "$WORK/o.json")" "1"
+  # Confirm it the way the link would, minus the email: through the admin API.
+  # The rest of this suite needs a signed-in cookie jar either way.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$EMAIL" <<'PY2'
+import json, sys, urllib.request
+url, key, email = sys.argv[1:4]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+def call(method, path, body=None):
+    req = urllib.request.Request(url + path, headers=hdr, method=method,
+                                 data=None if body is None else json.dumps(body).encode())
+    with urllib.request.urlopen(req, timeout=20) as r:
+        raw = r.read(); return json.loads(raw) if raw else {}
+users = call("GET", "/auth/v1/admin/users?per_page=1000").get("users", [])
+uid = next((u["id"] for u in users if u.get("email") == email), None)
+if uid: call("PUT", "/auth/v1/admin/users/" + uid, {"email_confirm": True})
+PY2
+  ck "confirmed, signing in works" \
+     "$(curl -s -c "$CJ" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+        -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "200"
+  ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
+  ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
+fi
 
 echo
 echo "── signed-in access ──"
@@ -66,6 +102,37 @@ ck "account check: unknown email" "$(curl -s -X POST "$BASE/api/auth/check" -H '
 ck "account check: non-UCD blocked" \
    "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/check" -H 'Content-Type: application/json' \
       -d '{"email":"victim@gmail.com"}')" "403"
+
+echo
+echo "── the email-link endpoints ──"
+# None of these sends an email: the addresses have no account, or the tokens
+# are junk. What is checked is the contract the sign-in page relies on, and
+# that a made-up token buys nothing. Sending is one GoTrue call each, and the
+# whole round trip from link to new password is in suite-login, without email.
+for p in /api/auth/forgot /api/auth/resend /api/auth/session /api/auth/reset; do
+  ck "public $p (no 401 for the signed-out)" \
+     "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE$p" -H 'Content-Type: application/json' -d '{}' | sed 's/^401$/BLOCKED/')" \
+     "400"
+done
+ck "forgot: unknown address is still a calm 200" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/forgot" -H 'Content-Type: application/json' \
+      -d '{"email":"ucdfs-test-nobody@ucdconnect.ie"}')" "200"
+ck "forgot: non-UCD address is 403, like check" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/forgot" -H 'Content-Type: application/json' \
+      -d '{"email":"victim@gmail.com"}')" "403"
+ck "resend: unknown address is a calm 200" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/resend" -H 'Content-Type: application/json' \
+      -d '{"email":"ucdfs-test-nobody@ucdconnect.ie"}')" "200"
+ck "session: a forged token gets no cookie" \
+   "$(curl -s -c "$WORK/forged.txt" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/session" -H 'Content-Type: application/json' \
+      -d '{"access_token":"forged.jwt.here","refresh_token":"x"}')" "400"
+ck "  and none was set" "$(grep -c 'ucdfs_session' "$WORK/forged.txt")" "0"
+ck "reset: a forged token sets nothing" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/reset" -H 'Content-Type: application/json' \
+      -d '{"access_token":"forged.jwt.here","password":"AnotherPassword1!"}')" "400"
+ck "reset: a short password is refused before GoTrue is asked" \
+   "$(curl -s -X POST "$BASE/api/auth/reset" -H 'Content-Type: application/json' \
+      -d '{"access_token":"forged.jwt.here","password":"short"}' | grep -c 'at least 8')" "1"
 
 echo
 echo "── a real write, end to end ──"

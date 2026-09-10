@@ -352,9 +352,67 @@ holds the `service_role` key and does its own authorization. This is load-bearin
   (authorization refusal); a malformed address is **400**.
 - Page routes redirect to `/login` when signed out; API routes return 401. Public
   paths are listed in `PUBLIC_EXACT`.
+- The sign-in page asks for a new password **twice** (signup, and the reset
+  step) and compares them **on the page**; the server is sent one password.
+  The second box exists to catch a typo, which is a fact about the person
+  typing, not a validation rule. There is nothing for a server to check.
 - `COMP_ADMIN_PASSWORD` is **gone**. Committee actions need the `committee`
   role or god mode, and roles are handed out from `/admin`. There is a way to
   grant access now that isn't a password everyone knows and nobody can revoke.
+
+### Email links: confirming an address, resetting a password
+
+Both work the same way. GoTrue sends an email, the link in it comes back to
+**`/login` with a session in the URL fragment**, and the page hands that
+session to one of two endpoints. The fragment never reaches a server, so the
+hand-over has to be the browser's job, and `readLink()` strips it from the
+address bar the moment it has read it: a session does not belong in history
+or a screenshot.
+
+- `type=recovery` in the fragment opens the **reset step**: new password,
+  twice, then `POST /api/auth/reset` with the link's tokens. GoTrue does the
+  work (`PUT /user` with that token) and refuses a token it did not issue for
+  the purpose. Success sets the cookie with the same session, so choosing the
+  password is the last step.
+- Anything else with an `access_token` (a confirmation link, a magic link) goes
+  straight to `POST /api/auth/session`, which sends the token back to GoTrue
+  (`GET /user`) and sets the cookie only for a user GoTrue recognises. The
+  refresh token is stored as given; a bad one fails at the first refresh, which
+  is signed out, not signed in as somebody.
+- `error_description` in the fragment (an expired link) is shown on the email
+  step, and the person is one round of "forgot your password" from a new one.
+
+"Forgot your password?" sits under the password box on the sign-in step, so
+the address is already known and there is no form. `POST /api/auth/forgot`
+calls GoTrue `/recover`; `POST /api/auth/resend` sends the confirmation link
+again for a signup that lost it, and is where the page goes when sign-in is
+refused with *Email not confirmed*.
+
+**Whether addresses are confirmed at all is a dashboard toggle**, not code:
+Authentication → Sign In / Providers → Email → *Confirm email*. `auth_signup`
+answers both ways (a session, or `needs_confirmation` and the "check your
+email" step), the suites read `mailer_autoconfirm` from `/auth/v1/settings`
+and assert whichever is right, and `signUp()` in `tests/lib.js` creates its
+accounts through the **admin API** so no suite depends on the setting or sends
+an email. Turning it on needs two more dashboard changes or it does not work:
+
+- **Custom SMTP** (Authentication → Emails → SMTP Settings). The built-in
+  mailer allows a couple of emails an hour, project-wide. September
+  recruitment is thirty signups in an afternoon, and every one after the
+  second fails with *email rate limit exceeded*. Any transactional provider's
+  free tier is plenty.
+- **Redirect URLs** (Authentication → URL Configuration): the `/login` of every
+  tier that sends email. GoTrue only honours a redirect on that list and
+  replaces anything else with the Site URL, which is what makes deriving the
+  redirect from the request's Host header safe. `SITE_URL` in the env file
+  pins it per tier regardless.
+
+Suite-login walks the whole reset path without an email: `generate_link` (the
+admin API) hands back the token GoTrue would have mailed, following the verify
+URL by hand gives the redirect with the session in the fragment, and the page
+is opened on that. The same trick covers a confirmation link. The one email a
+run can send is the single real signup in `suite-auth` and `suite-login`, and
+only when confirmation is on.
 
 ### One connection, and who may not share it
 
@@ -942,18 +1000,20 @@ team's profile photos vanish from a site that otherwise looks fine.
 Each tier gets its own uploads directory. Staging must never hold real faces.
 
 **Schema parity is not the whole story. The auth settings have to match too.**
-A new Supabase project defaults to `mailer_autoconfirm: false`, so every signup
-sends a confirmation email and the second one in an hour fails with *"email rate
-limit exceeded"*. Production has it `true`. Nothing in the schema says so, the
-app cannot see it, and it presents as the test suite crashing on `signUp` rather
-than as a configuration difference. Check it with:
+Whether a project confirms email addresses (`mailer_autoconfirm`) is a
+dashboard toggle with no API, nothing in the schema says which way it is set,
+and the app cannot see it. It used to present as the test suite crashing on
+`signUp`; the app and the suites now work either way (see *Email links* under
+Auth), but the two projects still want to agree, or a flow that passes on
+stage is not the flow production runs. Check it with:
 
 ```bash
 curl -s -H "apikey: $ANON_KEY" "$SUPABASE_URL/auth/v1/settings" | jq .mailer_autoconfirm
 ```
 
-Both projects must say `true`. It is toggled at Authentication → Sign In /
-Providers → Email → **Confirm email off**, and there is no API for it.
+`true` means confirmation is **off**. Toggled at Authentication → Sign In /
+Providers → Email → *Confirm email*, and turning it on needs custom SMTP and
+the redirect allow-list, both in that section.
 
 ## Migrations
 

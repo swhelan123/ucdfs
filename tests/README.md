@@ -107,7 +107,11 @@ knowing before you add a browser test:
 - **Seed cookies before the page loads.** `beforeParse` runs *after* the response
   arrives, so a session set there is too late. The server has already redirected
   to `/login`. Pass raw `Set-Cookie` strings via `open({ setCookies })`; `signUp()`
-  returns them ready to use.
+  returns them ready to use. It makes the account through the GoTrue **admin
+  API** and signs it in through the app, rather than signing up through the
+  app: an admin-made account is confirmed at birth whatever the project's
+  "Confirm email" setting, no email is sent, and the per-IP signup cap is not
+  spent. The real signup endpoint is exercised once each in `auth` and `login`.
 - **Click the button, don't dispatch a `submit` event.** jsdom does not reliably
   run submit listeners for a hand-built `Event('submit')`. Use `submit(d)`.
 

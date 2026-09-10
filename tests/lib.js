@@ -193,43 +193,72 @@ async function submit(d) {
   await new Promise(r => setTimeout(r, 200));
 }
 
+const TEST_PASSWORD = 'TestPassword123!';
+
+/* A rate-limited request, retried over a short burst. What it mostly buys is
+   the message: three suites crashing on "400" reads as a code fault, and this
+   says what it actually is. An hour-long window is not something waiting
+   inside one run can clear. */
+async function withRetry(label, send) {
+  let r, body = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    r = await send();
+    if (r.ok) return r;
+    body = await r.text();
+    if (!/rate limit|too many attempts/i.test(body)) break;
+    await new Promise(res => setTimeout(res, 2000 * Math.pow(2, attempt)));
+  }
+  if (/rate limit|too many attempts/i.test(body)) {
+    throw new Error(label + ' rate-limited by Supabase. The cap is per hour per IP, ' +
+                    'which CI shares with this machine. Wait for the window, or run fewer suites.');
+  }
+  throw new Error(label + ' failed: ' + r.status + ' ' + body);
+}
+
 /**
- * Create a throwaway account and return its raw Set-Cookie headers, ready to
- * hand to open({ setCookies }). Accounts use the ucdfs-test- prefix so the
- * runner's cleanup can delete them safely.
+ * Sign an existing account in through the app and return its raw Set-Cookie
+ * headers, ready to hand to open({ setCookies }).
+ */
+async function signIn(email, password = TEST_PASSWORD) {
+  const r = await withRetry('login', () => fetch(BASE + '/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  }));
+  const setCookies = r.headers.getSetCookie ? r.headers.getSetCookie() : [];
+  if (!setCookies.length) throw new Error('login returned no Set-Cookie headers');
+  return setCookies;
+}
+
+/**
+ * Create a throwaway account and return its raw Set-Cookie headers. Accounts
+ * use the ucdfs-test- prefix so the runner's cleanup can delete them safely.
+ *
+ * Made through the GoTrue admin API and then signed in through the app, rather
+ * than signed up through the app. Two reasons, both about what a suite is for:
+ *
+ *   - "Confirm email" may be on for the project. A signup then sends an email
+ *     and returns no session, and every suite that only wanted a user would
+ *     fail on its first line for a reason that has nothing to do with it. An
+ *     admin-created user is confirmed at birth, and no email is sent.
+ *   - Signups are capped per IP per hour, and a full run is two dozen
+ *     accounts on a ceiling CI shares with this machine. The admin API is not
+ *     counted against it.
+ *
+ * The signup endpoint itself is exercised once each in suite-auth and
+ * suite-login, on purpose, which is where a change to it should fail.
  */
 async function signUp(first = 'Test', last = 'Bot') {
   const email = `ucdfs-test-${Date.now()}-${Math.floor(Math.random() * 1e5)}@ucdconnect.ie`;
-  let r, body = '';
-  /* Supabase caps sign-ups per hour per IP, and a full run is close to that cap
-     on its own: about two dozen accounts across the suites. CI runs on this
-     same machine, so a local run and the CI run that follows it share one
-     ceiling, and the second one starts failing partway through.
-     
-     The retry is for a short burst rather than that hour-long window, which no
-     amount of waiting inside one run will clear. What it mostly buys is the
-     message below: three suites crashing on "signup failed: 400" reads as a
-     code fault, and this says what it actually is. */
-  for (let attempt = 0; attempt < 4; attempt++) {
-    r = await fetch(BASE + '/api/auth/signup', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ first_name: first, last_name: last, email, password: 'TestPassword123!' }),
-    });
-    if (r.ok) break;
-    body = await r.text();
-    if (!/rate limit/i.test(body)) break;
-    await new Promise(res => setTimeout(res, 2000 * Math.pow(2, attempt)));
-  }
-  if (!r.ok && /rate limit/i.test(body)) {
-    throw new Error(
-      'signup rate-limited by Supabase. A full run creates about two dozen ' +
-      'accounts and the cap is per hour per IP, which CI shares with this ' +
-      'machine. Wait for the window, or run fewer suites.');
-  }
-  if (!r.ok) throw new Error('signup failed: ' + r.status + ' ' + body);
-  const setCookies = r.headers.getSetCookie ? r.headers.getSetCookie() : [];
-  if (!setCookies.length) throw new Error('signup returned no Set-Cookie headers');
-  return { email, setCookies };
+  const SB = process.env.SUPABASE_URL, KEY = process.env.SUPABASE_SERVICE_KEY;
+  if (!SB || !KEY) throw new Error('signUp needs SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment');
+  const r = await fetch(`${SB}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: TEST_PASSWORD, email_confirm: true,
+                           user_metadata: { first_name: first, last_name: last } }),
+  });
+  if (!r.ok) throw new Error('admin create failed: ' + r.status + ' ' + await r.text());
+  return { email, setCookies: await signIn(email) };
 }
 
-module.exports = { BASE, check, summary, open, submit, settle, signUp, waitFor };
+module.exports = { BASE, TEST_PASSWORD, check, summary, open, submit, settle, signUp, signIn, waitFor };

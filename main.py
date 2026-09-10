@@ -130,6 +130,24 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 30          # 30 days
 # Set COOKIE_SECURE=0 only for local http testing.
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
 
+# Where the links in auth emails bring people back to. The confirm-your-email
+# and reset-your-password emails carry a redirect, and GoTrue honours only one
+# that is on its allow-list (Authentication → URL Configuration), replacing
+# anything else with the project's Site URL. That is what makes deriving this
+# from the Host header safe: a spoofed header cannot point a real person's reset
+# link at somebody else's site. Set it explicitly on each tier all the same, so
+# a link sent from stage lands on stage and not wherever Site URL points.
+SITE_URL = os.environ.get("SITE_URL", "").strip().rstrip("/")
+
+
+def _site_url(request: Request) -> str:
+    if SITE_URL:
+        return SITE_URL
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host  = (request.headers.get("x-forwarded-host") or request.headers.get("host")
+             or request.url.netloc)
+    return f"{proto}://{host}"
+
 # ── Season calendar ───────────────────────────────────────────────────────────
 # Hand-edited once a season. The dashboard countdown reads this and nothing
 # else, so changing the date here is the whole job.
@@ -828,13 +846,23 @@ def _gotrue_headers(token: Optional[str] = None) -> dict:
 def _friendly_auth_error(payload: dict, fallback: str) -> str:
     raw = (payload.get("msg") or payload.get("error_description")
            or payload.get("message") or payload.get("error") or "")
+    code = (payload.get("error_code") or "").lower()
     low = raw.lower()
     if "already registered" in low or "already exists" in low:
         return "There's already an account with that email. Sign in instead."
     if "invalid login" in low or "invalid_grant" in low:
         return "That email and password don't match."
+    if "not confirmed" in low or code == "email_not_confirmed":
+        return "Confirm your email first. We sent you a link when you signed up."
     if "password" in low and "least" in low:
         return "Password must be at least 8 characters."
+    if "different from the old" in low or code == "same_password":
+        return "That's the password you already have. Pick a new one."
+    if "rate limit" in low or "once every" in low or code.endswith("rate_limit"):
+        return "Too many attempts in a short time. Give it a minute and try again."
+    # A recovery or confirmation link that has been used, or sat too long.
+    if "jwt" in low or "expired" in low:
+        return "That link has expired or was already used. Ask for a new one."
     return raw or fallback
 
 
@@ -848,8 +876,10 @@ async def _gotrue(method: str, path: str, *, token: Optional[str] = None,
             payload = r.json()
         except Exception:
             payload = {}
+        # 403 and 429 mean what they say and the page treats them differently
+        # from a plain refusal; everything else is a 400 to the browser.
         raise AuthError(_friendly_auth_error(payload, fallback),
-                        403 if r.status_code == 403 else 400)
+                        r.status_code if r.status_code in (403, 429) else 400)
     return r.json() if r.content else {}
 
 
@@ -1110,6 +1140,9 @@ PUBLIC_EXACT = {
     "/health", "/login",
     "/api/auth/signup", "/api/auth/login", "/api/auth/logout",
     "/api/auth/check", "/api/me", "/api/auth/config",
+    # The email-link paths. A person arriving from a confirmation or reset
+    # email is, by definition, not signed in yet.
+    "/api/auth/forgot", "/api/auth/reset", "/api/auth/resend", "/api/auth/session",
 }
 PUBLIC_PREFIXES = ("/static/",)
 # "/" is the dashboard and "/pt" is the legacy chart alias. Both are listed by
@@ -1304,7 +1337,7 @@ async def auth_signup(request: Request):
             raise AuthError("Password must be at least 8 characters.")
 
         created = await _gotrue(
-            "POST", "/signup",
+            "POST", "/signup?redirect_to=" + _login_url(request),
             json_body={"email": email, "password": pw,
                        "data": {"first_name": first, "last_name": last}},
             fallback="Could not create that account.")
@@ -1317,15 +1350,17 @@ async def auth_signup(request: Request):
 
     profile = _upsert_profile(user_id, first, last, email)
 
-    # With email confirmation off, signup returns a session directly. If it is
-    # ever switched on, there is no session yet and they must confirm first.
+    # With "Confirm email" off in the Supabase dashboard, signup returns a
+    # session and they are in. With it on there is no session yet: GoTrue has
+    # sent a link, and the page waits on the "check your email" step until the
+    # link brings them back to /login with a session in the fragment, which
+    # /api/auth/session below turns into the cookie. Works either way, so
+    # flipping the setting is a dashboard change and not a deploy.
     if not created.get("access_token"):
-        return JSONResponse({"ok": True, "needs_confirmation": True,
-                             "message": "Check your email to confirm your account."})
+        return JSONResponse({"ok": True, "needs_confirmation": True, "email": email,
+                             "message": f"We've sent a link to {email}."})
 
-    response = JSONResponse({"ok": True, "profile": _public_profile(profile)})
-    _set_session(response, created, profile)
-    return response
+    return _signed_in(created, email)
 
 
 @app.post("/api/auth/login")
@@ -1343,18 +1378,139 @@ async def auth_login(request: Request):
     except AuthError as e:
         raise HTTPException(e.status, e.message)
 
+    return _signed_in(tokens, email)
+
+
+def _signed_in(tokens: dict, email: str = "") -> JSONResponse:
+    """Turn a GoTrue session into ours: find (or rebuild) the profile row and
+    set both cookies. Every way of arriving signed in ends here: a password, a
+    confirmed signup link, a finished password reset."""
     user = tokens.get("user") or {}
-    profile = _get_profile(user.get("id")) if user.get("id") else None
+    uid  = user.get("id")
+    if not uid:
+        raise HTTPException(400, "Could not sign you in.")
+    email = (user.get("email") or email or "").strip().lower()
+    profile = _get_profile(uid)
     if not profile:
         meta = user.get("user_metadata") or {}
-        profile = _upsert_profile(
-            user["id"],
-            meta.get("first_name") or email.split("@")[0],
-            meta.get("last_name") or "", email)
-
+        profile = _upsert_profile(uid, meta.get("first_name") or email.split("@")[0],
+                                  meta.get("last_name") or "", email)
     response = JSONResponse({"ok": True, "profile": _public_profile(profile)})
     _set_session(response, tokens, profile)
     return response
+
+
+def _login_url(request: Request) -> str:
+    """Where an email link should land, as GoTrue wants it: a query value."""
+    return quote(_site_url(request) + "/login", safe="")
+
+
+# ── Email links ───────────────────────────────────────────────────────────────
+# Confirming an email and resetting a password both work the same way: GoTrue
+# emails a link, the link comes back to /login with a session in the URL
+# fragment, and the page hands that session to one of the two endpoints below.
+# The fragment never reaches a server, so the hand-over is the browser's job,
+# and the page strips it from the address bar the moment it has read it.
+#
+# Nothing here trusts what the browser sends. The access token goes straight
+# back to GoTrue (GET /user, or the PUT that sets the password) and only a user
+# GoTrue recognises gets a cookie. The refresh token is stored as given; a bad
+# one fails at the first refresh, which is signed out, not signed in as someone.
+
+@app.post("/api/auth/forgot")
+async def auth_forgot(request: Request):
+    """Send the reset-password email."""
+    b = await request.json()
+    try:
+        email = _check_email_domain(b.get("email"))
+    except AuthError as e:
+        raise HTTPException(e.status, e.message)
+    try:
+        await _gotrue("POST", "/recover?redirect_to=" + _login_url(request),
+                      json_body={"email": email}, fallback="Could not send that email.")
+    except AuthError as e:
+        if e.status == 429:
+            raise HTTPException(429, e.message)
+        # No account is the one failure that is not reported, and not because
+        # the sign-in screen hides it (it does not; /api/auth/check answers
+        # that question for anyone). It is that GoTrue does not report it
+        # either, so a version that did would be relying on a detail of the
+        # error text. Anything else is a mailer problem, and "check your inbox"
+        # for an email that was never sent is the worst possible answer.
+        if "not found" in e.message.lower():
+            logger.info(f"[auth] recover for unknown address {email}")
+        else:
+            logger.error(f"[auth] recover for {email} failed: {e.message}")
+            raise HTTPException(502, "Couldn't send the email just now. Try again in a minute.")
+    return {"ok": True, "message": f"Check {email} for a link to choose a new password."}
+
+
+@app.post("/api/auth/resend")
+async def auth_resend(request: Request):
+    """Send the confirm-your-email link again, for a signup that lost it."""
+    b = await request.json()
+    try:
+        email = _check_email_domain(b.get("email"))
+    except AuthError as e:
+        raise HTTPException(e.status, e.message)
+    try:
+        await _gotrue("POST", "/resend?redirect_to=" + _login_url(request),
+                      json_body={"type": "signup", "email": email},
+                      fallback="Could not send that email.")
+    except AuthError as e:
+        if e.status == 429:
+            raise HTTPException(429, e.message)
+        logger.error(f"[auth] resend for {email} failed: {e.message}")
+        raise HTTPException(502, "Couldn't send the email just now. Try again in a minute.")
+    return {"ok": True, "message": f"We've sent another link to {email}."}
+
+
+@app.post("/api/auth/session")
+async def auth_session(request: Request):
+    """The tokens off the end of a confirmation link, exchanged for a cookie."""
+    b = await request.json()
+    access  = (b.get("access_token") or "").strip()
+    refresh = (b.get("refresh_token") or "").strip()
+    if not access:
+        raise HTTPException(400, "There's no session in that link.")
+    user = await _user_from_token(access)
+    if not user:
+        raise HTTPException(400, "That link has expired or was already used. Ask for a new one.")
+    return _signed_in({"access_token": access, "refresh_token": refresh, "user": user})
+
+
+@app.post("/api/auth/reset")
+async def auth_reset(request: Request):
+    """The tokens off the end of a reset link, plus the new password.
+
+    GoTrue does the work: PUT /user with that token sets the password, and it
+    refuses a token it did not issue for this. Success signs them in with the
+    same session, so choosing the password is the last step rather than the
+    step before typing it again.
+    """
+    b = await request.json()
+    access  = (b.get("access_token") or "").strip()
+    refresh = (b.get("refresh_token") or "").strip()
+    pw      = b.get("password") or ""
+    if not access:
+        raise HTTPException(400, "There's no session in that link.")
+    if len(pw) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters.")
+    try:
+        user = await _gotrue("PUT", "/user", token=access, json_body={"password": pw},
+                             fallback="Could not set that password.")
+    except AuthError as e:
+        # GoTrue says 403 to a token it does not recognise. Here that is a
+        # dead link, the same thing /api/auth/session calls a 400, and 403 in
+        # this codebase means "not allowed", which is a different sentence.
+        raise HTTPException(429 if e.status == 429 else 400, e.message)
+    if not user.get("id"):
+        raise HTTPException(400, "Could not set that password.")
+    # The cached copy of this token's user predates the change. Harmless, but
+    # dropping it costs nothing and keeps "what GoTrue says" and "what we say"
+    # the same thing.
+    _token_cache.pop(access, None)
+    return _signed_in({"access_token": access, "refresh_token": refresh, "user": user})
 
 
 @app.post("/api/auth/logout")

@@ -721,9 +721,12 @@ Three things aimed at an intake, all reading data the site already holds.
     drops its rows (one used to move where a person's log ended, cutting off
     that week's Thursday), and the page hides the week note for it and never
     counts it as a missed session.
-  - Captains here include a self-set `role_label` of captain: being *asked* is
-    not a permission, so the label is fine for it. It must not fall on a
-    `MEETING_DAYS` weekday, since responses are one row per person per date.
+  - "Captains" here means `_captain_titles()`: granted captaincies plus anyone
+    whose card says Captain, **Team Principal or Technical Director** (see
+    *Who counts as a captain* below). Being *asked* is not a permission, so the
+    self-set label is fine for it, and the list tags each with their title. It
+    must not fall on a `MEETING_DAYS` weekday, since responses are one row per
+    person per date.
 - **Start here** (`/api/start-here`) is a checklist card on a new account's
   dashboard. Every counted step is ticked from data (division picked, photo,
   a prompt, the RSVP, a first attendance row), never from a click on the
@@ -756,6 +759,23 @@ There are two things called "captain" and only one of them grants anything.
 It arrives in the body of `/api/profile`, so **anyone can set themselves to
 `captain`**, and 003 says it outright: *"Relevance, never permission."* Perfectly
 fine for a directory.
+
+**Who counts as a captain: the division captains, the Team Principal and the
+Technical Director.** The team decided this on 2026-09-28, and it applies from
+here on: anything built for "captains" includes the principal and the TD unless
+it says otherwise. `CAPTAIN_LABELS` in `main.py` is that list, and
+`_captain_titles()` reads it for the onboarding session's invites and tags.
+
+What it can and cannot reach today is the whole point of this section. Division
+captains have a **granted** source (`captaincies`, below). The principal and TD
+do not: their only record is `role_label`, which anyone sets on their own card.
+So they count wherever a label is enough (being invited, being tagged, being
+drawn on the org chart) and nowhere a permission is decided, which today means
+editing the glossary. Until there is a granted seat for them, those two get
+permissions the ordinary way, through the committee or admin role in `/admin`.
+The fix, when it is wanted, is the one the org chart section already names: a
+migration alongside `captaincies` and a picker in `/admin`, not a rule that
+trusts the label.
 
 `captaincies` (migrations/014) is the permission. One row per division, assigned
 from `/admin` by an admin the way roles are, and the reason it exists is that

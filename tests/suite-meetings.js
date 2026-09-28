@@ -303,6 +303,30 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
         check('and are not on its list',
           vday && !(vday.special.people || []).some(p => p.profile_id === vetId));
       }
+
+      /* The Team Principal and Technical Director count as captains here, by
+         the team's decision: someone who joined long before the intake is
+         still asked once their card says either. Checked against a veteran,
+         so it is the title doing it and not the signup date. */
+      for (const [label, title] of [['principal', 'Team Principal'], ['td', 'Technical Director']]) {
+        const lead = await signUp('Meeting', label === 'td' ? 'Director' : 'Principal');
+        const leadId = (await get('/api/profile/me', lead.setCookies)).person.id;
+        await fetch(`${SB}/rest/v1/profiles?id=eq.${leadId}`, { method: 'PATCH',
+          headers: { apikey: KEY, Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ created_at: '2026-01-15T10:00:00Z' }) });
+        check(`a veteran whose card says ${title} is not asked beforehand`,
+          (await get('/api/onboarding-session/me', lead.setCookies)).ask === false);
+        await post('/api/profile', lead.setCookies,
+          { role_label: label, subteam: '', year: '', course: '', tags: [], is_public: false });
+        check(`but is once it does`,
+          (await get('/api/onboarding-session/me', lead.setCookies)).ask === true);
+        if (day) {
+          const lday = ((await get('/api/meetings', lead.setCookies)).days || []).find(d => d.special);
+          const me = lday && (lday.special.people || []).find(p => p.profile_id === leadId);
+          check(`and is on the list, tagged ${title}`,
+            me && me.title === title, JSON.stringify(me || null).slice(0, 90));
+        }
+      }
     }
 
     const hist = await get('/api/meetings/history', other.setCookies);

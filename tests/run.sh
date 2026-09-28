@@ -2,7 +2,7 @@
 # UCDFS test runner.
 #
 #   ./tests/run.sh                 everything
-#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|purchases|org|comp|harness|profiles|admin|plans|links)
+#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|purchases|org|comp|harness|profiles|admin|plans|links|glossary)
 #   ./tests/run.sh --keep          leave the test container up afterwards
 #
 # Runs against a throwaway container on :3979 built from the working tree.
@@ -22,7 +22,7 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings purchases org comp harness profiles admin plans links)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings purchases org comp harness profiles admin plans links glossary)
 
 # Stamped before anything runs, so cleanup can find exactly the rows this run
 # wrote to the shared activity feed and nothing older.
@@ -64,6 +64,7 @@ cleanup() {
     cleanup_activity_log "$RUN_STARTED"
     cleanup_pt_done_log "$RUN_STARTED"
     cleanup_links
+    cleanup_glossary
     cleanup_comp_requests
     cleanup_groups
     if [ "$KEEP" = "1" ]; then
@@ -134,6 +135,7 @@ for suite in "${SUITES[@]}"; do
     admin)   TEST_BASE="$BASE" node "$ROOT/tests/suite-admin.js" || total_fail=$((total_fail+1)) ;;
     plans)   TEST_BASE="$BASE" node "$ROOT/tests/suite-plans.js" || total_fail=$((total_fail+1)) ;;
     links)   TEST_BASE="$BASE" node "$ROOT/tests/suite-links.js" || total_fail=$((total_fail+1)) ;;
+    glossary) TEST_BASE="$BASE" node "$ROOT/tests/suite-glossary.js" || total_fail=$((total_fail+1)) ;;
     *)      echo "Unknown suite: $suite" >&2; total_fail=$((total_fail+1)) ;;
   esac
 done

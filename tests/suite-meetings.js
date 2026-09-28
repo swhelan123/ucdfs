@@ -35,19 +35,24 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
   check('/api/meetings returns days', days.length > 0, JSON.stringify(first).slice(0, 90));
   if (!days.length) { console.log('  ── no days; is migration 012 applied? ──'); process.exit(summary('meetings') ? 1 : 0); }
 
-  check('every day is a Tuesday or a Thursday',
-    days.every(d => [TUE, THU].includes(new Date(d.date + 'T12:00:00').getDay())),
-    days.map(d => d.date).join(' '));
+  // The one-off session rides along as an extra day (see the end of this
+  // suite); everything about the regular window is about the others.
+  const regular = days.filter(d => !d.special);
+  check('every regular day is a Tuesday or a Thursday',
+    regular.every(d => [TUE, THU].includes(new Date(d.date + 'T12:00:00').getDay())),
+    regular.map(d => d.date).join(' '));
   check('three weeks of them, so last week is still answerable',
-    days.length === 6, String(days.length));
+    regular.length === 6, String(regular.length));
+  check('at most one extra day, and only the flagged kind',
+    days.length - regular.length <= 1, days.map(d => d.date).join(' '));
   check('every week_start is a Monday',
     days.every(d => new Date(d.week_start + 'T12:00:00').getDay() === MON),
     days.map(d => d.week_start).join(' '));
   check('exactly one day is flagged today, or none',
     days.filter(d => d.is_today).length <= 1);
 
-  const target  = days.find(d => !d.past) || days[days.length - 1];
-  const another = days.find(d => d.date !== target.date && d.week_start === target.week_start);
+  const target  = regular.find(d => !d.past) || regular[regular.length - 1];
+  const another = regular.find(d => d.date !== target.date && d.week_start === target.week_start);
 
   console.log('\nanswering');
   const yes = await post('/api/meetings/respond', me.setCookies,
@@ -206,8 +211,8 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
     check('a row that has been rewritten is marked edited',
       sess.edited === true, String(sess.edited));
 
-    const untouched = days.find(d => d.date !== target.date &&
-                                     d.date !== (another || {}).date);
+    const untouched = regular.find(d => d.date !== target.date &&
+                                        d.date !== (another || {}).date);
     if (untouched) {
       await post('/api/meetings/respond', me.setCookies,
                  { date: untouched.date, attending: true });
@@ -235,48 +240,76 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
   /* The one-off session (ONBOARDING_SESSION in main.py). Test accounts are
      always brand new, so they are always invited while one is coming up. Once
      its date has passed the suite checks the prompt has switched itself off
-     instead. */
+     instead. Answers go through the ordinary /api/meetings/respond. */
   console.log('\nthe onboarding session');
   const ask = await get('/api/onboarding-session/me', other.setCookies);
   if (!ask.session) {
     check('with no session coming up, nobody is asked', ask.ask === false, JSON.stringify(ask));
-    const late = await post('/api/onboarding-session/respond', other.setCookies, { attending: true });
-    check('and answering is refused', late.status === 400, String(late.status));
   } else {
+    const say = (cs, body) => post('/api/meetings/respond', cs, { date: ask.session.date, ...body });
     check('a new account is asked', ask.ask === true, JSON.stringify(ask));
-    check('about a day that is not a meeting day',
-      !(first.days || []).some(d => d.date === ask.session.date), ask.session.date);
+    check('about a day that is not a regular meeting day',
+      ![TUE, THU].includes(new Date(ask.session.date + 'T12:00:00').getDay()), ask.session.date);
 
-    const bare = await post('/api/onboarding-session/respond', other.setCookies, { attending: false });
+    const bare = await say(other.setCookies, { attending: false });
     check('a no without a reason is refused', bare.status === 400, String(bare.status));
     check('and refusing it still leaves them asked',
       (await get('/api/onboarding-session/me', other.setCookies)).ask === true);
 
-    const ok = await post('/api/onboarding-session/respond', other.setCookies,
-                          { attending: false, reason: 'Lab until six' });
+    const ok = await say(other.setCookies, { attending: false, reason: 'Lab until six' });
     check('a no with a reason is accepted', ok.ok, String(ok.status));
     check('and once answered they are not asked again',
       (await get('/api/onboarding-session/me', other.setCookies)).ask === false);
 
-    const roster = await get('/api/onboarding-session', me.setCookies);
-    const them = (roster.people || []).find(p => p.name === 'Meeting Other');
-    check('the answer is on the list the team sees',
-      them && them.attending === false && them.reason === 'Lab until six',
-      JSON.stringify(them || null));
-    const meRow = (roster.people || []).find(p => p.profile_id === mineId);
-    check('someone who has not answered is listed as yet to answer',
-      meRow && meRow.attending === null, JSON.stringify(meRow || null));
+    // In the picker whenever it falls inside the answering window.
+    const listed = await get('/api/meetings', me.setCookies);
+    const day = (listed.days || []).find(d => d.special);
+    if (day) {
+      check('the picker carries it as a day of its own', day.date === ask.session.date, day.date);
+      check('saying what it is and who it is for',
+        !!day.special.name && !!day.special.audience, JSON.stringify(day.special).slice(0, 90));
+      check('a new account is invited', day.special.invited === true);
+      check('and on the invite list, so "yet to answer" can name them',
+        (day.special.people || []).some(p => p.profile_id === mineId));
+      const them = (listed.responses || []).find(r => r.meeting_date === day.date &&
+                                                      r.name === 'Meeting Other');
+      check('the answer is on the list the team sees',
+        them && them.attending === false && them.reason === 'Lab until six',
+        JSON.stringify(them || null).slice(0, 90));
+    } else {
+      console.log('  (the session is outside the picker window; picker checks skipped)');
+    }
 
-    const spoof = await post('/api/onboarding-session/respond', other.setCookies,
-                             { attending: true, profile_id: mineId });
-    const after = (await get('/api/onboarding-session', me.setCookies)).people
-      .find(p => p.profile_id === mineId);
-    check('a profile_id in the body answers for nobody but the caller',
-      spoof.ok && after && after.attending === null, JSON.stringify(after || null));
+    const spoof = await say(other.setCookies, { attending: true, profile_id: mineId });
+    check('you cannot answer it for somebody else either', spoof.status === 403, String(spoof.status));
+
+    /* The negative the rest leans on: without it, every check above passes just
+       as well on a session that invites everybody. */
+    const SB = process.env.SUPABASE_URL, KEY = process.env.SUPABASE_SERVICE_KEY;
+    if (SB && KEY) {
+      const vet = await signUp('Meeting', 'Veteran');
+      const vetId = (await get('/api/profile/me', vet.setCookies)).person.id;
+      await fetch(`${SB}/rest/v1/profiles?id=eq.${vetId}`, { method: 'PATCH',
+        headers: { apikey: KEY, Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ created_at: '2026-01-15T10:00:00Z' }) });
+      check('someone who joined before the intake is not asked',
+        (await get('/api/onboarding-session/me', vet.setCookies)).ask === false);
+      const vsay = await say(vet.setCookies, { attending: true });
+      check('and cannot answer for it', vsay.status === 403, String(vsay.status));
+      if (day) {
+        const vday = ((await get('/api/meetings', vet.setCookies)).days || []).find(d => d.special);
+        check('though they can see it, marked as not theirs to answer',
+          vday && vday.special.invited === false, JSON.stringify(vday && vday.special.invited));
+        check('and are not on its list',
+          vday && !(vday.special.people || []).some(p => p.profile_id === vetId));
+      }
+    }
 
     const hist = await get('/api/meetings/history', other.setCookies);
     check('and it does not turn up in the meetings log',
       !(hist.weeks || []).flatMap(w => w.sessions).some(s => s.date === ask.session.date));
+    check('nor start one: answering only this leaves the log empty',
+      (hist.weeks || []).length === 0, String((hist.weeks || []).length));
   }
 
   /* Start here (the new-member checklist) and the welcome line in the feed.
@@ -293,6 +326,8 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
     (sh.links || []).some(l => l.href === '/glossary'));
   if (ask.session) {
     check('the session RSVP is one of the steps', !!step('session').label, JSON.stringify(sh.steps));
+    check('and opens the meetings page on that day',
+      step('session').href === '/meetings?day=' + ask.session.date, step('session').href);
   }
 
   const countJoined = async () => ((await get('/api/dashboard', fresh.setCookies)).activity || [])

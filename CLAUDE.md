@@ -607,20 +607,28 @@ system on a card page and still look right without it.
 ### Only one overlay at a time, and shared.js owns the queue
 
 `shared.js` can put three different things on screen unprompted: the subteam
-question, the profile nudge it chains into, and `UCDFS.tour()`. A brand-new
+question, the onboarding-session question, and `UCDFS.tour()`. A brand-new
 member's first sign-in triggers all three.
 
 **They must not each decide for themselves when to appear.** Each waits on a
 round trip before it knows whether it has anything to show, so left alone they
 race on whichever response lands first, and the loser draws underneath a modal
-that is already up. The order is fixed and deliberate: identity, then
-orientation, then the profile nudge, which already sends people off-page anyway.
+that is already up. The order is fixed and deliberate: who you are (division),
+what you are coming to (the session), then where things are (the tour).
+
+**There is no "set up your profile" step any more.** It used to follow the
+division question, and its button sent people to `/profiles` mid-sequence, so
+they answered the session there and never saw the tour, which only runs on the
+dashboard. The profile is the first thing on the Start here checklist, and the
+tour stops on the checklist to say so. Do not put a step back between these
+that navigates away.
 
 `whenOnboardingIdle()` is the join point. It returns a promise that settles once
-the subteam step is done with the screen, and **null means idle already** — the
-common case is a member who answered weeks ago, and they should not wait on a
-promise to find that out. Anything added later that wants the screen on load
-joins this queue rather than calling `document.body.appendChild` and hoping.
+the subteam step and the session question are both done with the screen, and
+**null means idle already** — the common case is a member who answered weeks
+ago, and they should not wait on a promise to find that out. Anything added
+later that wants the screen on load joins this queue rather than calling
+`document.body.appendChild` and hoping.
 
 This is not theoretical: with the gate removed, `tests/suite-pages.js` fails on
 *"the tour does not stack on top of it"* — which is the whole reason that check
@@ -632,6 +640,33 @@ declares its own five cards and hands over its own `?` button, because the
 canvas tools style one to match their header. Everything else gets a `?`
 injected into `.header-inner`. Folding every applet's steps into one portal tour
 would make something nobody reaches the end of.
+
+**A step can point at the page.** Given `el` (a selector, or a function that
+returns an element), the page dims around it, the card sits beside it with an
+arrow, and Next glides both to the next target. A step without one is a card in
+the middle, which is all `pt.html` and `purchases.html` use.
+
+- The dimming is one element's enormous `box-shadow`; the element itself is the
+  hole. A centred step makes it a hole of no size in the middle, which is why
+  the first move reads as an iris opening. CSS transitions do all the motion.
+- `optional: true` drops a step whose element is not on screen **when the tour
+  opens**, so "Step 2 of 7" cannot change mid-run. The checklist step uses it;
+  it only exists for new accounts.
+- It scrolls only when it has to, and it knows about sticky headers
+  (`tourInset()`): a target tucked under the header is not on screen. That was
+  a real bug: the grid step scrolled the chips row under the header, and the
+  next step lit the header instead.
+- The current target carries `.ucdfs-tour-target`, for a page to lift something
+  that is deliberately faint the rest of the time. The dashboard's star uses it.
+- No close on a click outside the card. The layer covers the whole page, and a
+  tour dismissed by a stray tap is one nobody finds again. Skip and Escape.
+- jsdom has no layout, so every target looks missing there. The suites check the
+  queue and the count; whether the light lands in the right place was checked
+  by screenshot, desktop and phone, and should be again after changing a step.
+
+The portal tour starts from `boot()` **after** `reveal()`. Until then the page is
+invisible, and a spotlight on something invisible is a dark screen with a hole
+in it.
 
 Seen-ness is `localStorage`, keyed `ucdfs_tour_<key>` and versioned by
 convention, because it is a per-browser preference and not identity: getting it
@@ -670,17 +705,25 @@ it, defaulting to indigo.
 Three things aimed at an intake, all reading data the site already holds.
 
 - **`ONBOARDING_SESSION`** in `main.py` is a one-off session (date, name,
-  place) that anyone who signed up on or after `new_since`, plus every captain,
-  is asked about by `shared.js` on every page load **until they answer**.
-  "Ask me later" closes it for that page only. It queues after the subteam
-  step and before any tour (`whenOnboardingIdle()` waits on it too). Answers
-  are rows in `meeting_responses` on that date, which needs no migration:
-  the meetings page, its history and the dashboard tile all key on
-  `MEETING_DAYS` dates, so a Wednesday row is invisible to them. `/meetings`
-  draws the invite list at the top while the session is upcoming. After the
-  date it switches itself off and `/me` does no database work. Captains here
-  include a self-set `role_label` of captain: being *asked* is not a
-  permission, so the label is fine for it.
+  place) for anyone who signed up on or after `new_since`, plus every captain.
+  **It is a day in the meetings picker**, not a page of its own: `/api/meetings`
+  adds it to `days` with a `special` block (what it is, whether the caller is
+  invited, and the whole invite list, so "yet to answer" can name people), and
+  the page draws it purple with a "New members" badge. Answers are ordinary
+  `meeting_responses` rows through the ordinary `/api/meetings/respond`, which
+  refuses anyone not invited, so there is one write path and no migration. The
+  one extra endpoint is `/api/onboarding-session/me`, which `shared.js` calls on
+  every page load to ask invitees until they answer ("Ask me later" closes it
+  for that page only). It queues after the subteam step and before any tour.
+  After the date `/me` does no database work.
+  - It is **kept out of everything about regular meetings**: `_meeting_dates()`
+    stays Tuesday/Thursday so the dashboard tile never targets it, the history
+    drops its rows (one used to move where a person's log ended, cutting off
+    that week's Thursday), and the page hides the week note for it and never
+    counts it as a missed session.
+  - Captains here include a self-set `role_label` of captain: being *asked* is
+    not a permission, so the label is fine for it. It must not fall on a
+    `MEETING_DAYS` weekday, since responses are one row per person per date.
 - **Start here** (`/api/start-here`) is a checklist card on a new account's
   dashboard. Every counted step is ticked from data (division picked, photo,
   a prompt, the RSVP, a first attendance row), never from a click on the
@@ -691,8 +734,19 @@ Three things aimed at an intake, all reading data the site already holds.
 - **`/admin` → Who hasn't signed up?** takes a pasted list of addresses and
   splits it into joined and missing. Nothing pasted is stored. It is the only
   way to reach the people the prompt cannot, because they have no account.
-- **`/glossary`** is content in the page, not the database. A definition new
-  members will take as true deserves a pull request's worth of review.
+- **`/glossary`** is rows in `glossary_terms` (`migrations/016`), edited on the
+  page itself. Editing is `_may_edit_glossary()`: the admin or committee role,
+  or a **granted** captaincy. Never the self-set label, because unlike being
+  invited to a session this one is a permission. On the role and not the
+  override, like links, because it is the wording of a shared page. Ids are
+  minted server-side (`term_…`), and an id in the body means "edit this one",
+  so a caller cannot name a row into existence. A term exists once whatever its
+  capitalisation (checked, with a unique index behind it). Deleting echoes the
+  term back, the links rail. Categories are `GLOSSARY_GROUPS` in code; a row
+  naming one that is gone is drawn under the first. Edits stay out of the
+  activity feed, because one person tidying twenty definitions would bury it,
+  and `updated_by` answers who wrote what. Without 016 the page says the
+  glossary is not set up rather than looking empty.
 
 ### Captaincy is granted, never claimed
 
@@ -1089,6 +1143,11 @@ correctly. 010 shipped and was applied, which makes it a snapshot of what ran;
 the block it used, `tools`, is not seeded by 011 at all, because it was never a
 subject but "the main grid", and the *first* block is what that means now.
 
+**016 creates `glossary_terms` and seeds the 61 terms the page used to carry.**
+Apply it before the code that reads it, like the others; without it `/glossary`
+says it is not set up. Re-runnable: the seed skips anything already there, by
+id or by name.
+
 **009 turns on RLS for `plans`, which 007 created without it.** Every other
 table-creating migration enables it in the same file; that one did not, so it
 was the single table in the schema running with RLS off. The exposure was small,
@@ -1101,10 +1160,10 @@ there names charts into existence.
 
 `scripts/seed-nonprod.sh` copies the reference data down from production: the
 charts and their graphs, the competition schedule, the harness document,
-`comp_meta`. It copies **nothing that is about a person**: no profiles,
-attendance, roster, requests, `pt_done_log` or `activity_log`, all of which carry
-names, and no photos, which are files on disk in a per-tier directory for exactly
-this reason. `plans.created_by` is stripped on the way for the same reason: the
+`comp_meta` and the glossary. It copies **nothing that is about a person**: no
+profiles, attendance, roster, requests, `pt_done_log` or `activity_log`, all of
+which carry names, and no photos, which are files on disk in a per-tier
+directory for exactly this reason. `glossary_terms.updated_by` is stripped too. `plans.created_by` is stripped on the way for the same reason: the
 chart is reference data, the name of whoever made it is not.
 
 `plans` is copied **first**, for the same reason sections come before nodes: a

@@ -65,6 +65,7 @@ test display names; both conditions are required. Add a name to `TEST_ACTORS` in
 | `admin` | the permission boundary: what a member is refused, what an un-elevated admin is refused, and that god mode can always be switched back on |
 | `plans` | charts as rows: the id whitelist, server-minted ids, and that a chart holding work cannot be deleted |
 | `links` | admin-managed hyperlink cards and the blocks they sit in: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it, and that a block holding cards cannot be deleted |
+| `glossary` | the glossary as rows: only admins, committee and granted captains may change it (a self-set captain label may not), ids are minted server-side, a term exists once whatever its capitalisation, and a definition is drawn as text, never markup |
 
 ## Regressions these exist to catch
 

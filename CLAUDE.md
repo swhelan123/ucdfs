@@ -92,7 +92,8 @@ cards" below for why the line falls there and not somewhere tidier.
   `dashboard_groups`; omitting it means the **first** block. See "Dashboard
   layout" below.
 
-Current applet ids: `attendance`, `profiles`, `flowcharts`, `comp`, `admin`, and
+Current applet ids: `attendance`, `meetings`, `purchases`, `profiles`, `org`,
+`flowcharts`, `comp`, `glossary` (under `reference`), `admin`, and
 under `archive`: `harness`, `pt`. Link ids are whatever is in the table; the
 seeded ones are `vcu`, `harnesshive`, `onshape`, `sharepoint`, `fsstats`,
 `fswiki`, `fsae-reddit` and, under `archive`, `mech`.
@@ -663,6 +664,35 @@ dashboard drops it inside `#load-veil`, which is that page's own full-screen
 treatment and not something every applet wants — and `.ring-block` adds the
 padding to stand in for a list that has not arrived yet. `--ring-accent` tints
 it, defaulting to indigo.
+
+### New members: the session prompt, Start here, and the glossary
+
+Three things aimed at an intake, all reading data the site already holds.
+
+- **`ONBOARDING_SESSION`** in `main.py` is a one-off session (date, name,
+  place) that anyone who signed up on or after `new_since`, plus every captain,
+  is asked about by `shared.js` on every page load **until they answer**.
+  "Ask me later" closes it for that page only. It queues after the subteam
+  step and before any tour (`whenOnboardingIdle()` waits on it too). Answers
+  are rows in `meeting_responses` on that date, which needs no migration:
+  the meetings page, its history and the dashboard tile all key on
+  `MEETING_DAYS` dates, so a Wednesday row is invisible to them. `/meetings`
+  draws the invite list at the top while the session is upcoming. After the
+  date it switches itself off and `/me` does no database work. Captains here
+  include a self-set `role_label` of captain: being *asked* is not a
+  permission, so the label is fine for it.
+- **Start here** (`/api/start-here`) is a checklist card on a new account's
+  dashboard. Every counted step is ticked from data (division picked, photo,
+  a prompt, the RSVP, a first attendance row), never from a click on the
+  list, and things nothing can verify are links underneath instead of boxes.
+  It disappears once every step is done or `START_HERE_DAYS` after signup.
+- **Picking a division the first time** writes "X joined Mechanical" to the
+  feed, once, so the team knows who to say hello to.
+- **`/admin` → Who hasn't signed up?** takes a pasted list of addresses and
+  splits it into joined and missing. Nothing pasted is stored. It is the only
+  way to reach the people the prompt cannot, because they have no account.
+- **`/glossary`** is content in the page, not the database. A definition new
+  members will take as true deserves a pull request's worth of review.
 
 ### Captaincy is granted, never claimed
 

@@ -44,6 +44,9 @@
      not wait on a promise to find that out. See whenOnboardingIdle(). */
   var obIdle = null;
   var obIdleDone = null;
+  /* The session question, which queues behind the subteam step. Null until it
+     has started; see sessionPrompt(). */
+  var sessionIdle = null;
 
   var tourCfg = null;       // the tour this page registered, if any
   var tourAt  = 0;          // which card is on screen
@@ -371,6 +374,12 @@
     '.ob-later{width:100%;padding:11px;background:none;border:none;font-family:inherit;' +
       'font-size:.8rem;color:var(--muted,#64748b);cursor:pointer;border-radius:10px;}' +
     '.ob-later:hover{background:var(--bg,#f1f5f9);color:var(--text,#0f172a);}' +
+    '.ob-area{display:block;width:100%;box-sizing:border-box;min-height:70px;' +
+      'margin-bottom:10px;padding:11px 13px;border:2px solid var(--border,#e2e8f0);' +
+      'border-radius:14px;font-family:inherit;font-size:.88rem;resize:vertical;' +
+      'background:var(--card,#fff);color:var(--text,#0f172a);}' +
+    '.ob-cta:disabled{opacity:.45;cursor:default;}' +
+    '.ob-cta + .ob-later,#ss-why + .ob-later{margin-top:6px;}' +
 
     /* The ? that reopens a tour. Injected into .header-inner on the card pages;
        the canvas tools pass their own button instead, because they style one to
@@ -483,7 +492,95 @@
    * that already sends people off-page anyway.
    */
   function whenOnboardingIdle() {
-    return obIdle || Promise.resolve();
+    var first = obIdle || Promise.resolve();
+    return sessionIdle ? first.then(function () { return sessionIdle; }) : first;
+  }
+
+  // ── Session RSVP ─────────────────────────────────────────────────────────
+
+  /**
+   * Ask about a one-off session (new-member onboarding) on every page load
+   * until answered. The server decides who is asked and whether they already
+   * have; see ONBOARDING_SESSION in main.py. "Later" closes it for this page
+   * only, which is the point: it is a question that wants an answer, not a
+   * notice that wants reading.
+   *
+   * Stored as a row, not a localStorage flag like the tour, because the answer
+   * is a record the team reads, and it has to follow you to another device.
+   */
+  function sessionPrompt() {
+    if (!user() || window.location.pathname === '/login') return;
+    var data = fetch('/api/onboarding-session/me')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+    /* Subteam first, then this: identity before logistics. */
+    sessionIdle = (obIdle || Promise.resolve())
+      .then(function () { return data; })
+      .then(function (d) { if (d && d.ask && d.session) return raiseSession(d.session); })
+      .catch(function () { /* never block a page over this */ });
+  }
+
+  function raiseSession(s) {
+    ensureRuntimeStyles();
+    return new Promise(function (done) {
+      var when = new Date(s.date + 'T12:00:00').toLocaleDateString('en-IE',
+        { weekday: 'long', day: 'numeric', month: 'long' });
+      var wrap = document.createElement('div');
+      wrap.className = 'ob-wrap';
+      wrap.id = 'ucdfs-session';
+      wrap.innerHTML =
+        '<div class="ob-card" role="dialog" aria-modal="true" aria-labelledby="ss-h">' +
+          '<div class="ob-h" id="ss-h">' + esc(s.name) + '</div>' +
+          '<div class="ob-p">' + esc(when) + (s.detail ? ' · ' + esc(s.detail) : '') +
+            '<br>Are you coming?</div>' +
+          '<div class="ob-opts">' +
+            '<button class="ob-opt" type="button" id="ss-yes" style="--ob-accent:var(--green,#16a34a);--ob-accent-bg:var(--green-bg,#dcfce7)">' +
+              '<div class="ob-icon">✅</div><div class="ob-name">I’ll be there</div></button>' +
+            '<button class="ob-opt" type="button" id="ss-no" style="--ob-accent:var(--red,#dc2626);--ob-accent-bg:var(--red-bg,#fee2e2)">' +
+              '<div class="ob-icon">❌</div><div class="ob-name">I can’t make it</div></button>' +
+          '</div>' +
+          '<div id="ss-why" style="display:none">' +
+            '<textarea class="ob-area" id="ss-reason" maxlength="300" ' +
+              'placeholder="Why not? Lab clash, away that day, …"></textarea>' +
+            '<button class="ob-cta" type="button" id="ss-send" disabled>Send</button>' +
+          '</div>' +
+          '<button class="ob-later" type="button" id="ss-later">Ask me later</button>' +
+        '</div>';
+      document.body.appendChild(wrap);
+
+      var yes = wrap.querySelector('#ss-yes'), no = wrap.querySelector('#ss-no');
+      var why = wrap.querySelector('#ss-why'), reason = wrap.querySelector('#ss-reason');
+      var send = wrap.querySelector('#ss-send');
+
+      function close() { wrap.remove(); done(); }
+
+      function submit(attending) {
+        yes.disabled = no.disabled = send.disabled = true;
+        fetch('/api/onboarding-session/respond', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attending: attending, reason: reason.value })
+        }).then(function (r) {
+          if (!r.ok) throw new Error('save failed');
+          close();
+          toast(attending ? 'See you there' : 'Thanks for letting us know');
+        }).catch(function () {
+          yes.disabled = no.disabled = false;
+          send.disabled = !reason.value.trim();
+          toast("Couldn't save that. Try again");
+        });
+      }
+
+      yes.addEventListener('click', function () { submit(true); });
+      /* A no needs a reason, same rule as the meetings page, and the server
+         refuses one without it. */
+      no.addEventListener('click', function () {
+        why.style.display = '';
+        reason.focus();
+      });
+      reason.addEventListener('input', function () { send.disabled = !reason.value.trim(); });
+      send.addEventListener('click', function () { submit(false); });
+      wrap.querySelector('#ss-later').addEventListener('click', close);
+    });
   }
 
   function raise(subteams) {
@@ -789,7 +886,7 @@
      being picked call UCDFS.onboard(cb) themselves; calling it twice is
      harmless because the second call sees a subteam and returns. */
   function autoStart() {
-    try { godBar(); onboard(); } catch (e) { /* never break a page */ }
+    try { godBar(); onboard(); sessionPrompt(); } catch (e) { /* never break a page */ }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', autoStart);
@@ -809,6 +906,7 @@
     appletGroups: appletGroups,
     favourites: favourites,
     onboard: onboard,
+    askSession: raiseSession,
     tour: tour,
     godBar: godBar,
     photos: photos,

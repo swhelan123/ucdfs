@@ -232,5 +232,81 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
   check('and an account with nothing logged gets an empty one, not an error',
     Array.isArray(own.weeks) && own.weeks.length === 0, JSON.stringify(own).slice(0, 70));
 
+  /* The one-off session (ONBOARDING_SESSION in main.py). Test accounts are
+     always brand new, so they are always invited while one is coming up. Once
+     its date has passed the suite checks the prompt has switched itself off
+     instead. */
+  console.log('\nthe onboarding session');
+  const ask = await get('/api/onboarding-session/me', other.setCookies);
+  if (!ask.session) {
+    check('with no session coming up, nobody is asked', ask.ask === false, JSON.stringify(ask));
+    const late = await post('/api/onboarding-session/respond', other.setCookies, { attending: true });
+    check('and answering is refused', late.status === 400, String(late.status));
+  } else {
+    check('a new account is asked', ask.ask === true, JSON.stringify(ask));
+    check('about a day that is not a meeting day',
+      !(first.days || []).some(d => d.date === ask.session.date), ask.session.date);
+
+    const bare = await post('/api/onboarding-session/respond', other.setCookies, { attending: false });
+    check('a no without a reason is refused', bare.status === 400, String(bare.status));
+    check('and refusing it still leaves them asked',
+      (await get('/api/onboarding-session/me', other.setCookies)).ask === true);
+
+    const ok = await post('/api/onboarding-session/respond', other.setCookies,
+                          { attending: false, reason: 'Lab until six' });
+    check('a no with a reason is accepted', ok.ok, String(ok.status));
+    check('and once answered they are not asked again',
+      (await get('/api/onboarding-session/me', other.setCookies)).ask === false);
+
+    const roster = await get('/api/onboarding-session', me.setCookies);
+    const them = (roster.people || []).find(p => p.name === 'Meeting Other');
+    check('the answer is on the list the team sees',
+      them && them.attending === false && them.reason === 'Lab until six',
+      JSON.stringify(them || null));
+    const meRow = (roster.people || []).find(p => p.profile_id === mineId);
+    check('someone who has not answered is listed as yet to answer',
+      meRow && meRow.attending === null, JSON.stringify(meRow || null));
+
+    const spoof = await post('/api/onboarding-session/respond', other.setCookies,
+                             { attending: true, profile_id: mineId });
+    const after = (await get('/api/onboarding-session', me.setCookies)).people
+      .find(p => p.profile_id === mineId);
+    check('a profile_id in the body answers for nobody but the caller',
+      spoof.ok && after && after.attending === null, JSON.stringify(after || null));
+
+    const hist = await get('/api/meetings/history', other.setCookies);
+    check('and it does not turn up in the meetings log',
+      !(hist.weeks || []).flatMap(w => w.sessions).some(s => s.date === ask.session.date));
+  }
+
+  /* Start here (the new-member checklist) and the welcome line in the feed.
+     They live here rather than in suite-profiles because both lean on the
+     onboarding session above: the checklist carries its RSVP as a step. */
+  console.log('\nstart here');
+  const fresh = await signUp('Start', 'Here');
+  let sh = await get('/api/start-here', fresh.setCookies);
+  const step = id => (sh.steps || []).find(x => x.id === id) || {};
+  check('a new account gets the checklist', sh.show === true, JSON.stringify(sh).slice(0, 90));
+  check('with nothing ticked yet', (sh.steps || []).every(x => !x.done),
+    (sh.steps || []).filter(x => x.done).map(x => x.id).join(' '));
+  check('and the glossary among its links',
+    (sh.links || []).some(l => l.href === '/glossary'));
+  if (ask.session) {
+    check('the session RSVP is one of the steps', !!step('session').label, JSON.stringify(sh.steps));
+  }
+
+  const countJoined = async () => ((await get('/api/dashboard', fresh.setCookies)).activity || [])
+    .filter(a => a.actor === 'Start Here' && a.verb === 'joined').length;
+  await post('/api/profile/subteam', fresh.setCookies, { subteam: 'mech' });
+  sh = await get('/api/start-here', fresh.setCookies);
+  check('picking a division ticks that step off', step('division').done === true,
+    JSON.stringify(step('division')));
+  const feed = ((await get('/api/dashboard', fresh.setCookies)).activity || [])
+    .find(a => a.actor === 'Start Here' && a.verb === 'joined');
+  check('and says hello in the feed, naming the division',
+    feed && feed.subject === 'Mechanical', JSON.stringify(feed || null));
+  await post('/api/profile/subteam', fresh.setCookies, { subteam: 'ops' });
+  check('but only the first time', (await countJoined()) === 1);
+
   process.exit(summary('meetings') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

@@ -43,6 +43,8 @@ const today = new Date().toISOString().slice(0, 10);
   });
 
   console.log('an ordinary member is refused');
+  check('a member cannot check who has signed up',
+    (await post('/api/admin/signup-check', { emails: b.email })).status === 403);
   for (const [label, path, body] of [
     ['the admin page',      '/admin',                null],
     ['the people list',     '/api/admin/people',     null],
@@ -208,6 +210,20 @@ const today = new Date().toISOString().slice(0, 10);
   }
 
   check('the test account can be promoted', await setRoleDirect(a.email, 'admin'));
+
+  console.log('\nwho has not signed up');
+  const fake = 'ucdfs-test-nobody-' + Date.now() + '@ucdconnect.ie';
+  const probe = await post('/api/admin/signup-check',
+    { emails: `Name,Email\nVictim,${b.email.toUpperCase()}\nGhost,${fake}\nVictim again,${b.email}` });
+  const found = await json(probe);
+  check('an admin can check a pasted list', probe.status === 200, String(probe.status));
+  check('an account that exists is joined, case and duplicates aside',
+    (found.joined || []).length === 1 && found.joined[0].email === b.email.toLowerCase(),
+    JSON.stringify(found.joined || null));
+  check('an address with no account is missing',
+    JSON.stringify(found.missing) === JSON.stringify([fake]), JSON.stringify(found.missing || null));
+  check('text with no addresses in it checks nothing',
+    (await json(await post('/api/admin/signup-check', { emails: 'nobody here' }))).checked === 0);
 
   const people = await json(await fetch(BASE + '/api/admin/people', { headers: hdrA }));
   check('an admin sees everyone even with a stale member cookie',

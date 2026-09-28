@@ -197,7 +197,9 @@ const STARTED = Date.now() - 1000;
   // text captured at write time, so lines written by *previous* runs survive
   // their accounts being deleted. Matching on the name alone would count them.
   const feed = (await json(await fetch(BASE + '/api/dashboard', { headers: hdrA }))).activity || [];
-  const mine = feed.filter(i => i.applet === 'profiles' &&
+  // "joined" is the separate welcome line from picking a division, written once
+  // by /api/profile/subteam, and is not what this is counting.
+  const mine = feed.filter(i => i.applet === 'profiles' && i.verb !== 'joined' &&
                                 /Alpha/.test(i.actor || '') &&
                                 Date.parse(i.created_at) >= STARTED);
   check('filling in a profile writes exactly one feed line', mine.length === 1,

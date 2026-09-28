@@ -139,6 +139,11 @@
   border-radius: 999px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
 .flag-late   { background: var(--amber-bg); color: var(--amber-text); }
 .flag-edited { background: var(--bg); color: var(--muted); }
+.session-card { margin-bottom: 22px; }
+.session-top { display: flex; align-items: center; justify-content: space-between;
+               gap: 12px; flex-wrap: wrap; padding: 4px 4px 10px; }
+.session-sub { color: var(--muted); font-size: 0.85rem; }
+.cap-tag { font-size: 0.7rem; font-weight: 700; color: var(--muted); margin-left: 4px; }
 .log-empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 0.88rem; }
 </style>
 </head>
@@ -162,6 +167,17 @@
   </header>
 
   <div class="page">
+    <div id="session-panel" class="hidden">
+      <div class="section-label" id="session-label"></div>
+      <div class="list-card session-card">
+        <div class="session-top">
+          <div class="session-sub" id="session-sub"></div>
+          <button class="btn btn-ghost" id="session-btn" type="button" onclick="askSession()"></button>
+        </div>
+        <div id="session-list"></div>
+      </div>
+    </div>
+
     <div class="tabs">
       <button class="tab active" id="tab-btn-sessions" type="button" onclick="showTab('sessions')">🗓️ Sessions</button>
       <button class="tab"        id="tab-btn-log"      type="button" onclick="showTab('log')">📜 My log</button>
@@ -508,6 +524,53 @@ function renderHistory() {
   }).join('');
 }
 
+/* ── The one-off session (ONBOARDING_SESSION in main.py) ─────────────────
+   Only drawn while there is one coming up. Answering reuses the overlay
+   shared.js raises on sign-in, so there is one form for it, not two. */
+let SESSION = null;
+
+async function loadSession() {
+  const d = await fetch('/api/onboarding-session').then(r => r.json()).catch(() => null);
+  const panel = document.getElementById('session-panel');
+  if (!d || !d.session) { panel.classList.add('hidden'); SESSION = null; return; }
+  SESSION = d;
+  panel.classList.remove('hidden');
+  const people = d.people || [];
+  const yes   = people.filter(p => p.attending === true);
+  const no    = people.filter(p => p.attending === false);
+  const quiet = people.filter(p => p.attending == null);
+  const mine  = people.find(p => p.profile_id === me.id);
+
+  document.getElementById('session-label').textContent =
+    d.session.name + ' · ' + fmtDay(d.session.date);
+  document.getElementById('session-sub').textContent =
+    (d.session.detail ? d.session.detail + ' · ' : '') +
+    `${yes.length} coming, ${no.length} not, ${quiet.length} yet to answer`;
+  const btn = document.getElementById('session-btn');
+  btn.classList.toggle('hidden', !mine);
+  btn.textContent = mine && mine.attending != null ? 'Change my answer' : 'Answer';
+
+  const row = (p, cls, showWhy) => `<div class="p-row">
+    ${UCDFS.avatar(p.name, p.photo, 'avatar ' + cls)}
+    <div class="p-body">
+      <div class="p-name">${esc(p.name)}${p.captain ? '<span class="cap-tag">captain</span>' : ''}${p.profile_id === me.id ? ' <span class="me-tag">(you)</span>' : ''}</div>
+      ${showWhy ? (p.reason ? `<div class="p-why">${esc(p.reason)}</div>` : '<div class="p-why none">No reason given</div>') : ''}
+    </div>
+  </div>`;
+  let html = '';
+  if (yes.length)   html += `<div class="grp-head">Coming <span class="chip-count">${yes.length}</span></div>` + yes.map(p => row(p, 'av-yes', false)).join('');
+  if (no.length)    html += `<div class="grp-head">Not coming <span class="chip-count">${no.length}</span></div>` + no.map(p => row(p, 'av-no', true)).join('');
+  if (quiet.length) html += `<div class="grp-head">Yet to answer <span class="chip-count">${quiet.length}</span></div>` + quiet.map(p => row(p, '', false)).join('');
+  document.getElementById('session-list').innerHTML =
+    html || '<div class="list-empty">Nobody is on the list yet.</div>';
+}
+
+async function askSession() {
+  if (!SESSION) return;
+  await UCDFS.askSession(SESSION.session);
+  loadSession();
+}
+
 function setAnswer(v) { answer = v; buildForm(); }
 function countReason() {
   const n = document.getElementById('reason').value.length;
@@ -571,12 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
     me = user;
     UCDFS.renderPill();
     load();
+    loadSession();
   });
 });
 
 /* The list is shared, so somebody else answering while this is open should
    show up. Same interval attendance uses. */
-setInterval(() => { if (selected) load(); }, 30000);
+setInterval(() => { if (selected) load(); if (SESSION) loadSession(); }, 30000);
 </script>
 </body>
 </html>

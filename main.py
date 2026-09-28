@@ -223,14 +223,18 @@ MEETING_DAYS = (1, 3)
 MEETING_WEEKS_BACK = 1
 MEETING_WEEKS_FWD  = 1
 
-# A one-off session that a specific group is asked about on sign-in, until they
-# answer. Answers go in meeting_responses like any other session, so no
-# migration; the meetings page, its history and the dashboard tile all key on
-# MEETING_DAYS dates, so a row on another weekday is invisible to them.
+# A one-off session for a specific group: anyone who signed up on or after
+# `new_since`, plus every captain. It appears in the meetings day picker as an
+# extra, highlighted day, and shared.js asks the invited on sign-in until they
+# answer. Answers are ordinary meeting_responses rows through the ordinary
+# /api/meetings/respond, so there is no migration and one write path.
 #
-# Who is asked: anyone who signed up on or after `new_since`, plus every
-# captain. The prompt stops by itself once `date` has passed. For the next
-# intake, change the dates here; set it to None to switch it off.
+# It stays out of the dashboard tile, the "My log" history and the weekly
+# "you missed a session" nudge, which are all about the regular sessions.
+#
+# Must not fall on a MEETING_DAYS weekday: responses are one row per person
+# per date, so the two would share it. For the next intake, change the dates;
+# set it to None to switch it off.
 ONBOARDING_SESSION = {
     "date":      date(2026, 9, 30),
     "name":      "New member onboarding",
@@ -3997,10 +4001,18 @@ def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def _meeting_dates(today: Optional[date] = None) -> list:
-    """Every scheduled meeting day in the window the page can answer for."""
+def _window_start(today: Optional[date] = None) -> date:
+    """The Monday the answerable window opens on."""
     today = today or datetime.now(TEAM_TZ).date()
-    start = _monday(today) - timedelta(weeks=MEETING_WEEKS_BACK)
+    return _monday(today) - timedelta(weeks=MEETING_WEEKS_BACK)
+
+
+def _meeting_dates(today: Optional[date] = None) -> list:
+    """Every scheduled meeting day in the window the page can answer for.
+
+    Regular days only. The one-off session is added by api_meetings itself, so
+    the dashboard tile and the week-note window never mistake it for one."""
+    start = _window_start(today)
     span  = (MEETING_WEEKS_BACK + 1 + MEETING_WEEKS_FWD) * 7
     return [d for d in (start + timedelta(days=i) for i in range(span))
             if d.weekday() in MEETING_DAYS]
@@ -4014,7 +4026,8 @@ def _people_by_id() -> dict:
     the whole reason 012 keys on the account.
     """
     try:
-        rows = sb().table("profiles").select("id,first_name,last_name").execute().data or []
+        rows = (sb().table("profiles").select("id,first_name,last_name,created_at")
+                .execute().data or [])
         details = {d.get("id"): d for d in
                    (sb().table("profile_details").select("id,photo_ext,photo_rev")
                     .execute().data or [])}
@@ -4027,21 +4040,34 @@ def _people_by_id() -> dict:
         out[r.get("id")] = {
             "name":  name,
             "photo": _avatar_url(r.get("id"), details.get(r.get("id")) or {}),
+            # For working out who a one-off session invites; see _session_invited.
+            "created_at": r.get("created_at"),
         }
     return out
+
+
+def _session_day(d: date) -> Optional[dict]:
+    """ONBOARDING_SESSION if d is its date, else None."""
+    s = ONBOARDING_SESSION
+    return s if s and s["date"] == d else None
 
 
 def _meeting_date_or_400(raw) -> date:
     """A date that is really a scheduled meeting day inside the answerable
     window. Both halves matter: without the first the table fills with Sundays,
-    and without the second somebody can answer for a session in 2031."""
+    and without the second somebody can answer for a session in 2031.
+
+    The one-off session is also answerable, from the start of the same window
+    onwards. Onwards rather than only inside it, because the sign-in prompt
+    asks about it from whenever it is announced, which can be further ahead
+    than the picker reaches."""
     try:
         d = date.fromisoformat((raw or "").strip())
     except ValueError:
         raise HTTPException(400, "date must be YYYY-MM-DD")
-    if d not in _meeting_dates():
-        raise HTTPException(400, "That is not one of the meeting days you can answer for")
-    return d
+    if d in _meeting_dates() or (_session_day(d) and d >= _window_start()):
+        return d
+    raise HTTPException(400, "That is not one of the meeting days you can answer for")
 
 
 def _target_profile(request: Request, body: dict) -> str:
@@ -4060,17 +4086,26 @@ def _target_profile(request: Request, body: dict) -> str:
 
 
 @app.get("/api/meetings")
-async def api_meetings():
+async def api_meetings(request: Request):
     """Everything the page draws: the days, everyone's answers, everyone's week.
 
     Answers are visible to the whole team, like attendance already is. That is
     the point rather than an oversight: a reason your teammates can see is one
     you stand over, and a private one read only by the principal makes this a
     different and much worse tool.
+
+    The one-off session rides along as one more day, carrying a `special`
+    block: what it is, whether the caller is asked, and the whole invite list,
+    so the page can name who has not answered rather than only count them.
     """
     days   = _meeting_dates()
     if not days:
         return {"days": [], "responses": [], "notes": [], "meeting_days": list(MEETING_DAYS)}
+    s = ONBOARDING_SESSION
+    start = _window_start()
+    end   = start + timedelta(weeks=MEETING_WEEKS_BACK + 1 + MEETING_WEEKS_FWD)
+    if s and start <= s["date"] < end and s["date"] not in days:
+        days = sorted(days + [s["date"]])
     weeks  = sorted({_monday(d) for d in days})
     people = _people_by_id()
     today  = datetime.now(TEAM_TZ).date()
@@ -4096,12 +4131,28 @@ async def api_meetings():
         who = people.get(r.get("profile_id")) or {}
         return {**r, "name": who.get("name") or "Someone", "photo": who.get("photo")}
 
+    def special(d):
+        if not _session_day(d):
+            return None
+        captains = _captain_ids()
+        invited = [{"profile_id": pid, "name": p.get("name") or "Someone",
+                    "photo": p.get("photo"), "captain": pid in captains}
+                   for pid, p in people.items()
+                   if _session_invited({"id": pid, "created_at": p.get("created_at")}, s, captains)]
+        invited.sort(key=lambda p: p["name"].lower())
+        me = current_profile(request)["id"]
+        return {"name": s["name"], "detail": s["detail"],
+                "audience": "New members and captains",
+                "invited": any(p["profile_id"] == me for p in invited),
+                "people": invited}
+
     return {
         # `past` is what the page uses to word itself: a day still to come asks
         # "are you coming", one gone by asks "were you there". Same row either
         # way; only the question changes.
         "days": [{"date": d.isoformat(), "past": d < today, "is_today": d == today,
-                  "week_start": _monday(d).isoformat()} for d in days],
+                  "week_start": _monday(d).isoformat(), "special": special(d)}
+                 for d in days],
         "weeks":     [w.isoformat() for w in weeks],
         "responses": [dressed(r) for r in rows],
         "notes":     [dressed(n) for n in notes],
@@ -4128,6 +4179,15 @@ async def api_meetings_respond(request: Request):
     if not attending and not reason:
         raise HTTPException(400, "Say why you can't make it")
 
+    # The one-off session only takes answers from the people it invites, and
+    # that is checked against whose row it is, so the override cannot write an
+    # answer for somebody who was never asked either.
+    session = _session_day(d)
+    people  = _people_by_id()
+    if session and not _session_invited(
+            {"id": who, "created_at": (people.get(who) or {}).get("created_at")}, session):
+        raise HTTPException(403, "This session is for new members and captains")
+
     try:
         sb().table("meeting_responses").upsert({
             "profile_id": who, "meeting_date": d.isoformat(),
@@ -4151,10 +4211,14 @@ async def api_meetings_respond(request: Request):
     # Only a fresh answer is feed-worthy. People flip between yes and no as
     # their week changes, and a line for each would drown the feed in one
     # person rearranging their Tuesday.
-    name = (_people_by_id().get(who) or {}).get("name") or "Someone"
-    log_activity("meetings", name,
-                 "is coming" if attending else "can't make it",
-                 d.strftime("%a %-d %b"))
+    name = (people.get(who) or {}).get("name") or "Someone"
+    if session:
+        log_activity("meetings", name,
+                     "is coming to" if attending else "can't make", session["name"])
+    else:
+        log_activity("meetings", name,
+                     "is coming" if attending else "can't make it",
+                     d.strftime("%a %-d %b"))
     return {"ok": True}
 
 
@@ -4189,7 +4253,8 @@ async def api_meetings_week_note(request: Request):
 # ── The onboarding session ───────────────────────────────────────────────────
 # See ONBOARDING_SESSION. The prompt that asks about it lives in shared.js and
 # calls /me on every page load, so /me does no database work at all once the
-# session has passed or when it is switched off.
+# session has passed or when it is switched off. Answering, and the list of who
+# is coming, go through /api/meetings like any other session.
 
 def _session_upcoming() -> Optional[dict]:
     s = ONBOARDING_SESSION
@@ -4251,75 +4316,6 @@ async def api_session_me(request: Request):
     return {"ask": not rows, "session": _session_public(s)}
 
 
-@app.get("/api/onboarding-session")
-async def api_session():
-    """Who is invited and what each of them said, for the meetings page.
-    Visible to the whole team, like every other session's answers."""
-    s = _session_upcoming()
-    if not s:
-        return {"session": None, "people": []}
-    captains = _captain_ids()
-    try:
-        profiles = (sb().table("profiles").select("id,first_name,last_name,created_at")
-                    .execute().data or [])
-        rows = (sb().table("meeting_responses").select("*")
-                .eq("meeting_date", s["date"].isoformat()).execute().data or [])
-    except Exception as e:
-        logger.error(f"[session] roster failed: {e}")
-        return {"session": _session_public(s), "people": []}
-    people  = _people_by_id()
-    answers = {r.get("profile_id"): r for r in rows}
-    out = []
-    for p in profiles:
-        if not _session_invited(p, s, captains):
-            continue
-        a = answers.get(p["id"])
-        who = people.get(p["id"]) or {}
-        out.append({
-            "profile_id": p["id"],
-            "name":       who.get("name") or "Someone",
-            "photo":      who.get("photo"),
-            "captain":    p["id"] in captains,
-            "attending":  a.get("attending") if a else None,
-            "reason":     (a or {}).get("reason") or "",
-        })
-    out.sort(key=lambda r: r["name"].lower())
-    return {"session": _session_public(s), "people": out}
-
-
-@app.post("/api/onboarding-session/respond")
-async def api_session_respond(request: Request):
-    """Your own answer only. There is no profile_id and no override: an admin
-    tidying the list can ask the person, and nothing here is worth a second
-    privileged write path."""
-    s = _session_upcoming()
-    if not s:
-        raise HTTPException(400, "There is no upcoming session to answer for")
-    me = current_profile(request)
-    if not _session_invited(me, s):
-        raise HTTPException(403, "This session is for new members and captains")
-    b = await request.json()
-    if not isinstance(b.get("attending"), bool):
-        raise HTTPException(400, "attending must be true or false")
-    attending = b["attending"]
-    reason = " ".join((b.get("reason") or "").split())[:MAX_REASON]
-    if not attending and not reason:
-        raise HTTPException(400, "Say why you can't make it")
-    try:
-        sb().table("meeting_responses").upsert({
-            "profile_id": me["id"], "meeting_date": s["date"].isoformat(),
-            "attending": attending, "reason": reason,
-            # updated_at left to the database; see api_meetings_respond.
-        }, on_conflict="profile_id,meeting_date").execute()
-    except Exception as e:
-        logger.error(f"[session] respond failed for {me['id']}: {e}")
-        raise HTTPException(503, "Couldn't save that. Try again in a moment")
-    log_activity("meetings", _me_name(request),
-                 "is coming to" if attending else "can't make",
-                 s["name"])
-    return {"ok": True}
-
-
 # ── Start here ───────────────────────────────────────────────────────────────
 # A checklist on a new account's dashboard. Every counted step is ticked from
 # data the site already holds, never from a click on the list itself: a box
@@ -4371,7 +4367,7 @@ async def api_start_here(request: Request):
         steps.append({"id": "session",
                       "label": f"Say if you're coming to {s['name']} "
                                f"({s['date'].strftime('%a %-d %b')})",
-                      "done": answered, "href": "/meetings"})
+                      "done": answered, "href": f"/meetings?day={s['date'].isoformat()}"})
     steps.append({"id": "workshop", "label": "Log your first day in the workshop",
                   "done": logged, "href": "/attendance"})
 
@@ -4429,6 +4425,169 @@ async def api_admin_signup_check(request: Request):
     return {"checked": len(wanted), "joined": joined, "missing": missing}
 
 
+# ── Glossary (migrations/016) ────────────────────────────────────────────────
+# The terms are rows, edited on /glossary itself. Categories are code: they
+# change about never, and a term naming one that no longer exists is shown
+# under the first, the same fallback dashboard blocks use.
+#
+# Edits deliberately do not write to the activity feed. Somebody tidying twenty
+# definitions in one sitting would push everything else off the dashboard;
+# updated_by answers "who wrote this" for anyone who needs to ask.
+GLOSSARY_GROUPS = [
+    {"id": "comp", "name": "The competition"},
+    {"id": "elec", "name": "Electrical"},
+    {"id": "mech", "name": "Mechanical"},
+    {"id": "team", "name": "Team and tools"},
+]
+GLOSSARY_GROUP_IDS  = [g["id"] for g in GLOSSARY_GROUPS]
+MAX_GLOSSARY_TERMS  = 500
+MAX_TERM_NAME       = 60
+MAX_TERM_EXPANSION  = 80
+MAX_TERM_DEFINITION = 800
+
+
+def _glossary_rows() -> Optional[list]:
+    """Every term, or None when 016 has not been applied."""
+    try:
+        return sb().table("glossary_terms").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"[glossary] read failed (016 applied?): {e}")
+        return None
+
+
+def _may_edit_glossary(profile: dict) -> bool:
+    """Admins, committee and division captains.
+
+    On the role, like dashboard links, and not on the override: this is the
+    wording of a shared page, not somebody else's data. Captains because they
+    know their division's words. Granted captaincies only, never the label
+    people put on their own card, because unlike the session invite this one
+    is a permission.
+    """
+    if profile.get("role") in ("admin", "committee"):
+        return True
+    return profile.get("id") in set(_captains().values())
+
+
+def _clean_term(body: dict) -> dict:
+    term = " ".join(str(body.get("term") or "").split())[:MAX_TERM_NAME]
+    if not term:
+        raise HTTPException(400, "A term needs a name")
+    # Paragraph breaks survive, since the page keeps them; runs of blank lines
+    # and trailing spaces do not.
+    definition = str(body.get("definition") or "").replace("\r\n", "\n")
+    definition = re.sub(r"[ \t]+\n", "\n", definition)
+    definition = re.sub(r"\n{3,}", "\n\n", definition).strip()[:MAX_TERM_DEFINITION].strip()
+    if not definition:
+        raise HTTPException(400, "Say what it means")
+    category = str(body.get("category") or "")
+    return {
+        "term":       term,
+        "expansion":  " ".join(str(body.get("expansion") or "").split())[:MAX_TERM_EXPANSION],
+        "definition": definition,
+        # From a select the server filled, so a bad value is a stale tab rather
+        # than a typo: it falls back instead of losing the edit.
+        "category":   category if category in GLOSSARY_GROUP_IDS else GLOSSARY_GROUP_IDS[0],
+    }
+
+
+@app.get("/api/glossary")
+async def api_glossary(request: Request):
+    rows  = _glossary_rows()
+    order = {g: i for i, g in enumerate(GLOSSARY_GROUP_IDS)}
+
+    def shaped(r):
+        cat = r.get("category") if r.get("category") in order else GLOSSARY_GROUP_IDS[0]
+        return {"id": r.get("id"), "term": r.get("term") or "", "category": cat,
+                "expansion": r.get("expansion") or "", "definition": r.get("definition") or "",
+                "updated_at": r.get("updated_at"), "updated_by": r.get("updated_by") or ""}
+
+    # Alphabetical within a category. Nobody has to maintain an order, and it
+    # is the one a reader expects of a glossary.
+    terms = sorted((shaped(r) for r in rows or []),
+                   key=lambda t: (order[t["category"]], t["term"].lower()))
+    return {
+        # So the page can say the table is missing rather than looking empty.
+        "ready":    rows is not None,
+        "can_edit": _may_edit_glossary(current_profile(request)),
+        "groups":   GLOSSARY_GROUPS,
+        "terms":    terms,
+        "limits":   {"term": MAX_TERM_NAME, "expansion": MAX_TERM_EXPANSION,
+                     "definition": MAX_TERM_DEFINITION},
+    }
+
+
+@app.post("/api/glossary")
+async def api_glossary_save(request: Request):
+    """Add a term, or edit one. An id in the body means edit.
+
+    On create the id is minted here (term_…), never taken from the body, like
+    link_… and chart_…: a caller who picks the primary key can name rows into
+    existence."""
+    me = current_profile(request)
+    if not _may_edit_glossary(me):
+        raise HTTPException(403, "Only admins, committee and captains can edit the glossary")
+    b    = await request.json()
+    tid  = str(b.get("id") or "").strip()
+    row  = _clean_term(b)
+    rows = _glossary_rows()
+    if rows is None:
+        raise HTTPException(503, "The glossary isn't set up yet. Has migration 016 been applied?")
+    if tid and not any(r.get("id") == tid for r in rows):
+        raise HTTPException(404, "That term no longer exists")
+    clash = next((r for r in rows if r.get("id") != tid
+                  and (r.get("term") or "").lower() == row["term"].lower()), None)
+    if clash:
+        raise HTTPException(409, f"“{clash.get('term')}” is already in the glossary")
+    if not tid and len(rows) >= MAX_GLOSSARY_TERMS:
+        raise HTTPException(400, f"That's the most terms the glossary holds ({MAX_GLOSSARY_TERMS})")
+
+    row["updated_by"] = _me_name(request)
+    try:
+        if tid:
+            # Update, not upsert: an id that has gone must not be recreated.
+            sb().table("glossary_terms").update(row).eq("id", tid).execute()
+        else:
+            row["id"] = "term_" + uuid.uuid4().hex[:12]
+            sb().table("glossary_terms").insert(row).execute()
+    except Exception as e:
+        logger.error(f"[glossary] save failed for {tid or row.get('id')}: {e}")
+        # The unique index is the backstop for two people adding the same term
+        # at once, after the check above passed for both.
+        if "duplicate" in str(e).lower():
+            raise HTTPException(409, f"“{row['term']}” is already in the glossary")
+        raise HTTPException(503, "Couldn't save that. Try again")
+    return {"ok": True, "id": tid or row["id"]}
+
+
+@app.post("/api/glossary/delete")
+async def api_glossary_delete(request: Request):
+    """Remove one term. The caller sends the term's name back with its id.
+
+    The same rail as deleting a link or a chart: the page can be minutes stale,
+    and if somebody renamed the entry in the meantime the id under the button
+    is no longer the words on screen. A mismatch refuses rather than guesses."""
+    me = current_profile(request)
+    if not _may_edit_glossary(me):
+        raise HTTPException(403, "Only admins, committee and captains can edit the glossary")
+    b    = await request.json()
+    tid  = str(b.get("id") or "").strip()
+    rows = _glossary_rows()
+    if rows is None:
+        raise HTTPException(503, "The glossary isn't set up yet. Has migration 016 been applied?")
+    row = next((r for r in rows if r.get("id") == tid), None)
+    if not row:
+        raise HTTPException(404, "That term no longer exists")
+    if str(b.get("term") or "").strip() != (row.get("term") or ""):
+        raise HTTPException(400, "That entry has changed since the page loaded. Reload and try again")
+    try:
+        sb().table("glossary_terms").delete().eq("id", tid).execute()
+    except Exception as e:
+        logger.error(f"[glossary] delete failed for {tid}: {e}")
+        raise HTTPException(503, "Couldn't delete that. Try again")
+    return {"ok": True}
+
+
 def _meeting_days_between(start: date, end: date) -> list:
     """Every scheduled meeting day in a closed range.
 
@@ -4468,6 +4627,12 @@ async def api_meetings_history(request: Request, profile_id: str = ""):
         # running ahead of its migration, not a 500 on the page that draws it.
         logger.error(f"[meetings] history failed for {who}: {e}")
         return {"weeks": [], "totals": {}, "ready": False}
+
+    # The one-off session is not a team meeting. Its row would otherwise count
+    # as activity and move where the log starts and ends: an answer on a
+    # Wednesday made the log stop before that week's Thursday.
+    onboarding = ONBOARDING_SESSION["date"].isoformat() if ONBOARDING_SESSION else None
+    rows = [r for r in rows if str(r.get("meeting_date") or "")[:10] != onboarding]
 
     # Unbounded on purpose. Two sessions and one note a week is about 75 rows a
     # season, and a cap here would be an arbitrary number that quietly truncates

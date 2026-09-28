@@ -106,6 +106,9 @@ TABLES=(
   # chart: what the dashboard points at is about the team's tools, not about a
   # person. created_by is stripped for the same reason it is on plans.
   "links:created_by"
+  # The glossary (migrations/016): reference data, what the team's words mean.
+  # updated_by is stripped because it names whoever last edited an entry.
+  "glossary_terms:updated_by"
   "pt_sections:"
   "pt_nodes:"
   "pt_edges:"

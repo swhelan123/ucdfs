@@ -396,8 +396,9 @@ const PAGES = [
       check('and the tour does not stack on top of that either',
         !s.d.querySelector('.ucdfs-tour-bg.show'));
       s.w.close();
-      await fetch(BASE + '/api/onboarding-session/respond', {
-        method: 'POST', headers: jar, body: JSON.stringify({ attending: true }) });
+      await fetch(BASE + '/api/meetings/respond', {
+        method: 'POST', headers: jar,
+        body: JSON.stringify({ date: sess.session.date, attending: true }) });
     }
 
     const { w, d } = await open('/', { setCookies: answered, failOnPrompt: true });

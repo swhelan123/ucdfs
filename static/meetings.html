@@ -44,6 +44,44 @@
 .day-btn.active .day-name { color: rgba(255,255,255,0.7); }
 .day-btn.active .day-num  { color: #fff; }
 
+/* The one-off session (ONBOARDING_SESSION in main.py), as one more day.
+   Purple because green, red and navy already mean yes, no and selected here.
+   The badge sits across the top edge, so the button stays the height of its
+   neighbours and the row does not jump. */
+.day-btn { position: relative; }
+.day-picker.has-special { padding-top: 12px; }
+.day-btn.is-special { border-color: var(--purple-border); background: var(--purple-bg); }
+.day-btn.is-special .day-name { color: var(--purple); }
+.day-btn.is-special:hover { border-color: var(--purple); background: var(--purple-bg); }
+.day-btn.is-special.active { background: var(--purple); border-color: var(--purple); }
+.day-btn.is-special.active .day-name { color: rgba(255,255,255,0.8); }
+.day-badge {
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 0.56rem; font-weight: 800; line-height: 1;
+  text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 7px;
+  border-radius: 999px; background: var(--purple); color: #fff;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.day-btn.is-special.active .day-badge { background: #fff; color: var(--purple); }
+.badge-short { display: none; }
+
+/* Seven buttons do not fit a phone at 60px each, and six already did not. */
+@media (max-width: 560px) {
+  .day-picker { gap: 5px; }
+  .day-btn { min-width: 0; padding: 9px 2px; }
+  .day-sep { margin: 2px 0; }
+  .badge-long { display: none; }
+  .badge-short { display: inline; }
+}
+
+.special-info { background: var(--purple-bg); border: 1px solid var(--purple-border);
+  border-left: 3px solid var(--purple); border-radius: 12px; padding: 11px 13px; margin-bottom: 16px; }
+.special-name { font-weight: 800; font-size: 0.92rem; color: var(--purple); }
+.special-detail { font-size: 0.8rem; margin-top: 3px; line-height: 1.45; }
+.special-who { font-size: 0.64rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-top: 7px; }
+.special-note { font-size: 0.84rem; color: var(--muted); line-height: 1.55; }
+
 /* ── Answer card ── */
 .form-card { background: var(--card); border-radius: 20px; padding: 22px 20px;
   border: 1px solid var(--border); box-shadow: var(--shadow-md); }
@@ -139,11 +177,10 @@
   border-radius: 999px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
 .flag-late   { background: var(--amber-bg); color: var(--amber-text); }
 .flag-edited { background: var(--bg); color: var(--muted); }
-.session-card { margin-bottom: 22px; }
-.session-top { display: flex; align-items: center; justify-content: space-between;
-               gap: 12px; flex-wrap: wrap; padding: 4px 4px 10px; }
-.session-sub { color: var(--muted); font-size: 0.85rem; }
-.cap-tag { font-size: 0.7rem; font-weight: 700; color: var(--muted); margin-left: 4px; }
+.cap-tag { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--purple); background: var(--purple-bg); border-radius: 999px;
+  padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+.p-row.quiet { opacity: 0.6; }
 .log-empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 0.88rem; }
 </style>
 </head>
@@ -167,17 +204,6 @@
   </header>
 
   <div class="page">
-    <div id="session-panel" class="hidden">
-      <div class="section-label" id="session-label"></div>
-      <div class="list-card session-card">
-        <div class="session-top">
-          <div class="session-sub" id="session-sub"></div>
-          <button class="btn btn-ghost" id="session-btn" type="button" onclick="askSession()"></button>
-        </div>
-        <div id="session-list"></div>
-      </div>
-    </div>
-
     <div class="tabs">
       <button class="tab active" id="tab-btn-sessions" type="button" onclick="showTab('sessions')">🗓️ Sessions</button>
       <button class="tab"        id="tab-btn-log"      type="button" onclick="showTab('log')">📜 My log</button>
@@ -189,8 +215,18 @@
 
     <div class="main-grid">
       <div class="panel-form">
-        <div class="section-label">Your answer</div>
+        <div class="section-label" id="form-label">Your answer</div>
         <div class="form-card">
+          <div class="special-info" id="special-info" style="display:none">
+            <div class="special-name"   id="special-name"></div>
+            <div class="special-detail" id="special-detail"></div>
+            <div class="special-who"    id="special-who"></div>
+          </div>
+          <div class="special-note" id="special-note" style="display:none">
+            Only new members and captains are asked about this one, so there's
+            nothing for you to answer. Who's coming is on the list.
+          </div>
+          <div id="answer-controls">
           <div class="ask"     id="ask">Are you coming?</div>
           <div class="ask-sub" id="ask-sub"></div>
           <div class="yn">
@@ -210,6 +246,7 @@
           <button class="btn btn-green btn-full" id="submit-btn" onclick="save(this)">
             <span id="submit-label">Save answer</span>
           </button>
+          </div><!-- /answer-controls -->
         </div>
 
         <div class="week-card" id="week-card">
@@ -270,14 +307,21 @@ async function load() {
   if (!d || !d.days) { UCDFS.toast("Couldn't load the sessions"); return; }
   DAYS = d.days; RESPONSES = d.responses || []; NOTES = d.notes || []; ROSTER = d.roster || 0;
   if (!selected || !DAYS.some(x => x.date === selected)) {
-    /* Default to the next session still to come, because the common visit is
-       answering for it. Falls back to the last one when the window is all past,
-       which is somebody catching up. */
-    const next = DAYS.find(x => !x.past);
-    selected = (next || DAYS[DAYS.length - 1] || {}).date || null;
+    /* ?day= wins, so a link can open straight onto one session (Start here
+       does, for the onboarding one). Otherwise the next session still to come
+       that you are actually asked about, because the common visit is answering
+       for it. Falls back to the last one when the window is all past, which is
+       somebody catching up. */
+    const linked = new URLSearchParams(location.search).get('day');
+    const next = DAYS.find(x => !x.past && mayAnswer(x));
+    selected = DAYS.some(x => x.date === linked) ? linked
+             : ((next || DAYS[DAYS.length - 1] || {}).date || null);
   }
   render();
 }
+
+/* Every regular session is everyone's; the one-off one is only its invitees'. */
+function mayAnswer(day) { return !day.special || day.special.invited; }
 
 function myRow()  { return RESPONSES.find(r => r.profile_id === me.id && r.meeting_date === selected); }
 function weekOf() { return (DAYS.find(x => x.date === selected) || {}).week_start; }
@@ -293,6 +337,7 @@ function render() {
 function buildPicker() {
   const el = document.getElementById('day-picker');
   el.innerHTML = '';
+  el.classList.toggle('has-special', DAYS.some(d => d.special));
   let lastWeek = null;
   DAYS.forEach(day => {
     if (lastWeek && day.week_start !== lastWeek) {
@@ -320,6 +365,14 @@ function buildPicker() {
     const mine = RESPONSES.find(r => r.profile_id === me.id && r.meeting_date === day.date);
     mk.textContent = day.is_today ? '•' : (mine ? (mine.attending ? '✅' : '❌') : '');
     btn.append(nm, nu, mk);
+    if (day.special) {
+      btn.classList.add('is-special');
+      btn.title = day.special.name;
+      const badge = document.createElement('span');
+      badge.className = 'day-badge';
+      badge.innerHTML = '<span class="badge-long">New members</span><span class="badge-short">New</span>';
+      btn.appendChild(badge);
+    }
     btn.onclick = () => { selected = day.date; answer = null; render(); };
     el.appendChild(btn);
   });
@@ -328,6 +381,22 @@ function buildPicker() {
 function buildForm() {
   const day = DAYS.find(x => x.date === selected);
   if (!day) return;
+  const sp  = day.special;
+  const ok  = mayAnswer(day);
+  document.getElementById('special-info').style.display = sp ? '' : 'none';
+  if (sp) {
+    document.getElementById('special-name').textContent = sp.name;
+    document.getElementById('special-detail').textContent =
+      fmtDay(day.date) + (sp.detail ? ' · ' + sp.detail : '');
+    document.getElementById('special-who').textContent = 'For ' + sp.audience;
+  }
+  document.getElementById('form-label').textContent = ok ? 'Your answer' : 'About this session';
+  document.getElementById('special-note').style.display    = ok ? 'none' : '';
+  document.getElementById('answer-controls').style.display = ok ? '' : 'none';
+  /* The date is already in the purple box, so it is not said twice. */
+  document.getElementById('ask-sub').style.display = sp ? 'none' : '';
+  if (!ok) return;
+
   const row = myRow();
   if (answer === null && row) answer = row.attending;
 
@@ -357,10 +426,14 @@ function refreshSubmit() {
 function buildWeek() {
   const week = weekOf();
   if (!week) return;
+  /* The week note accounts for missed team meetings. The one-off session is
+     not one, so it neither shows the box nor counts as a miss. */
+  const day = DAYS.find(x => x.date === selected) || {};
+  document.getElementById('week-card').style.display = day.special ? 'none' : '';
   const note = myNote();
   const missedThisWeek = RESPONSES.some(r =>
     r.profile_id === me.id && !r.attending &&
-    (DAYS.find(d => d.date === r.meeting_date) || {}).week_start === week);
+    (DAYS.find(d => d.date === r.meeting_date && !d.special) || {}).week_start === week);
 
   /* Highlighted only once you have actually missed something that week. Asking
      everybody every week turns it into a form; asking the people who were not
@@ -378,9 +451,12 @@ function buildWeek() {
   document.getElementById('week-label').textContent = note ? 'Update this week' : 'Save this week';
 }
 
-function personRow(r, cls, showWhy) {
+/* opts.week: false leaves out the week note (the one-off session is not a
+   team meeting); opts.tag labels the row; opts.quiet dims someone yet to say. */
+function personRow(r, cls, showWhy, opts = {}) {
   const isMe = r.profile_id === me.id;
-  const note = NOTES.find(n => n.profile_id === r.profile_id && n.week_start === weekOf());
+  const note = opts.week === false ? null
+    : NOTES.find(n => n.profile_id === r.profile_id && n.week_start === weekOf());
   let why = '';
   if (showWhy) {
     why = r.reason
@@ -389,10 +465,11 @@ function personRow(r, cls, showWhy) {
   }
   const wk = (showWhy && note && note.summary)
     ? `<div class="p-week">${esc(note.summary)}</div>` : '';
-  return `<div class="p-row">
+  const tag = opts.tag ? `<span class="cap-tag">${esc(opts.tag)}</span>` : '';
+  return `<div class="p-row${opts.quiet ? ' quiet' : ''}">
     ${UCDFS.avatar(r.name, r.photo, 'avatar ' + cls)}
     <div class="p-body">
-      <div class="p-name">${esc(r.name)}${isMe ? ' <span class="me-tag">(you)</span>' : ''}</div>
+      <div class="p-name">${esc(r.name)}${tag}${isMe ? ' <span class="me-tag">(you)</span>' : ''}</div>
       ${why}${wk}
     </div>
   </div>`;
@@ -402,6 +479,7 @@ function buildList() {
   const day = DAYS.find(x => x.date === selected);
   const el  = document.getElementById('list');
   if (!day) { el.innerHTML = ''; return; }
+  if (day.special) { buildSpecialList(day, el); return; }
   const rows = RESPONSES.filter(r => r.meeting_date === selected);
   const yes  = rows.filter(r => r.attending).sort((a, b) => a.name.localeCompare(b.name));
   const no   = rows.filter(r => !r.attending).sort((a, b) => a.name.localeCompare(b.name));
@@ -429,6 +507,48 @@ function buildList() {
   }
   if (quiet) {
     html += `<div class="grp-head">Yet to answer <span class="chip-count">${quiet}</span></div>`;
+  }
+  el.innerHTML = html;
+}
+
+/* The invite list is known for the one-off session, so "yet to answer" can be
+   names rather than a count: that is the list whoever runs the day chases. */
+function buildSpecialList(day, el) {
+  const rows = {};
+  RESPONSES.filter(r => r.meeting_date === day.date).forEach(r => { rows[r.profile_id] = r; });
+  const invited = new Set(day.special.people.map(p => p.profile_id));
+  const people = day.special.people.map(p => ({ ...p, ...(rows[p.profile_id] || {}), answered: !!rows[p.profile_id] }))
+    // Somebody who answered and has since dropped off the invite list still said so.
+    .concat(Object.values(rows).filter(r => !invited.has(r.profile_id)).map(r => ({ ...r, answered: true })));
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const yes   = people.filter(p => p.answered && p.attending).sort(byName);
+  const no    = people.filter(p => p.answered && !p.attending).sort(byName);
+  const quiet = people.filter(p => !p.answered).sort(byName);
+  const opts  = p => ({ week: false, tag: p.captain ? 'captain' : '' });
+
+  document.getElementById('list-label').textContent =
+    (day.past ? 'Who was there · ' : "Who's coming · ") + fmtDay(day.date);
+  document.getElementById('foot-count').textContent =
+    `${yes.length + no.length} of ${people.length} answered`;
+
+  if (!people.length) {
+    el.innerHTML = `<div class="list-empty">Nobody is on the invite list yet.</div>`;
+    return;
+  }
+  let html = '';
+  if (yes.length) {
+    html += `<div class="grp-head">${day.past ? 'Was there' : 'Coming'}
+             <span class="chip-count">${yes.length}</span></div>`;
+    html += yes.map(p => personRow(p, 'av-yes', false, opts(p))).join('');
+  }
+  if (no.length) {
+    html += `<div class="grp-head">${day.past ? "Wasn't there" : 'Not coming'}
+             <span class="chip-count">${no.length}</span></div>`;
+    html += no.map(p => personRow(p, 'av-no', true, opts(p))).join('');
+  }
+  if (quiet.length) {
+    html += `<div class="grp-head">Yet to answer <span class="chip-count">${quiet.length}</span></div>`;
+    html += quiet.map(p => personRow(p, 'av-none', false, { ...opts(p), quiet: true })).join('');
   }
   el.innerHTML = html;
 }
@@ -524,53 +644,6 @@ function renderHistory() {
   }).join('');
 }
 
-/* ── The one-off session (ONBOARDING_SESSION in main.py) ─────────────────
-   Only drawn while there is one coming up. Answering reuses the overlay
-   shared.js raises on sign-in, so there is one form for it, not two. */
-let SESSION = null;
-
-async function loadSession() {
-  const d = await fetch('/api/onboarding-session').then(r => r.json()).catch(() => null);
-  const panel = document.getElementById('session-panel');
-  if (!d || !d.session) { panel.classList.add('hidden'); SESSION = null; return; }
-  SESSION = d;
-  panel.classList.remove('hidden');
-  const people = d.people || [];
-  const yes   = people.filter(p => p.attending === true);
-  const no    = people.filter(p => p.attending === false);
-  const quiet = people.filter(p => p.attending == null);
-  const mine  = people.find(p => p.profile_id === me.id);
-
-  document.getElementById('session-label').textContent =
-    d.session.name + ' · ' + fmtDay(d.session.date);
-  document.getElementById('session-sub').textContent =
-    (d.session.detail ? d.session.detail + ' · ' : '') +
-    `${yes.length} coming, ${no.length} not, ${quiet.length} yet to answer`;
-  const btn = document.getElementById('session-btn');
-  btn.classList.toggle('hidden', !mine);
-  btn.textContent = mine && mine.attending != null ? 'Change my answer' : 'Answer';
-
-  const row = (p, cls, showWhy) => `<div class="p-row">
-    ${UCDFS.avatar(p.name, p.photo, 'avatar ' + cls)}
-    <div class="p-body">
-      <div class="p-name">${esc(p.name)}${p.captain ? '<span class="cap-tag">captain</span>' : ''}${p.profile_id === me.id ? ' <span class="me-tag">(you)</span>' : ''}</div>
-      ${showWhy ? (p.reason ? `<div class="p-why">${esc(p.reason)}</div>` : '<div class="p-why none">No reason given</div>') : ''}
-    </div>
-  </div>`;
-  let html = '';
-  if (yes.length)   html += `<div class="grp-head">Coming <span class="chip-count">${yes.length}</span></div>` + yes.map(p => row(p, 'av-yes', false)).join('');
-  if (no.length)    html += `<div class="grp-head">Not coming <span class="chip-count">${no.length}</span></div>` + no.map(p => row(p, 'av-no', true)).join('');
-  if (quiet.length) html += `<div class="grp-head">Yet to answer <span class="chip-count">${quiet.length}</span></div>` + quiet.map(p => row(p, '', false)).join('');
-  document.getElementById('session-list').innerHTML =
-    html || '<div class="list-empty">Nobody is on the list yet.</div>';
-}
-
-async function askSession() {
-  if (!SESSION) return;
-  await UCDFS.askSession(SESSION.session);
-  loadSession();
-}
-
 function setAnswer(v) { answer = v; buildForm(); }
 function countReason() {
   const n = document.getElementById('reason').value.length;
@@ -634,13 +707,14 @@ document.addEventListener('DOMContentLoaded', () => {
     me = user;
     UCDFS.renderPill();
     load();
-    loadSession();
   });
 });
 
 /* The list is shared, so somebody else answering while this is open should
    show up. Same interval attendance uses. */
-setInterval(() => { if (selected) load(); if (SESSION) loadSession(); }, 30000);
+setInterval(() => { if (selected) load(); }, 30000);
+/* Answered in the sign-in prompt while this page was underneath it. */
+document.addEventListener('ucdfs:session-answered', () => load());
 </script>
 </body>
 </html>

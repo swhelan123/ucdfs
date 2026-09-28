@@ -154,7 +154,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Tour Seen,Meeting Check,Meeting Other,Start Here,Start Admin,Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Admin Claimer,Plans Check,Links Member,Links Boss,Test Bot,Purchase Member,Purchase Deptcap,Purchase Opscap,Purchase Bystander,Org Principal,Org Captain,Org Claimer,Org Vice,Org Member,Org Alum,Org Fresh,Org Viewer'
+TEST_ACTORS='Glossary Member,Glossary Editor,Tour Seen,Meeting Check,Meeting Other,Start Here,Start Admin,Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Admin Claimer,Plans Check,Links Member,Links Boss,Test Bot,Purchase Member,Purchase Deptcap,Purchase Opscap,Purchase Bystander,Org Principal,Org Captain,Org Claimer,Org Vice,Org Member,Org Alum,Org Fresh,Org Viewer'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time
@@ -211,6 +211,30 @@ try:
 except Exception as e:
     # The table may not exist yet (011 unapplied). Never fail a run over tidying.
     print(f"  cleanup: could not tidy blocks ({e})")
+PY
+}
+
+cleanup_glossary() {
+  # Terms created by suite-glossary (migrations/016). Matched on the name
+  # prefix, like links, because a run that crashes between adding a term and
+  # deleting it never learns the id the server minted, and a leftover is an
+  # entry in the glossary every account in the non-prod project reads.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+q = "/rest/v1/glossary_terms?term=ilike." + urllib.parse.quote(prefix + "*", safe="")
+req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                             method="DELETE")
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = json.loads(r.read() or "[]")
+    if rows:
+        print(f"  cleanup: removed {len(rows)} test glossary term(s)")
+except Exception as e:
+    # The table may not exist yet (016 unapplied). Never fail a run over tidying.
+    print(f"  cleanup: could not tidy the glossary ({e})")
 PY
 }
 

@@ -556,13 +556,19 @@
 
       function submit(attending) {
         yes.disabled = no.disabled = send.disabled = true;
-        fetch('/api/onboarding-session/respond', {
+        /* The same endpoint as every other session: one write path, so the
+           rules on a no, and who may answer, live in one place. */
+        fetch('/api/meetings/respond', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ attending: attending, reason: reason.value })
+          body: JSON.stringify({ date: s.date, attending: attending, reason: reason.value })
         }).then(function (r) {
           if (!r.ok) throw new Error('save failed');
           close();
           toast(attending ? 'See you there' : 'Thanks for letting us know');
+          /* So a page already showing the answers (/meetings) redraws now
+             rather than at its next poll. */
+          try { document.dispatchEvent(new CustomEvent('ucdfs:session-answered')); }
+          catch (e) { /* very old browser: the page catches up on its poll */ }
         }).catch(function () {
           yes.disabled = no.disabled = false;
           send.disabled = !reason.value.trim();
@@ -906,7 +912,6 @@
     appletGroups: appletGroups,
     favourites: favourites,
     onboard: onboard,
-    askSession: raiseSession,
     tour: tour,
     godBar: godBar,
     photos: photos,

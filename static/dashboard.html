@@ -288,6 +288,12 @@ body.ready #load-veil {
 }
 .start-step.done { color: var(--muted); text-decoration: line-through; }
 .start-step.done .box { background: var(--green); border-color: var(--green); }
+/* Ticked while you were looking; see renderStart(). */
+.start-step.just-done .box { animation: tick-pop 0.45s cubic-bezier(0.34,1.56,0.64,1); }
+@keyframes tick-pop { 0% { transform: scale(0.4); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .start-step.just-done .box { animation: none; } }
+.start.finished { border-left-color: var(--green); }
+.start.finished .start-bar > div { background: var(--green); }
 .start-step:not(.done):hover .box { border-color: var(--indigo); }
 .start-links { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; padding-top: 10px;
                border-top: 1px solid var(--border); }
@@ -848,6 +854,66 @@ function renderHeadline() {
     </div>`;
 }
 
+/* ── Start here ────────────────────────────────────────────────────────────
+   Drawn from /api/start-here and redrawn whenever something on this page may
+   have ticked a step: picking a division, answering the onboarding session.
+   Without that, a new member ticks a box and watches the list not notice until
+   they reload, which reads as the tick not having worked.
+
+   START is the last answer, kept so a redraw can tell what just changed. */
+let START = null;
+
+function refreshStart() {
+  return fetch('/api/start-here').then(r => r.ok ? r.json() : null)
+    .then(s => { if (s) renderStart(s); }).catch(() => {});
+}
+
+function renderStart(s) {
+  const el   = document.getElementById('start-here');
+  const prev = START;
+  START = s;
+  const steps = (s && s.steps) || [];
+  /* Finished while you watched: the card stays for this visit and says so,
+     rather than vanishing the instant the last box is ticked, which looks like
+     a glitch. The next load hides it, because the server says show: false. */
+  const finished = !!(prev && prev.show && s && !s.show && steps.length &&
+                      steps.every(x => x.done));
+  if (!s || (!s.show && !finished)) { el.style.display = 'none'; return; }
+  const esc  = UCDFS.esc;
+  const done = steps.filter(x => x.done).length;
+  const was  = new Set(((prev && prev.steps) || []).filter(x => x.done).map(x => x.id));
+  el.className = 'card start' + (finished ? ' finished' : '');
+  el.innerHTML = `
+    <div class="start-head">
+      <div class="start-title">${finished ? '🎉 All done' : '👋 Start here'}</div>
+      <div class="start-count">${finished ? 'Welcome to the team' : `${done} of ${steps.length} done`}</div>
+    </div>
+    <div class="start-bar"><div style="width:${Math.round(100 * done / (steps.length || 1))}%"></div></div>
+    ${steps.map(x => {
+      /* Ticked since the last draw, so it gets a moment of attention. */
+      const cls = 'start-step' + (x.done ? ' done' : '') + (x.done && prev && !was.has(x.id) ? ' just-done' : '');
+      return `<a class="${cls}" data-step="${esc(x.id)}" href="${esc(x.href)}">
+        <span class="box">${x.done ? '✓' : ''}</span><span>${esc(x.label)}</span></a>`;
+    }).join('')}
+    ${(s.links || []).length ? `<div class="start-links">${s.links.map(l =>
+        `<a href="${esc(l.href)}">${esc(l.label)} →</a>`).join('')}</div>` : ''}`;
+  el.style.display = '';
+}
+
+/* The steps that are not ticked on this page (a photo, a first day in the
+   workshop) are done somewhere else and you come back. Coming back through
+   the Back button restores this page from the browser's cache without running
+   anything, and coming back to a tab that was open all along runs nothing
+   either, so both ask again. Only while the card is up and unfinished: once
+   it is gone, nothing you do can bring it back. */
+document.addEventListener('ucdfs:session-answered', refreshStart);
+window.addEventListener('pageshow', e => {
+  if (e.persisted && START && START.show) refreshStart();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && START && START.show) refreshStart();
+});
+
 /* ── Showing the page ──────────────────────────────────────────────────────
    The dashboard stays hidden until it has been drawn once, so nobody watches
    it build itself. See the .page rule in the style block.
@@ -861,26 +927,6 @@ function renderHeadline() {
 
    Do not add a third call at the end of draw(): the finally already runs on
    the success path, and a spare call only makes this comment wrong. */
-function renderStart(s) {
-  const el = document.getElementById('start-here');
-  if (!s || !s.show) { el.style.display = 'none'; return; }
-  const esc = UCDFS.esc;
-  const steps = s.steps || [];
-  const done  = steps.filter(x => x.done).length;
-  el.className = 'card start';
-  el.innerHTML = `
-    <div class="start-head">
-      <div class="start-title">👋 Start here</div>
-      <div class="start-count">${done} of ${steps.length} done</div>
-    </div>
-    <div class="start-bar"><div style="width:${Math.round(100 * done / (steps.length || 1))}%"></div></div>
-    ${steps.map(x => `<a class="start-step${x.done ? ' done' : ''}" href="${esc(x.href)}">
-        <span class="box">${x.done ? '✓' : ''}</span><span>${esc(x.label)}</span></a>`).join('')}
-    ${(s.links || []).length ? `<div class="start-links">${s.links.map(l =>
-        `<a href="${esc(l.href)}">${esc(l.label)} →</a>`).join('')}</div>` : ''}`;
-  el.style.display = '';
-}
-
 let revealed = false;
 function reveal() {
   if (revealed) return;
@@ -953,6 +999,8 @@ async function draw(user) {
   UCDFS.onboard(picked => {
     if (picked) setFilter(picked);
     renderGreeting(UCDFS.refreshUser() || user);
+    // "Not sure yet" (picked === null) is an answer too, and ticks the step.
+    refreshStart();
   });
 
   /* Registered after the paint above, so the tour describes a page that has

@@ -427,5 +427,58 @@ const PAGES = [
     seen.w.close();
   }
 
+  /* ── Start here keeps up without a reload ──────────────────────────────
+     The checklist is ticked from server data, and two of its steps are done
+     in overlays on the dashboard itself. Before this, a new member picked a
+     division, answered the session, and watched the list not notice until
+     they reloaded. Driven through the real overlays, as a person would. */
+  console.log('\nstart here keeps up without a reload');
+  {
+    const live = await signUp('Start', 'Live');
+    const { w, d } = await open('/', { setCookies: live.setCookies, failOnPrompt: true });
+    const step = id => d.querySelector(`#start-here [data-step="${id}"]`);
+    check('a new account sees the checklist', await waitFor(() => step('division')));
+    check('with the division step not yet ticked',
+      step('division') && !step('division').classList.contains('done'));
+
+    const asked = await waitFor(() => d.querySelector('.ob-wrap .ob-opt'));
+    if (asked) d.querySelector('.ob-wrap .ob-opt').click();
+    check('picking a division ticks it where you can see it',
+      await waitFor(() => step('division').classList.contains('done')));
+
+    // Past the profile nudge; the session question is next in the queue.
+    await waitFor(() => /Later/.test((d.getElementById('ob-later') || {}).textContent || ''));
+    const later = d.getElementById('ob-later');
+    if (later) later.click();
+    const rsvp = await waitFor(() => d.getElementById('ss-yes'));
+    if (rsvp && step('session')) {
+      d.getElementById('ss-yes').click();
+      check('answering the onboarding session ticks that step too',
+        await waitFor(() => step('session').classList.contains('done')));
+    } else {
+      console.log('  (no onboarding session coming up; the RSVP half is skipped)');
+    }
+    check('and the count moves with them',
+      /^[1-9]\d* of \d+ done$/.test((d.querySelector('#start-here .start-count') || {}).textContent || ''),
+      (d.querySelector('#start-here .start-count') || {}).textContent);
+
+    /* The last box ticked while you watch. The server now says show: false,
+       and a card that vanished at that instant would look like a glitch, so
+       it stays for this visit and says so. Fed directly, because arranging
+       for every other step to be done first is a test of something else. */
+    const one = done => ({ show: !done, links: [],
+                           steps: [{ id: 'last', label: 'Last', href: '/', done }] });
+    w.renderStart(one(false));
+    w.renderStart(one(true));
+    const card = d.getElementById('start-here');
+    check('finishing the last step says "All done" rather than vanishing',
+      card.style.display !== 'none' && /All done/.test(card.textContent), card.textContent.trim().slice(0, 60));
+    check('with the step just ticked marked as such',
+      !!d.querySelector('#start-here [data-step="last"].just-done'));
+    w.renderStart(one(true));
+    check('and on the next redraw it is gone', card.style.display === 'none');
+    w.close();
+  }
+
   process.exit(summary('pages') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

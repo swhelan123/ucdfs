@@ -4134,9 +4134,11 @@ async def api_meetings(request: Request):
     def special(d):
         if not _session_day(d):
             return None
-        captains = _captain_ids()
+        captains = _captain_titles()
+        # `title` is what the list tags somebody with: Captain, Team Principal
+        # or Technical Director. Empty for a new member.
         invited = [{"profile_id": pid, "name": p.get("name") or "Someone",
-                    "photo": p.get("photo"), "captain": pid in captains}
+                    "photo": p.get("photo"), "title": captains.get(pid, "")}
                    for pid, p in people.items()
                    if _session_invited({"id": pid, "created_at": p.get("created_at")}, s, captains)]
         invited.sort(key=lambda p: p["name"].lower())
@@ -4267,19 +4269,38 @@ def _session_public(s: dict) -> dict:
     return {"date": s["date"].isoformat(), "name": s["name"], "detail": s["detail"]}
 
 
-def _captain_ids() -> set:
-    """Granted captaincies, plus anyone whose card says Captain. The label is
-    self-set and grants nothing, which is fine here: being asked whether you
-    are coming is not a permission, and a captain who has not been assigned in
-    /admin yet should still be asked."""
-    ids = set(_captains().values())
+# Who counts as a captain for being invited and tagged: the division captains,
+# the Team Principal and the Technical Director. The team decided the last two
+# are captains for these purposes; see "Captaincy is granted, never claimed" in
+# CLAUDE.md for why that stops short of anything that grants access.
+CAPTAIN_LABELS = ("captain", "principal", "td")
+
+
+def _captain_titles() -> dict:
+    """{profile id: title} for everyone who counts as a captain here.
+
+    Granted captaincies, plus anyone whose card says Captain, Team Principal or
+    Technical Director. Those labels are self-set and grant nothing, which is
+    fine here: being asked whether you are coming is not a permission, a captain
+    not yet assigned in /admin should still be asked, and the principal and TD
+    have no granted seat to read at all. The title is what the list tags them
+    with, the more senior one where somebody holds two."""
+    titles = {pid: "Captain" for pid in _captains().values()}
     try:
-        rows = (sb().table("profile_details").select("id")
-                .eq("role_label", "captain").execute().data or [])
-        ids |= {r["id"] for r in rows if r.get("id")}
+        rows = (sb().table("profile_details").select("id,role_label")
+                .in_("role_label", list(CAPTAIN_LABELS)).execute().data or [])
     except Exception as e:
         logger.error(f"[session] captain labels failed: {e}")
-    return ids
+        rows = []
+    for r in rows:
+        role = ROLES_BY_VALUE.get(r.get("role_label") or "")
+        if not r.get("id") or not role:
+            continue
+        if r["role_label"] == "captain":
+            titles.setdefault(r["id"], role["label"])
+        else:
+            titles[r["id"]] = role["label"]
+    return titles
 
 
 def _is_new(profile: dict, s: dict) -> bool:
@@ -4289,10 +4310,10 @@ def _is_new(profile: dict, s: dict) -> bool:
         return False
 
 
-def _session_invited(profile: dict, s: dict, captains: Optional[set] = None) -> bool:
+def _session_invited(profile: dict, s: dict, captains: Optional[dict] = None) -> bool:
     if _is_new(profile, s):
         return True
-    return profile.get("id") in (captains if captains is not None else _captain_ids())
+    return profile.get("id") in (captains if captains is not None else _captain_titles())
 
 
 @app.get("/api/onboarding-session/me")

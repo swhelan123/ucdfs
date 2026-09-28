@@ -524,7 +524,8 @@ function buildSpecialList(day, el) {
   const yes   = people.filter(p => p.answered && p.attending).sort(byName);
   const no    = people.filter(p => p.answered && !p.attending).sort(byName);
   const quiet = people.filter(p => !p.answered).sort(byName);
-  const opts  = p => ({ week: false, tag: p.captain ? 'captain' : '' });
+  // Captain, Team Principal or Technical Director; nothing for a new member.
+  const opts  = p => ({ week: false, tag: p.title || '' });
 
   document.getElementById('list-label').textContent =
     (day.past ? 'Who was there · ' : "Who's coming · ") + fmtDay(day.date);

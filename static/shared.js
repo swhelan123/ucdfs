@@ -50,6 +50,8 @@
 
   var tourCfg = null;       // the tour this page registered, if any
   var tourAt  = 0;          // which card is on screen
+  var tourSteps = [];       // the steps this run shows; see tourOpen()
+  var tourRaf = 0;          // a pending re-placement, one per frame at most
 
   // ── Identity ─────────────────────────────────────────────────────────────
 
@@ -393,15 +395,37 @@
     /* Below .ob-wrap on purpose. The two should never be on screen together and
        whenOnboardingIdle() is what makes sure of it, but if that ever fails the
        question people cannot get past should be the one on top. */
-    '.ucdfs-tour-bg{position:fixed;inset:0;z-index:1990;background:rgba(15,23,42,.55);' +
-      '-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);' +
-      'display:none;align-items:center;justify-content:center;padding:20px;' +
-      'overflow-y:auto;' +
+    '.ucdfs-tour-bg{position:fixed;inset:0;z-index:1990;display:none;' +
       'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}' +
-    '.ucdfs-tour-bg.show{display:flex;}' +
-    '.ucdfs-tour{background:var(--card,#fff);color:var(--text,#0f172a);' +
-      'border-radius:18px;width:100%;max-width:420px;padding:22px;margin:auto;' +
-      'box-shadow:0 24px 60px rgba(15,23,42,.4);}' +
+    '.ucdfs-tour-bg.show{display:block;}' +
+    /* The dimming is the spotlight's shadow, not the layer's background, so
+       the hole it leaves is the one clear patch on the page. */
+    '.ucdfs-tour-spot{position:fixed;border-radius:14px;pointer-events:none;' +
+      'box-shadow:0 0 0 200vmax rgba(15,23,42,.6);' +
+      'transition:top .4s cubic-bezier(.2,.8,.2,1),left .4s cubic-bezier(.2,.8,.2,1),' +
+        'width .4s cubic-bezier(.2,.8,.2,1),height .4s cubic-bezier(.2,.8,.2,1);}' +
+    '.ucdfs-tour-bg.lit .ucdfs-tour-spot::after{content:"";position:absolute;inset:-4px;' +
+      'border-radius:17px;border:2px solid var(--indigo,#4f46e5);' +
+      'animation:ucdfsSpot 1.8s ease-out .4s infinite;opacity:0;}' +
+    '@keyframes ucdfsSpot{0%{opacity:.9;transform:scale(1)}' +
+      '70%,100%{opacity:0;transform:scale(1.04)}}' +
+    '.ucdfs-tour{position:fixed;top:0;left:0;box-sizing:border-box;' +
+      'width:360px;max-width:calc(100vw - 24px);padding:20px 20px 16px;' +
+      'background:var(--card,#fff);color:var(--text,#0f172a);border-radius:18px;' +
+      'box-shadow:0 24px 60px rgba(15,23,42,.4);' +
+      'transition:top .4s cubic-bezier(.2,.8,.2,1),left .4s cubic-bezier(.2,.8,.2,1);}' +
+    '.ucdfs-tour-bg.still .ucdfs-tour,.ucdfs-tour-bg.still .ucdfs-tour-spot{transition:none;}' +
+    '.ucdfs-tour.fresh .ucdfs-tour-h,.ucdfs-tour.fresh .ucdfs-tour-p,' +
+      '.ucdfs-tour.fresh .ucdfs-tour-art{animation:ucdfsFade .35s ease-out;}' +
+    '@keyframes ucdfsFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}' +
+    /* The arrow is a square turned 45 degrees, half of it under the card. */
+    '.ucdfs-tour-arrow{position:absolute;width:14px;height:14px;margin-left:-7px;' +
+      'background:var(--card,#fff);transform:rotate(45deg);display:none;}' +
+    '.ucdfs-tour-arrow.up{display:block;top:-6px;}' +
+    '.ucdfs-tour-arrow.down{display:block;bottom:-6px;}' +
+    '@media (prefers-reduced-motion:reduce){.ucdfs-tour,.ucdfs-tour-spot{transition:none;}' +
+      '.ucdfs-tour-bg.lit .ucdfs-tour-spot::after,.ucdfs-tour.fresh .ucdfs-tour-h,' +
+      '.ucdfs-tour.fresh .ucdfs-tour-p,.ucdfs-tour.fresh .ucdfs-tour-art{animation:none;}}' +
     '.ucdfs-tour-count{font-size:10.5px;font-weight:800;letter-spacing:.08em;' +
       'text-transform:uppercase;color:var(--muted,#64748b);}' +
     '.ucdfs-tour-h{font-size:17px;font-weight:800;margin:6px 0 8px;}' +
@@ -420,7 +444,10 @@
       'font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;}' +
     '.ucdfs-tour-skip{background:transparent;color:var(--muted,#64748b);padding-left:0;}' +
     '.ucdfs-tour-back{background:var(--bg,#eef2fb);color:var(--text,#0f172a);}' +
-    '.ucdfs-tour-next{background:var(--indigo,#4f46e5);color:#fff;}';
+    '.ucdfs-tour-next{background:var(--indigo,#4f46e5);color:#fff;}' +
+    '.ucdfs-tour-actions button:focus{outline:none;}' +
+    '.ucdfs-tour-actions button:focus-visible{outline:2px solid var(--indigo,#4f46e5);' +
+      'outline-offset:2px;}';
 
   function ensureRuntimeStyles() {
     if (document.getElementById('ucdfs-runtime-css')) return;
@@ -485,11 +512,11 @@
   /**
    * Resolves once the subteam question is done with the screen.
    *
-   * A brand-new member meets the subteam step and then a profile nudge on their
-   * first sign-in. A tour that auto-opens is a third overlay, and without this
-   * the three race each other in whatever order their fetches land. The order
-   * is fixed and deliberate: identity, then orientation, then the profile nudge
-   * that already sends people off-page anyway.
+   * A brand-new member meets the subteam step, then the onboarding session
+   * question, then the tour, on their first sign-in. Each waits on a fetch
+   * before it knows whether it has anything to show, and without this they
+   * race each other in whatever order the fetches land. The order is fixed and
+   * deliberate: who you are, what you are coming to, then where things are.
    */
   function whenOnboardingIdle() {
     var first = obIdle || Promise.resolve();
@@ -623,10 +650,19 @@
       }).then(function (r) {
         if (!r.ok) throw new Error('save failed');
         refreshUser();
-        step2(wrap, subteams, id);
+        /* Straight on to the next thing in the queue (the session question,
+           then the tour) rather than a "set up your profile" step: that one
+           sent people off to /profiles mid-sequence, so they missed the rest.
+           The profile is the first thing on the Start here checklist, and the
+           tour points at it. */
+        wrap.remove();
+        var s = null;
+        for (var i = 0; i < subteams.length; i++) if (subteams[i].id === id) s = subteams[i];
+        toast(s ? "You're on " + s.name + ' ' + s.icon : 'No problem. Pick one on your profile when you know');
         obCallbacks.forEach(function (cb) {
           try { cb(id); } catch (e) { /* one page's handler must not stop another */ }
         });
+        obIdleDone();
       }).catch(function () {
         buttons.forEach(function (b) { b.disabled = false; });
         toast("Couldn't save that. Try again");
@@ -639,25 +675,6 @@
     /* "Not sure yet" posts null and still marks them onboarded. It is an
        answer, not a skip: half of September's intake genuinely don't know. */
     wrap.querySelector('#ob-later').addEventListener('click', function () { pick(null); });
-  }
-
-  /* Straight into "finish your profile" rather than dropping them back on the
-     page. One sequence, so nobody is asked two unrelated questions on two
-     different days. */
-  function step2(wrap, subteams, picked) {
-    var s = null;
-    for (var i = 0; i < subteams.length; i++) if (subteams[i].id === picked) s = subteams[i];
-    wrap.querySelector('#ob-h').textContent = s ? "You're on " + s.name + ' ' + s.icon : 'Nice one';
-    wrap.querySelector('#ob-p').textContent =
-      'Add a photo and pick three prompts so people know who you are.';
-    /* Its own class, not .btn. The canvas tools have no shared.css to take
-       that from, and this overlay can appear on them. */
-    wrap.querySelector('#ob-opts').innerHTML =
-      '<a class="ob-cta" href="/profiles?edit=1">Set up my profile</a>';
-    var later = wrap.querySelector('#ob-later');
-    later.disabled = false;
-    later.textContent = 'Later';
-    later.onclick = function () { wrap.remove(); obIdleDone(); };
   }
 
   // ── Tours ────────────────────────────────────────────────────────────────
@@ -676,7 +693,13 @@
    *   key     namespaced into localStorage, and VERSIONED by convention, so
    *           rewriting the steps shows them again to people who saw the old
    *           ones.
-   *   steps   [{ t: title, p: body, art: glyph, sub: caption }]
+   *   steps   [{ t: title, p: body, art: glyph, sub: caption, el, optional }]
+   *           el: a selector, or a function returning an element, to point at.
+   *               The page dims around it, the card sits beside it with an
+   *               arrow, and moving between steps glides from one to the next.
+   *               A step without one is a card in the middle, as before.
+   *           optional: leave the step out when its element is not on the page,
+   *               instead of showing it in the middle.
    *   button  an existing help button, element or selector. The canvas tools
    *           style their own to match their header; everything else gets one
    *           injected into .header-inner.
@@ -735,6 +758,24 @@
     btn.addEventListener('click', function () { tourOpen(0); });
   }
 
+  /* The element a step points at, or null. `el` is a selector or a function
+     returning an element. One that is missing, or not drawn (display:none,
+     zero size), counts as missing. */
+  function tourTarget(s) {
+    if (!s || !s.el) return null;
+    var el = null;
+    try { el = typeof s.el === 'function' ? s.el() : document.querySelector(s.el); }
+    catch (e) { el = null; }
+    if (!el || !el.getClientRects || !el.getClientRects().length) return null;
+    var r = el.getBoundingClientRect();
+    return (r.width > 0 || r.height > 0) ? el : null;
+  }
+
+  function tourStill() {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (e) { return false; }
+  }
+
   function tourBuild() {
     var bg = document.getElementById('ucdfs-tour-bg');
     if (bg) return bg;
@@ -743,8 +784,13 @@
     bg.className = 'ucdfs-tour-bg';
     bg.id = 'ucdfs-tour-bg';
     bg.innerHTML =
-      '<div class="ucdfs-tour" role="dialog" aria-modal="true"' +
+      /* The spotlight: a box whose enormous shadow is the dimmed page, so the
+         box itself is the hole the thing being described shows through. It
+         never catches a click; the layer it sits in does. */
+      '<div class="ucdfs-tour-spot" id="ucdfs-tour-spot"></div>' +
+      '<div class="ucdfs-tour" id="ucdfs-tour" role="dialog" aria-modal="true"' +
           ' aria-labelledby="ucdfs-tour-title">' +
+        '<div class="ucdfs-tour-arrow" id="ucdfs-tour-arrow"></div>' +
         '<div class="ucdfs-tour-count" id="ucdfs-tour-count"></div>' +
         '<h3 class="ucdfs-tour-h" id="ucdfs-tour-title"></h3>' +
         '<p class="ucdfs-tour-p" id="ucdfs-tour-text"></p>' +
@@ -760,33 +806,38 @@
     document.body.appendChild(bg);
 
     bg.querySelector('#ucdfs-tour-next').addEventListener('click', function () {
-      if (tourAt === tourCfg.steps.length - 1) tourClose();
+      if (tourAt === tourSteps.length - 1) tourClose();
       else { tourAt++; tourRender(); }
     });
     bg.querySelector('#ucdfs-tour-back').addEventListener('click', function () {
       if (tourAt) { tourAt--; tourRender(); }
     });
     bg.querySelector('#ucdfs-tour-skip').addEventListener('click', tourClose);
-    bg.addEventListener('mousedown', function (e) { if (e.target === bg) tourClose(); });
+    /* Deliberately no close on a click outside the card. The layer covers the
+       whole page now, and a tour dismissed by a stray tap is one people never
+       find again. Skip and Escape are the ways out. */
     document.addEventListener('keydown', function (e) {
       if (!bg.classList.contains('show')) return;
       if (e.key === 'Escape') tourClose();
-      if (e.key === 'ArrowRight' && tourAt < tourCfg.steps.length - 1) { tourAt++; tourRender(); }
-      if (e.key === 'ArrowLeft'  && tourAt > 0)                        { tourAt--; tourRender(); }
+      if (e.key === 'ArrowRight' && tourAt < tourSteps.length - 1) { tourAt++; tourRender(); }
+      if (e.key === 'ArrowLeft'  && tourAt > 0)                    { tourAt--; tourRender(); }
     });
     return bg;
   }
 
   function tourRender() {
-    var steps = tourCfg.steps, s = steps[tourAt];
+    var steps = tourSteps, s = steps[tourAt];
+    var card = document.getElementById('ucdfs-tour');
     document.getElementById('ucdfs-tour-count').textContent =
       'Step ' + (tourAt + 1) + ' of ' + steps.length;
     document.getElementById('ucdfs-tour-title').textContent = s.t;
     document.getElementById('ucdfs-tour-text').textContent  = s.p;
     /* esc() because a step is page-authored content and this is innerHTML. The
-       <small> is the only markup here that has to survive. */
-    document.getElementById('ucdfs-tour-art').innerHTML =
-      esc(s.art || '') + '<small>' + esc(s.sub || '') + '</small>';
+       <small> is the only markup here that has to survive. A step pointing at
+       the real thing needs no picture of it, so the box goes when it is empty. */
+    var art = document.getElementById('ucdfs-tour-art');
+    art.innerHTML = esc(s.art || '') + '<small>' + esc(s.sub || '') + '</small>';
+    art.style.display = (s.art || s.sub) ? '' : 'none';
 
     var dots = document.getElementById('ucdfs-tour-dots');
     dots.innerHTML = '';
@@ -800,19 +851,162 @@
     document.getElementById('ucdfs-tour-back').style.visibility = tourAt ? '' : 'hidden';
     document.getElementById('ucdfs-tour-next').textContent =
       tourAt === steps.length - 1 ? 'Got it' : 'Next';
+
+    // The words fade in as the card moves, rather than swapping mid-glide.
+    card.classList.remove('fresh');
+    void card.offsetWidth;
+    card.classList.add('fresh');
+
+    var target = tourTarget(s);
+    if (target) tourScrollTo(target);
+    tourPlace();
+  }
+
+  /* Bring the target on screen with room for the card beside it, and only
+     when it needs it: a tour that scrolls for the sake of it loses your place.
+     Something taller than half the screen (the whole grid) lines up near the
+     top instead of the middle, so its start is what you see. */
+  function tourScrollTo(el) {
+    var r = el.getBoundingClientRect(), vh = window.innerHeight;
+    var inset = tourInset(el);
+    var card = document.getElementById('ucdfs-tour');
+    var need = (card ? card.offsetHeight : 260) + 30;
+    /* On screen, clear of the header, with room for the card on one side of
+       it: leave the page be. Anything in the sticky header itself qualifies,
+       and never needs a scroll. */
+    if (r.top >= inset && r.bottom <= vh &&
+        (vh - r.bottom >= need || r.top - inset >= need)) return;
+    var dy = r.height > (vh - inset) * 0.5 ? r.top - inset - 16
+           : (r.top + r.height / 2) - (inset + (vh - inset) * 0.35);
+    try { window.scrollBy({ top: dy, behavior: tourStill() ? 'auto' : 'smooth' }); }
+    catch (e) { window.scrollBy(0, dy); }
+  }
+
+  /* How much of the top of the screen a sticky or fixed header covers. A
+     target scrolled underneath one is not really on screen, and a card placed
+     there would sit on top of it. Nothing, for a target inside the header. */
+  function tourInset(target) {
+    var inset = 0, heads = document.querySelectorAll('header, #hdr');
+    for (var i = 0; i < heads.length; i++) {
+      var h = heads[i], pos = '';
+      try { pos = window.getComputedStyle(h).position; } catch (e) { pos = ''; }
+      if ((pos === 'sticky' || pos === 'fixed') && !(target && h.contains(target))) {
+        inset = Math.max(inset, h.getBoundingClientRect().bottom);
+      }
+    }
+    return Math.max(0, inset);
+  }
+
+  /* Where the hole and the card go for the current step. Called on every step,
+     and on every scroll and resize while the tour is open, so both follow the
+     page. The CSS transitions are what make the move a glide. */
+  function tourPlace() {
+    tourRaf = 0;
+    var bg = document.getElementById('ucdfs-tour-bg');
+    if (!bg || !bg.classList.contains('show')) return;
+    var spot  = document.getElementById('ucdfs-tour-spot');
+    var card  = document.getElementById('ucdfs-tour');
+    var arrow = document.getElementById('ucdfs-tour-arrow');
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var cw = card.offsetWidth, ch = card.offsetHeight, room = 12;
+    var target = tourTarget(tourSteps[tourAt]);
+    bg.classList.toggle('lit', !!target);
+    tourMark(target);
+
+    if (!target) {
+      /* Nothing to point at: a hole of no size in the middle dims the whole
+         page, and the card sits over it. It is also where the first move
+         starts from, which is what makes it read as an iris opening. */
+      tourBox(spot, vh / 2, vw / 2, 0, 0);
+      card.style.left = Math.max(room, (vw - cw) / 2) + 'px';
+      card.style.top  = Math.max(room, (vh - ch) / 2) + 'px';
+      arrow.className = 'ucdfs-tour-arrow';
+      return;
+    }
+
+    var r = target.getBoundingClientRect(), pad = 8, edge = 6;
+    var inset  = tourInset(target);
+    var top    = Math.max(r.top - pad, inset + edge);
+    var bottom = Math.max(Math.min(r.bottom + pad, vh - edge), top);
+    var left   = Math.max(r.left - pad, edge);
+    var right  = Math.max(Math.min(r.right + pad, vw - edge), left);
+    tourBox(spot, top, left, right - left, bottom - top);
+
+    /* Under the target if the card fits there, over it if not, and when the
+       target fills the screen (the grid on a phone) along the bottom edge,
+       on top of it, with no arrow because there is nowhere for one to point. */
+    var gap = 16, where = vh - bottom >= ch + gap + room ? 'below'
+                        : top - inset >= ch + gap + room ? 'above' : 'over';
+    var mid = (left + right) / 2;
+    var x = Math.min(Math.max(mid - cw / 2, room), vw - cw - room);
+    var y = where === 'below' ? bottom + gap
+          : where === 'above' ? top - gap - ch
+          : vh - ch - room;
+    card.style.left = Math.max(x, room) + 'px';
+    card.style.top  = Math.max(y, room) + 'px';
+    arrow.className = 'ucdfs-tour-arrow' +
+      (where === 'below' ? ' up' : where === 'above' ? ' down' : '');
+    arrow.style.left = Math.min(Math.max(mid - x, 22), cw - 22) + 'px';
+  }
+
+  /* The element being pointed at carries .ucdfs-tour-target while it is, so a
+     page can lift something that is deliberately faint the rest of the time
+     (the dashboard's star). Nothing here styles it. */
+  var tourMarked = null;
+  function tourMark(el) {
+    if (tourMarked === el) return;
+    if (tourMarked) tourMarked.classList.remove('ucdfs-tour-target');
+    tourMarked = el || null;
+    if (tourMarked) tourMarked.classList.add('ucdfs-tour-target');
+  }
+
+  function tourBox(el, top, left, w, h) {
+    el.style.top = top + 'px';
+    el.style.left = left + 'px';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+  }
+
+  function tourSchedule() {
+    if (tourRaf) return;
+    tourRaf = window.requestAnimationFrame
+      ? window.requestAnimationFrame(tourPlace) : setTimeout(tourPlace, 16);
   }
 
   function tourOpen(at) {
     if (!tourCfg) return;
-    tourAt = at || 0;
+    /* Worked out once per run, so "Step 2 of 7" cannot change under you. A
+       step marked optional whose element is not on the page right now (the
+       checklist only exists for new accounts) is left out, rather than shown
+       pointing at nothing. */
+    tourSteps = tourCfg.steps.filter(function (s) { return !s.optional || tourTarget(s); });
+    if (!tourSteps.length) return;
+    tourAt = Math.min(at || 0, tourSteps.length - 1);
     var bg = tourBuild();
-    tourRender();
-    bg.classList.add('show');
+    var opening = !bg.classList.contains('show');
+    if (opening) {
+      /* Placed once with transitions off, so it opens where it is instead of
+         sliding in from wherever the last run left it. */
+      bg.classList.add('still');
+      bg.classList.add('show');
+      tourRender();
+      void bg.offsetWidth;
+      bg.classList.remove('still');
+      window.addEventListener('resize', tourSchedule);
+      window.addEventListener('scroll', tourSchedule, true);
+    } else {
+      tourRender();
+    }
+    try { document.getElementById('ucdfs-tour-next').focus({ preventScroll: true }); }
+    catch (e) { /* focus options unsupported: the tour still works */ }
   }
 
   function tourClose() {
     var bg = document.getElementById('ucdfs-tour-bg');
     if (bg) bg.classList.remove('show');
+    tourMark(null);
+    window.removeEventListener('resize', tourSchedule);
+    window.removeEventListener('scroll', tourSchedule, true);
     /* Skipping counts as seen. A tutorial that reopens because you dismissed it
        is one people learn to dread; the ? is how you get it back. */
     try { localStorage.setItem('ucdfs_tour_' + tourCfg.key, '1'); }

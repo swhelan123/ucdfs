@@ -607,20 +607,28 @@ system on a card page and still look right without it.
 ### Only one overlay at a time, and shared.js owns the queue
 
 `shared.js` can put three different things on screen unprompted: the subteam
-question, the profile nudge it chains into, and `UCDFS.tour()`. A brand-new
+question, the onboarding-session question, and `UCDFS.tour()`. A brand-new
 member's first sign-in triggers all three.
 
 **They must not each decide for themselves when to appear.** Each waits on a
 round trip before it knows whether it has anything to show, so left alone they
 race on whichever response lands first, and the loser draws underneath a modal
-that is already up. The order is fixed and deliberate: identity, then
-orientation, then the profile nudge, which already sends people off-page anyway.
+that is already up. The order is fixed and deliberate: who you are (division),
+what you are coming to (the session), then where things are (the tour).
+
+**There is no "set up your profile" step any more.** It used to follow the
+division question, and its button sent people to `/profiles` mid-sequence, so
+they answered the session there and never saw the tour, which only runs on the
+dashboard. The profile is the first thing on the Start here checklist, and the
+tour stops on the checklist to say so. Do not put a step back between these
+that navigates away.
 
 `whenOnboardingIdle()` is the join point. It returns a promise that settles once
-the subteam step is done with the screen, and **null means idle already** — the
-common case is a member who answered weeks ago, and they should not wait on a
-promise to find that out. Anything added later that wants the screen on load
-joins this queue rather than calling `document.body.appendChild` and hoping.
+the subteam step and the session question are both done with the screen, and
+**null means idle already** — the common case is a member who answered weeks
+ago, and they should not wait on a promise to find that out. Anything added
+later that wants the screen on load joins this queue rather than calling
+`document.body.appendChild` and hoping.
 
 This is not theoretical: with the gate removed, `tests/suite-pages.js` fails on
 *"the tour does not stack on top of it"* — which is the whole reason that check
@@ -632,6 +640,33 @@ declares its own five cards and hands over its own `?` button, because the
 canvas tools style one to match their header. Everything else gets a `?`
 injected into `.header-inner`. Folding every applet's steps into one portal tour
 would make something nobody reaches the end of.
+
+**A step can point at the page.** Given `el` (a selector, or a function that
+returns an element), the page dims around it, the card sits beside it with an
+arrow, and Next glides both to the next target. A step without one is a card in
+the middle, which is all `pt.html` and `purchases.html` use.
+
+- The dimming is one element's enormous `box-shadow`; the element itself is the
+  hole. A centred step makes it a hole of no size in the middle, which is why
+  the first move reads as an iris opening. CSS transitions do all the motion.
+- `optional: true` drops a step whose element is not on screen **when the tour
+  opens**, so "Step 2 of 7" cannot change mid-run. The checklist step uses it;
+  it only exists for new accounts.
+- It scrolls only when it has to, and it knows about sticky headers
+  (`tourInset()`): a target tucked under the header is not on screen. That was
+  a real bug: the grid step scrolled the chips row under the header, and the
+  next step lit the header instead.
+- The current target carries `.ucdfs-tour-target`, for a page to lift something
+  that is deliberately faint the rest of the time. The dashboard's star uses it.
+- No close on a click outside the card. The layer covers the whole page, and a
+  tour dismissed by a stray tap is one nobody finds again. Skip and Escape.
+- jsdom has no layout, so every target looks missing there. The suites check the
+  queue and the count; whether the light lands in the right place was checked
+  by screenshot, desktop and phone, and should be again after changing a step.
+
+The portal tour starts from `boot()` **after** `reveal()`. Until then the page is
+invisible, and a spotlight on something invisible is a dark screen with a hole
+in it.
 
 Seen-ness is `localStorage`, keyed `ucdfs_tour_<key>` and versioned by
 convention, because it is a per-browser preference and not identity: getting it

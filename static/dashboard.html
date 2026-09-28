@@ -248,6 +248,8 @@ body.ready #load-veil {
 .fav-btn:hover { background: var(--bg); opacity: 1 !important; transform: scale(1.12); }
 .fav-btn.on, .applet-slot:hover .fav-btn.on { opacity: 1; color: var(--amber); }
 .fav-btn:disabled { cursor: wait; }
+/* Faint on purpose the rest of the time; lit while the tour points at it. */
+.fav-btn.ucdfs-tour-target { opacity: 1; color: var(--amber); transform: scale(1.15); }
 
 /* The empty state carries its weight: it is the only thing on the page that
    says the star exists, so it stays put rather than collapsing the section.
@@ -941,6 +943,8 @@ async function boot(user) {
   } finally {
     reveal();
   }
+  // Only once the page is drawn and showing; see startTour().
+  startTour();
 }
 
 async function draw(user) {
@@ -1002,63 +1006,81 @@ async function draw(user) {
     // "Not sure yet" (picked === null) is an answer too, and ticks the step.
     refreshStart();
   });
+}
 
-  /* Registered after the paint above, so the tour describes a page that has
-     actually drawn. shared.js holds it back until the subteam question is done
-     with the screen, so a brand-new member gets one overlay at a time in a
-     fixed order rather than three racing their fetches.
+/* The portal tour. It points at the real things on this page rather than
+   describing them from a card in the middle: the page dims, the one part being
+   explained stays lit, and each Next glides the light to the next part. Steps
+   marked optional drop out when their element is not on screen (the checklist
+   only exists for new accounts).
 
-     Six cards on the portal itself. Deliberately NOT a tour of every applet:
-     each of those describes its own canvas from its own ? button, and stapling
-     them together makes something nobody reaches the end of. */
+   Started from boot(), after reveal(): until then the page is invisible, and a
+   spotlight on something invisible is a dark screen with a hole in it.
+   shared.js still holds it back until the division and session questions are
+   done with the screen, so a new member gets them in order: who you are, what
+   you are coming to, then where things are.
+
+   Deliberately NOT a tour of every applet: each of those describes itself from
+   its own ?, and stapling them together makes something nobody finishes. */
+function startTour() {
   UCDFS.tour({
-    key: 'portal_v1',
+    key: 'portal_v2',
     steps: [
       {
-        t: 'Everything in one place',
-        p: 'This is the team portal: every tool we run, behind one sign-in. It holds '
-         + 'the things with a status, an owner or a deadline. Chat and files stay in '
-         + 'Teams, and anything that is really a document is linked from here rather '
-         + 'than copied into it.',
+        t: 'Welcome to the team portal',
+        p: 'Every tool the team runs, behind one sign-in: the things with a status, '
+         + 'an owner or a deadline. Chat and files stay in Teams. This takes a '
+         + 'minute, and you can bring it back any time.',
         art: '⌂', sub: 'Teams for talking, this for tracking',
       },
       {
-        t: 'The grid is your tools',
-        p: 'Each card opens a tool, and most show a live number on the front so you can '
-         + 'see where something is without opening it. You only see what your account '
-         + 'can actually open, so the grid is shorter for some people than others and '
-         + 'nothing here will refuse you.',
-        art: '▦ ▦ ▦', sub: 'Dimmed cards are real but dormant',
+        el: '#start-here', optional: true,
+        t: 'Start here',
+        p: 'Your first week, as a checklist. Each box ticks itself when you do the '
+         + 'thing, so there is nothing to tick by hand. Start with a photo and a '
+         + 'prompt or two, so people can put a face to your name.',
       },
       {
+        el: '#applet-grid',
+        t: 'Your tools',
+        p: 'Each card opens a tool, and most show a live number on the front, so you '
+         + 'can see where something stands without opening it. You only see what '
+         + 'your account can open: nothing here will refuse you.',
+      },
+      {
+        el: '#subteam-chips',
         t: 'Filter to your division',
-        p: 'The chips under Tools narrow the page to what matters to your division, and '
-         + 'start on the one you picked when you signed up. All shows everything. It is '
-         + 'about relevance and never about permission: nothing is hidden from you by a '
-         + 'chip, it is only pushed out of the way.',
-        art: '🏎️ ⚙️ 📋', sub: 'Remembered per device, not per account',
+        p: 'These narrow the page to your division, starting on the one you picked. '
+         + 'All shows everything. It is about relevance, never permission: a chip '
+         + 'moves things out of the way, it never hides them from you.',
       },
       {
+        el: () => document.querySelector('#applet-grid .fav-btn'),
         t: 'Pin what you use',
-        p: 'The ☆ on any card copies it to Favourites at the top of the page. Most people '
-         + 'live in two or three tools and scroll past the rest, so pin those on your '
-         + 'first day and the page becomes about half as long.',
-        art: '☆ → ★', sub: 'Follows your account onto any device',
+        p: 'The star copies a card to Favourites at the top of the page. Most people '
+         + 'live in two or three tools, so pin those and the page gets half as '
+         + 'long. It follows your account onto any device.',
       },
       {
-        t: 'What is happening now',
-        p: 'The top of the page carries the countdown to competition, who is in the '
-         + 'workshop right now, and Recent activity underneath: who ticked off what, '
-         + 'across every tool. It is the fastest way to see whether anything moved while '
-         + 'you were away.',
-        art: '⏳ ⚡', sub: 'Every tick you make shows up here',
-      },
-      {
+        el: () => {
+          const a = document.querySelector('a.applet[href="/profiles"]');
+          return a && a.closest('.applet-slot');
+        },
+        optional: true,
         t: 'Who everyone is',
-        p: 'Team Profiles is the directory: names, faces, what people are into and what '
-         + 'they know how to do. Worth filling in yours early, because it is how somebody '
-         + 'finds the one person who has done this before.',
-        art: '?', sub: 'The ? up top brings this back any time',
+        p: 'Team Profiles is the directory: names, faces, and who knows how to do '
+         + 'what. It is how you find the one person who has done this before.',
+      },
+      {
+        el: '#feed',
+        t: 'What is happening',
+        p: 'Who ticked off what, across every tool, newest first. The fastest way to '
+         + 'see whether anything moved while you were away.',
+      },
+      {
+        el: '.ucdfs-help',
+        t: 'That is the tour',
+        p: 'The ? up here brings it back whenever you want it. Welcome to the team.',
       },
     ],
   });

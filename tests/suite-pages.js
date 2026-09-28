@@ -417,7 +417,7 @@ const PAGES = [
     // auto-open, not that six Next clicks work.
     const seen = await open('/', {
       setCookies: answered, failOnPrompt: true,
-      storage: { ucdfs_tour_portal_v1: '1' },
+      storage: { ucdfs_tour_portal_v2: '1' },
     });
     await new Promise(r => setTimeout(r, 1200));
     check('a tour already seen does not reopen',
@@ -446,18 +446,24 @@ const PAGES = [
     check('picking a division ticks it where you can see it',
       await waitFor(() => step('division').classList.contains('done')));
 
-    // Past the profile nudge; the session question is next in the queue.
-    await waitFor(() => /Later/.test((d.getElementById('ob-later') || {}).textContent || ''));
-    const later = d.getElementById('ob-later');
-    if (later) later.click();
+    /* The order a new member meets things in: division, then the session,
+       then the tour. There used to be a "set up your profile" step between the
+       first two, and its button sent people to /profiles mid-sequence, so they
+       never saw the rest. The checklist carries the profile now. */
+    check('picking a division closes the question rather than asking about the profile',
+      await waitFor(() => !d.getElementById('onboard')) && !d.querySelector('a.ob-cta[href^="/profiles"]'));
     const rsvp = await waitFor(() => d.getElementById('ss-yes'));
     if (rsvp && step('session')) {
+      check('the onboarding session is asked next', true);
+      check('with the tour held back behind it', !d.querySelector('.ucdfs-tour-bg.show'));
       d.getElementById('ss-yes').click();
-      check('answering the onboarding session ticks that step too',
+      check('answering it ticks that step too',
         await waitFor(() => step('session').classList.contains('done')));
     } else {
       console.log('  (no onboarding session coming up; the RSVP half is skipped)');
     }
+    check('and then the tour opens by itself',
+      await waitFor(() => d.querySelector('.ucdfs-tour-bg.show')));
     check('and the count moves with them',
       /^[1-9]\d* of \d+ done$/.test((d.querySelector('#start-here .start-count') || {}).textContent || ''),
       (d.querySelector('#start-here .start-count') || {}).textContent);

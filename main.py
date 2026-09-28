@@ -222,6 +222,21 @@ MEETING_DAYS = (1, 3)
 # be able to answer for last Thursday.
 MEETING_WEEKS_BACK = 1
 MEETING_WEEKS_FWD  = 1
+
+# A one-off session that a specific group is asked about on sign-in, until they
+# answer. Answers go in meeting_responses like any other session, so no
+# migration; the meetings page, its history and the dashboard tile all key on
+# MEETING_DAYS dates, so a row on another weekday is invisible to them.
+#
+# Who is asked: anyone who signed up on or after `new_since`, plus every
+# captain. The prompt stops by itself once `date` has passed. For the next
+# intake, change the dates here; set it to None to switch it off.
+ONBOARDING_SESSION = {
+    "date":      date(2026, 9, 30),
+    "name":      "New member onboarding",
+    "detail":    "Engineering Building 012, 5–7pm",
+    "new_since": date(2026, 9, 21),
+}
 MAX_REASON  = 300
 MAX_SUMMARY = 1000
 
@@ -4147,6 +4162,140 @@ async def api_meetings_week_note(request: Request):
     except Exception as e:
         logger.error(f"[meetings] week note failed for {who} on {week}: {e}")
         raise HTTPException(503, "Couldn't save that. Has migration 012 been applied?")
+    return {"ok": True}
+
+
+# ── The onboarding session ───────────────────────────────────────────────────
+# See ONBOARDING_SESSION. The prompt that asks about it lives in shared.js and
+# calls /me on every page load, so /me does no database work at all once the
+# session has passed or when it is switched off.
+
+def _session_upcoming() -> Optional[dict]:
+    s = ONBOARDING_SESSION
+    if not s or s["date"] < datetime.now(TEAM_TZ).date():
+        return None
+    return s
+
+
+def _session_public(s: dict) -> dict:
+    return {"date": s["date"].isoformat(), "name": s["name"], "detail": s["detail"]}
+
+
+def _captain_ids() -> set:
+    """Granted captaincies, plus anyone whose card says Captain. The label is
+    self-set and grants nothing, which is fine here: being asked whether you
+    are coming is not a permission, and a captain who has not been assigned in
+    /admin yet should still be asked."""
+    ids = set(_captains().values())
+    try:
+        rows = (sb().table("profile_details").select("id")
+                .eq("role_label", "captain").execute().data or [])
+        ids |= {r["id"] for r in rows if r.get("id")}
+    except Exception as e:
+        logger.error(f"[session] captain labels failed: {e}")
+    return ids
+
+
+def _is_new(profile: dict, s: dict) -> bool:
+    try:
+        return date.fromisoformat(str(profile.get("created_at") or "")[:10]) >= s["new_since"]
+    except ValueError:
+        return False
+
+
+def _session_invited(profile: dict, s: dict, captains: Optional[set] = None) -> bool:
+    if _is_new(profile, s):
+        return True
+    return profile.get("id") in (captains if captains is not None else _captain_ids())
+
+
+@app.get("/api/onboarding-session/me")
+async def api_session_me(request: Request):
+    """Whether shared.js should ask this person about the session."""
+    s = _session_upcoming()
+    if not s:
+        return {"ask": False}
+    me = current_profile(request)
+    if not _session_invited(me, s):
+        return {"ask": False}
+    try:
+        rows = (sb().table("meeting_responses").select("id")
+                .eq("profile_id", me["id"]).eq("meeting_date", s["date"].isoformat())
+                .execute().data or [])
+    except Exception as e:
+        # Unreadable means we cannot tell whether they answered. Not asking is
+        # the quieter failure than asking on every page load forever.
+        logger.error(f"[session] answer lookup failed: {e}")
+        return {"ask": False}
+    return {"ask": not rows, "session": _session_public(s)}
+
+
+@app.get("/api/onboarding-session")
+async def api_session():
+    """Who is invited and what each of them said, for the meetings page.
+    Visible to the whole team, like every other session's answers."""
+    s = _session_upcoming()
+    if not s:
+        return {"session": None, "people": []}
+    captains = _captain_ids()
+    try:
+        profiles = (sb().table("profiles").select("id,first_name,last_name,created_at")
+                    .execute().data or [])
+        rows = (sb().table("meeting_responses").select("*")
+                .eq("meeting_date", s["date"].isoformat()).execute().data or [])
+    except Exception as e:
+        logger.error(f"[session] roster failed: {e}")
+        return {"session": _session_public(s), "people": []}
+    people  = _people_by_id()
+    answers = {r.get("profile_id"): r for r in rows}
+    out = []
+    for p in profiles:
+        if not _session_invited(p, s, captains):
+            continue
+        a = answers.get(p["id"])
+        who = people.get(p["id"]) or {}
+        out.append({
+            "profile_id": p["id"],
+            "name":       who.get("name") or "Someone",
+            "photo":      who.get("photo"),
+            "captain":    p["id"] in captains,
+            "attending":  a.get("attending") if a else None,
+            "reason":     (a or {}).get("reason") or "",
+        })
+    out.sort(key=lambda r: r["name"].lower())
+    return {"session": _session_public(s), "people": out}
+
+
+@app.post("/api/onboarding-session/respond")
+async def api_session_respond(request: Request):
+    """Your own answer only. There is no profile_id and no override: an admin
+    tidying the list can ask the person, and nothing here is worth a second
+    privileged write path."""
+    s = _session_upcoming()
+    if not s:
+        raise HTTPException(400, "There is no upcoming session to answer for")
+    me = current_profile(request)
+    if not _session_invited(me, s):
+        raise HTTPException(403, "This session is for new members and captains")
+    b = await request.json()
+    if not isinstance(b.get("attending"), bool):
+        raise HTTPException(400, "attending must be true or false")
+    attending = b["attending"]
+    reason = " ".join((b.get("reason") or "").split())[:MAX_REASON]
+    if not attending and not reason:
+        raise HTTPException(400, "Say why you can't make it")
+    try:
+        sb().table("meeting_responses").upsert({
+            "profile_id": me["id"], "meeting_date": s["date"].isoformat(),
+            "attending": attending, "reason": reason,
+            # updated_at left to the database; see api_meetings_respond.
+        }, on_conflict="profile_id,meeting_date").execute()
+    except Exception as e:
+        logger.error(f"[session] respond failed for {me['id']}: {e}")
+        raise HTTPException(503, "Couldn't save that. Try again in a moment")
+    log_activity("meetings", _me_name(request),
+                 "is coming to" if attending else "can't make",
+                 s["name"])
     return {"ok": True}
 
 

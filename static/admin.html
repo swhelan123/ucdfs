@@ -162,6 +162,12 @@
   background: var(--card); border: 1px solid var(--border); border-radius: 14px;
 }
 .note b { color: var(--text); }
+.signup-check { padding: 14px; }
+.signup-check textarea { width: 100%; box-sizing: border-box; resize: vertical;
+                         font-family: inherit; margin-bottom: 10px; }
+.su-head { font-weight: 800; font-size: 0.85rem; margin: 14px 0 6px; }
+.su-list { font-size: 0.82rem; line-height: 1.7; color: var(--muted); word-break: break-all; }
+.su-list b { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -215,6 +221,19 @@
       <br><br>
       The <b>Operations</b> captain is also the second signature on anything
       over the threshold, so that slot carries more than its own division.
+    </div>
+
+    <div class="section-label">Who hasn't signed up?</div>
+    <div class="card signup-check">
+      <textarea class="text-input" id="signup-emails" rows="5"
+                placeholder="Paste the emails of everyone selected: one per line, or straight from a spreadsheet column or an email"></textarea>
+      <button class="btn btn-dark btn-sm" id="signup-btn" type="button" onclick="signupCheck(this)">Check</button>
+      <div id="signup-result"></div>
+    </div>
+    <div class="note">
+      Nothing you paste is saved. Addresses are matched exactly, so someone who
+      signed up with a different address than the one on your list shows up as
+      missing. Check the <b>Joined</b> list before chasing anyone.
     </div>
 
     <div class="section-label">Dashboard blocks</div>
@@ -810,6 +829,37 @@ async function load() {
    the same kind of thing: something an admin grants, never something anyone
    claims for themselves. */
 let CAPTAINS = [];
+
+async function signupCheck(btn) {
+  const out = document.getElementById('signup-result');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/signup-check', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ emails: document.getElementById('signup-emails').value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || "Couldn't check that");
+    if (!d.checked) { out.innerHTML = '<div class="su-head">No email addresses found in that.</div>'; return; }
+    const esc = UCDFS.esc;
+    out.innerHTML =
+      `<div class="su-head">Not signed up yet: ${d.missing.length} of ${d.checked}</div>` +
+      (d.missing.length
+        ? `<div class="su-list">${d.missing.map(esc).join('<br>')}</div>
+           <button class="btn btn-ghost btn-sm" type="button" id="su-copy" style="margin-top:8px">Copy these addresses</button>`
+        : '<div class="su-list">Everyone on the list has an account.</div>') +
+      `<div class="su-head">Joined: ${d.joined.length}</div>` +
+      `<div class="su-list">${d.joined.map(j => `<b>${esc(j.name || j.email)}</b> · ${esc(j.email)}`).join('<br>') || 'Nobody yet.'}</div>`;
+    const copy = document.getElementById('su-copy');
+    if (copy) copy.onclick = () => navigator.clipboard.writeText(d.missing.join('; '))
+      .then(() => UCDFS.toast('Copied. Paste them into the To: line'))
+      .catch(() => UCDFS.toast("Couldn't copy. Select them above instead"));
+  } catch (e) {
+    UCDFS.toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 async function loadCaptains() {
   const el = document.getElementById('captains');

@@ -387,6 +387,18 @@ APPLETS = [
         "subteams": ["ops"],
     },
     {
+        "id":     "glossary",
+        "name":   "Glossary",
+        "icon":   "📖",
+        "route":  "/glossary",
+        "file":   "glossary.html",
+        "blurb":  "What people mean by TSAL, BSPD, scrutineering and the rest",
+        "accent": "teal",
+        "status": "live",
+        "subteams": ["all"],
+        "group":  "reference",
+    },
+    {
         "id":     "admin",
         "name":   "Admin",
         "icon":   "🔑",
@@ -2882,6 +2894,7 @@ async def api_profile_subteam(request: Request):
     uid = me["id"]
     b   = await request.json()
     subteam = _clean_subteam(b.get("subteam"))
+    first_time = not _get_details(uid).get("onboarded_at")
 
     try:
         supabase.table("profiles").update({"subteam": subteam}).eq("id", uid).execute()
@@ -2893,6 +2906,14 @@ async def api_profile_subteam(request: Request):
     except Exception as e:
         logger.error(f"[profiles] subteam pick failed for {uid}: {e}")
         raise HTTPException(503, "Couldn't save that. Has migration 003 been applied?")
+
+    # A new face, announced once, so the team knows who to say hello to. Only
+    # the first answer: this endpoint is the first-sign-in question, and a
+    # later change of division is not news.
+    if first_time:
+        division = SUBTEAMS_BY_ID.get(subteam or "")
+        log_activity("profiles", _me_name(request), "joined",
+                     division["name"] if division else "the team")
 
     fresh = _get_profile(uid) or {**me, "subteam": subteam}
     response = JSONResponse({"ok": True, "profile": _public_profile(fresh)})
@@ -4297,6 +4318,115 @@ async def api_session_respond(request: Request):
                  "is coming to" if attending else "can't make",
                  s["name"])
     return {"ok": True}
+
+
+# ── Start here ───────────────────────────────────────────────────────────────
+# A checklist on a new account's dashboard. Every counted step is ticked from
+# data the site already holds, never from a click on the list itself: a box
+# you tick yourself says you meant to, the photo being there says you did.
+# Things that cannot be checked (reading the glossary, finding your captain)
+# are links underneath rather than boxes that could only ever lie.
+#
+# It goes away on its own once every step is done, or START_HERE_DAYS after
+# signing up, so nobody carries it around for a season.
+START_HERE_DAYS = 30
+
+
+@app.get("/api/start-here")
+async def api_start_here(request: Request):
+    me  = current_profile(request)
+    uid = me["id"]
+    try:
+        joined = date.fromisoformat(str(me.get("created_at") or "")[:10])
+    except ValueError:
+        return {"show": False}
+    if (datetime.now(TEAM_TZ).date() - joined).days > START_HERE_DAYS:
+        return {"show": False}
+
+    details = _get_details(uid)
+    name    = _me_name(request)
+    try:
+        logged = bool(sb().table("attendance").select("date")
+                      .ilike("name", name).limit(1).execute().data)
+    except Exception as e:
+        logger.error(f"[start-here] attendance lookup failed: {e}")
+        logged = False
+
+    steps = [
+        {"id": "division", "label": "Pick your division",
+         "done": bool(details.get("onboarded_at")), "href": "/profiles?edit=1"},
+        {"id": "photo", "label": "Add a photo so people can put a face to your name",
+         "done": bool(details.get("photo_ext")), "href": "/profiles?edit=1"},
+        {"id": "prompts", "label": "Answer a prompt or two on your profile",
+         "done": bool(_get_prompts(uid)), "href": "/profiles?edit=1"},
+    ]
+    s = _session_upcoming()
+    if s and _session_invited(me, s):
+        try:
+            answered = bool(sb().table("meeting_responses").select("id")
+                            .eq("profile_id", uid).eq("meeting_date", s["date"].isoformat())
+                            .execute().data)
+        except Exception:
+            answered = False
+        steps.append({"id": "session",
+                      "label": f"Say if you're coming to {s['name']} "
+                               f"({s['date'].strftime('%a %-d %b')})",
+                      "done": answered, "href": "/meetings"})
+    steps.append({"id": "workshop", "label": "Log your first day in the workshop",
+                  "done": logged, "href": "/attendance"})
+
+    links = []
+    captain_id = _captain_of(me.get("subteam"))
+    if captain_id and captain_id != uid:
+        cap = (_people_by_id().get(captain_id) or {}).get("name")
+        if cap:
+            links.append({"label": f"Your captain is {cap}", "href": f"/profiles#{captain_id}"})
+    links += [
+        {"label": "Who's who on the team", "href": "/org"},
+        {"label": "Jargon you'll hear on day one", "href": "/glossary"},
+        {"label": "Your division's build plan", "href": "/flowcharts"},
+    ]
+    return {"show": not all(x["done"] for x in steps), "steps": steps, "links": links}
+
+
+# ── Who has not signed up ────────────────────────────────────────────────────
+# An admin pastes the list of people selected for the team and sees who has no
+# account yet. The portal can prompt everyone who signed up; this is how you
+# find the rest. Nothing pasted is stored.
+MAX_SIGNUP_CHECK = 500
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+@app.post("/api/admin/signup-check")
+async def api_admin_signup_check(request: Request):
+    # The role, not the override: this reads who has an account and writes
+    # nothing, the same standing as managing the dashboard's links.
+    require_admin(request)
+    b = await request.json()
+    seen, wanted = set(), []
+    for e in _EMAIL_RE.findall(str(b.get("emails") or "")):
+        e = e.lower()
+        if e not in seen:
+            seen.add(e)
+            wanted.append(e)
+    if len(wanted) > MAX_SIGNUP_CHECK:
+        raise HTTPException(400, f"That's more than {MAX_SIGNUP_CHECK} addresses")
+    try:
+        rows = supabase.table("profiles").select("email,first_name,last_name,created_at").execute().data or []
+    except Exception as e:
+        logger.error(f"[signup-check] profiles failed: {e}")
+        raise HTTPException(503, "Couldn't read the accounts. Try again")
+    by_email = {(r.get("email") or "").lower(): r for r in rows}
+    joined, missing = [], []
+    for e in wanted:
+        r = by_email.get(e)
+        if r:
+            joined.append({"email": e,
+                           "name": ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip(),
+                           "created_at": r.get("created_at")})
+        else:
+            missing.append(e)
+    return {"checked": len(wanted), "joined": joined, "missing": missing}
 
 
 def _meeting_days_between(start: date, end: date) -> list:

@@ -279,5 +279,34 @@ const MON   = 1, TUE = 2, THU = 4;   // JS getDay(): Sunday = 0
       !(hist.weeks || []).flatMap(w => w.sessions).some(s => s.date === ask.session.date));
   }
 
+  /* Start here (the new-member checklist) and the welcome line in the feed.
+     They live here rather than in suite-profiles because both lean on the
+     onboarding session above: the checklist carries its RSVP as a step. */
+  console.log('\nstart here');
+  const fresh = await signUp('Start', 'Here');
+  let sh = await get('/api/start-here', fresh.setCookies);
+  const step = id => (sh.steps || []).find(x => x.id === id) || {};
+  check('a new account gets the checklist', sh.show === true, JSON.stringify(sh).slice(0, 90));
+  check('with nothing ticked yet', (sh.steps || []).every(x => !x.done),
+    (sh.steps || []).filter(x => x.done).map(x => x.id).join(' '));
+  check('and the glossary among its links',
+    (sh.links || []).some(l => l.href === '/glossary'));
+  if (ask.session) {
+    check('the session RSVP is one of the steps', !!step('session').label, JSON.stringify(sh.steps));
+  }
+
+  const countJoined = async () => ((await get('/api/dashboard', fresh.setCookies)).activity || [])
+    .filter(a => a.actor === 'Start Here' && a.verb === 'joined').length;
+  await post('/api/profile/subteam', fresh.setCookies, { subteam: 'mech' });
+  sh = await get('/api/start-here', fresh.setCookies);
+  check('picking a division ticks that step off', step('division').done === true,
+    JSON.stringify(step('division')));
+  const feed = ((await get('/api/dashboard', fresh.setCookies)).activity || [])
+    .find(a => a.actor === 'Start Here' && a.verb === 'joined');
+  check('and says hello in the feed, naming the division',
+    feed && feed.subject === 'Mechanical', JSON.stringify(feed || null));
+  await post('/api/profile/subteam', fresh.setCookies, { subteam: 'ops' });
+  check('but only the first time', (await countJoined()) === 1);
+
   process.exit(summary('meetings') ? 1 : 0);
 })().catch(e => { console.error('  suite crashed:', e.message); process.exit(1); });

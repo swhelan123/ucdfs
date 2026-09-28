@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Glossary</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Page-local only. Header, chips, cards and the text input come from shared.css. */
+:root { --page-max: 820px; }
+
+.intro { color: var(--muted); font-size: 0.88rem; line-height: 1.55; margin-bottom: 16px; }
+.search { margin-bottom: 12px; }
+.chips { margin-bottom: 18px; }
+
+.term-list { padding: 4px 18px; margin-bottom: 26px; }
+.term { padding: 13px 0; border-bottom: 1px solid var(--border); }
+.term:last-child { border-bottom: none; }
+.term-name { font-weight: 800; font-size: 0.95rem; }
+.term-long { font-weight: 500; color: var(--muted); font-size: 0.82rem; margin-left: 6px; }
+.term-text { font-size: 0.86rem; line-height: 1.55; margin-top: 4px; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo">📖</div>
+      <div class="header-text">
+        <div class="header-title">Glossary</div>
+        <div class="header-sub">The words you'll hear in the workshop</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <p class="intro">
+      Everyone was new once, and nobody minds being asked. This is a head start,
+      not the rulebook: where the two disagree, the current year's rules win.
+      Something missing or wrong? Tell your captain.
+    </p>
+    <input class="text-input search" id="q" type="search" placeholder="Search, e.g. BSPD or skidpad"
+           aria-label="Search the glossary" autocomplete="off">
+    <div class="chips" id="chips"></div>
+    <div id="groups"></div>
+    <div class="empty hidden" id="none">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-text">Nothing matches that. Ask in the team chat, then tell your captain so it can go in here.</div>
+    </div>
+    <div class="foot">UCD Formula Student · <span id="foot-count"></span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* Content lives in the page, not the database. It changes a few times a year,
+   and a pull request is the right amount of review for a definition that new
+   members will take as the truth. */
+const GROUPS = [
+  { id: 'comp', name: 'The competition', terms: [
+    ['Formula Student', 'FS', 'A student engineering competition: design, build and race a single-seat car. Points come from the engineering and the business case as well as the driving, so a fast car with no answers can lose to a slower one that has them.'],
+    ['FSUK', 'Formula Student UK', 'Our main competition, held at Silverstone each summer and run by the IMechE.'],
+    ['IMechE', 'Institution of Mechanical Engineers', 'The body that runs FSUK and sets its dates and entry process.'],
+    ['FSAE', '', 'The original US competition. People also use it loosely for the whole family of Formula Student events, which is why the subreddit is r/FSAE.'],
+    ['The rules', '', 'The rulebook every car is built and inspected against, plus FSUK’s own event handbook. It changes every year, so always check the current edition before designing to a number you remember.'],
+    ['Static events', '', 'The events judged off the track: Design, Cost and Manufacturing, and the Business Plan Presentation.'],
+    ['Design Event', '', 'Judges question the team on engineering decisions. “Why did you choose this?” matters as much as what you chose, which is why writing decisions down as you go pays off.'],
+    ['Cost Event', 'Cost and Manufacturing', 'A costed breakdown of the whole car and how it is made, then questions on it. Every receipt and part number we keep during the year feeds this.'],
+    ['BPP', 'Business Plan Presentation', 'A pitch to judges playing investors, built around the car as a product.'],
+    ['Dynamic events', '', 'The events on track: Acceleration, Skidpad, Autocross, Endurance and Efficiency.'],
+    ['Acceleration', '', 'A straight-line sprint from a standing start.'],
+    ['Skidpad', '', 'A figure of eight around two circles, measuring how much grip the car holds in steady cornering.'],
+    ['Autocross', 'sometimes Sprint', 'A single fast lap of a tight cone course. It usually sets the running order for Endurance.'],
+    ['Endurance', '', 'The long one, with a driver change halfway. Worth the most points, and where most cars stop, so reliability beats peak performance.'],
+    ['Efficiency', '', 'Scored from the energy the car uses during Endurance, weighed against its lap times.'],
+    ['Scrutineering', 'technical inspection', 'The checks a car must pass before it is allowed on track: mechanical and electrical inspection, then the tilt, rain and brake tests. No sticker, no driving.'],
+    ['Tilt test', '', 'The car is tipped sideways on a table, with a driver in it, to check nothing leaks and it does not roll over.'],
+    ['Rain test', '', 'The electric car is sprayed with water while live, to show the insulation holds.'],
+    ['Brake test', '', 'Get up to speed, then stop with all four wheels locked in a straight line.'],
+  ]},
+  { id: 'elec', name: 'Electrical', terms: [
+    ['TS', 'Tractive System', 'Everything carrying the high-voltage power that drives the car: accumulator, inverter, motor and the wiring between them.'],
+    ['HV', 'high voltage', 'Team shorthand for anything on the tractive system. Treat it as live until someone qualified has shown you it is not.'],
+    ['LV', 'low voltage', 'The rest of the car’s electrics: sensors, controllers, dash and the shutdown circuit, running from a small separate battery.'],
+    ['Accumulator', '', 'The traction battery pack, split into segments inside a protective container.'],
+    ['AMS / BMS', 'Accumulator / Battery Management System', 'Watches every cell’s voltage and temperature, and opens the shutdown circuit if any go out of range.'],
+    ['IMD', 'Insulation Monitoring Device', 'Checks the tractive system stays isolated from the chassis, and trips the shutdown circuit if it is not.'],
+    ['SDC', 'Shutdown Circuit', 'A chain of switches and safety devices in series. Break it anywhere and the tractive system turns off.'],
+    ['AIRs', 'Accumulator Isolation Relays', 'The contactors at the accumulator that connect and disconnect the tractive system.'],
+    ['Precharge', '', 'Charging the inverter’s capacitors slowly through a resistor before connecting fully, so switching on does not weld the relays with a current spike.'],
+    ['Discharge', '', 'Draining those capacitors when the tractive system turns off, so the car is safe to touch soon after.'],
+    ['TSAL', 'Tractive System Active Light', 'The light on the roll hoop that shows whether the tractive system is live. Check it before touching the car.'],
+    ['TSMS', 'Tractive System Master Switch', 'The switch that has to be on before the tractive system can be energised.'],
+    ['BSPD', 'Brake System Plausibility Device', 'A standalone circuit that cuts power if the driver is braking hard while the motor is still delivering high power.'],
+    ['APPS', 'Accelerator Pedal Position Sensor', 'Two redundant sensors on the throttle pedal. If they disagree, power is cut.'],
+    ['Inverter', 'motor controller', 'Turns the accumulator’s DC into the AC that drives the motor.'],
+    ['VCU', 'Vehicle Control Unit', 'The car’s main controller: reads the pedals and sensors, decides how much torque to ask for. Our code for it is linked from the dashboard.'],
+    ['CAN bus', '', 'The two-wire network the car’s controllers use to talk to each other.'],
+    ['ESF', 'Electrical System Form', 'The document describing the car’s electrical design, submitted to the competition ahead of the event.'],
+    ['Harness', 'or loom', 'The car’s wiring, built as bundles with connectors on the ends. We design ours in HarnessHive.'],
+    ['DT / DTM', 'Deutsch connectors', 'Two common connector series. They look alike and are not interchangeable: different housings and different contact sizes. Order the right one.'],
+    ['Crimp', '', 'Joining a wire to a contact by squeezing it with the right tool. Wrong tool or wrong wire gauge is a common cause of intermittent faults.'],
+  ]},
+  { id: 'mech', name: 'Mechanical', terms: [
+    ['Chassis', 'spaceframe or monocoque', 'The car’s main structure: a spaceframe is welded tubes, a monocoque is a single composite tub.'],
+    ['Main hoop / front hoop', '', 'The two roll hoops that protect the driver if the car goes over.'],
+    ['Impact attenuator', 'IA', 'The crushable structure on the nose that absorbs a frontal crash.'],
+    ['Upright', '', 'The part at each corner holding the wheel bearing and brake caliper, connecting the wheel to the suspension.'],
+    ['Wishbone', 'A-arm', 'The triangular links connecting each upright to the chassis.'],
+    ['Pushrod / pullrod', '', 'The rod that carries suspension movement from the wheel to the rocker and damper.'],
+    ['Damper', 'shock', 'Controls how fast the suspension moves. The spring holds the car up; the damper stops it bouncing.'],
+    ['Anti-roll bar', 'ARB', 'Links left and right suspension to limit body roll in corners.'],
+    ['Camber / toe', '', 'Wheel angles: camber is the tilt seen from the front, toe is whether the wheels point in or out seen from above. Small changes, big effect on grip.'],
+    ['Aero', '', 'The wings and undertray that push the car into the ground for more grip, at the cost of drag.'],
+    ['Diff', 'differential', 'Lets the rear wheels turn at different speeds through a corner.'],
+    ['Ergonomics', '', 'Fitting drivers of every size into the car safely: seat, pedals, steering wheel, and getting out fast.'],
+  ]},
+  { id: 'team', name: 'Team and tools', terms: [
+    ['Divisions', '', 'Electrical, Mechanical and Operations. Electrical is called “pt” (powertrain) in some older places on this site.'],
+    ['Team Principal', 'TP', 'Leads the whole team.'],
+    ['Technical Director', 'TD', 'Leads the engineering side, across Electrical and Mechanical.'],
+    ['Captain', '', 'Leads a division. Your captain is who to ask first, and who approves your division’s purchase requests.'],
+    ['Onshape', '', 'The browser-based CAD tool the car is designed in. Linked from the dashboard.'],
+    ['HarnessHive', '', 'Where the wiring harness is designed. Linked from the dashboard.'],
+    ['Build plan', 'flowchart', 'Each division’s chart of tasks and what depends on what, under Flowcharts. Tick things off as you finish them.'],
+    ['Purchase request', '', 'How you ask for money to be spent. Your captain approves it, and nobody gets reimbursed for something bought without one.'],
+    ['Shop run', '', 'At competition, one person goes shopping for everyone. The Competition Hub tracks who asked for what and who owes whom.'],
+  ]},
+];
+
+let FILTER = 'all';
+
+function normal(s) { return s.toLowerCase(); }
+
+function render() {
+  const q = normal(document.getElementById('q').value.trim());
+  const esc = UCDFS.esc;
+  let shown = 0;
+  const html = GROUPS.filter(g => FILTER === 'all' || g.id === FILTER).map(g => {
+    const rows = g.terms.filter(([name, long, text]) =>
+      !q || normal(name + ' ' + long + ' ' + text).includes(q));
+    shown += rows.length;
+    if (!rows.length) return '';
+    return `<div class="section-label">${esc(g.name)}</div>
+      <div class="card term-list">${rows.map(([name, long, text]) => `
+        <div class="term">
+          <div class="term-name">${esc(name)}${long ? `<span class="term-long">${esc(long)}</span>` : ''}</div>
+          <div class="term-text">${esc(text)}</div>
+        </div>`).join('')}</div>`;
+  }).join('');
+  document.getElementById('groups').innerHTML = html;
+  document.getElementById('none').classList.toggle('hidden', shown > 0);
+}
+
+function renderChips() {
+  const el = document.getElementById('chips');
+  el.innerHTML = '';
+  [{ id: 'all', name: 'All' }].concat(GROUPS).forEach(g => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip' + (FILTER === g.id ? ' active' : '');
+    b.textContent = g.name;
+    b.onclick = () => { FILTER = g.id; renderChips(); render(); };
+    el.appendChild(b);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  UCDFS.gate(() => {
+    UCDFS.renderPill();
+    const total = GROUPS.reduce((n, g) => n + g.terms.length, 0);
+    document.getElementById('foot-count').textContent = `${total} terms`;
+    document.getElementById('q').addEventListener('input', render);
+    renderChips();
+    render();
+  });
+});
+</script>
+</body>
+</html>

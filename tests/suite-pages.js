@@ -21,6 +21,7 @@ const PAGES = [
   { path: '/harness',    name: 'harness'    },
   { path: '/profiles',   name: 'profiles'   },
   { path: '/org',        name: 'org'        },
+  { path: '/glossary',   name: 'glossary'   },
 ];
 
 (async () => {
@@ -380,6 +381,24 @@ const PAGES = [
     // the jar after the ones signUp handed out or the old one wins.
     const answered = [...other.setCookies,
                       ...(r.headers.getSetCookie ? r.headers.getSetCookie() : [])];
+
+    // A new account is also asked about the onboarding session while one is
+    // coming up (ONBOARDING_SESSION). That queues behind the subteam step and
+    // ahead of the tour, so it gets the same pair of checks.
+    const jar = { 'Content-Type': 'application/json',
+                  Cookie: answered.map(c => c.split(';')[0]).join('; ') };
+    const sess = await fetch(BASE + '/api/onboarding-session/me', { headers: jar }).then(x => x.json());
+    if (sess.ask) {
+      const s = await open('/', { setCookies: answered, failOnPrompt: true });
+      const rsvp = await waitFor(() => s.d.querySelector('#ucdfs-session'));
+      check('a new member is asked about the onboarding session', rsvp);
+      await new Promise(r => setTimeout(r, 1200));
+      check('and the tour does not stack on top of that either',
+        !s.d.querySelector('.ucdfs-tour-bg.show'));
+      s.w.close();
+      await fetch(BASE + '/api/onboarding-session/respond', {
+        method: 'POST', headers: jar, body: JSON.stringify({ attending: true }) });
+    }
 
     const { w, d } = await open('/', { setCookies: answered, failOnPrompt: true });
     const up = await waitFor(() => d.querySelector('.ucdfs-tour-bg.show'));

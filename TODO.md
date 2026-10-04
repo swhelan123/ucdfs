@@ -652,10 +652,20 @@ tracker on the not-building list. Three things make it a different bet:
   a weekend.
 - **5 days, not 14.** Adjustable from `/admin`, and **0 turns flags off** for
   exams and Christmas, when they would flag everyone.
-- **Meetings and week notes do not count.** People mostly do not fill them in.
+- **Team meetings count; week notes do not.** Corrected the same day, after
+  seeing it on dev: the first version read "don't rely on the meeting progress
+  trackers" as all of `/meetings`, and leaned on workshop attendance, which
+  the team barely uses outside the build season, so nearly everyone showed as
+  quiet. A "yes" for a meeting is a sign; a "no, can't make it" is shown with
+  its reason but is not, because the person still was not there. Week notes,
+  the progress tracker nobody fills in, stay out.
 - **No sprints.** The team does continuous work, so the board is todo / doing /
   blocked / done and nothing else.
 - **Private notes about a person**, not tied to an item. Admins only, forever.
+- **Several people on one item** (018), added the same day. Real work is often
+  a pair on one thing, and one name either hid who was actually on it or split
+  one job into copies that drift apart. The first person is who it was mostly
+  made for; nobody is "the owner" beyond that.
 - **Other admins seeing it is fine.** "Admin-only" means every admin account.
 - **It will open to the team.** So the privacy split is in the schema now (see
   below) rather than retrofitted the day it opens.

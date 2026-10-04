@@ -104,6 +104,19 @@
   color: var(--muted); min-width: 0; flex: 1; }
 .item-owner span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .av22 { width: 22px; height: 22px; font-size: 0.52rem; }
+/* Up to three faces, overlapped, for an item several people are on. */
+.av-stack { display: flex; flex-shrink: 0; }
+.av-stack .av + .av { margin-left: -7px; box-shadow: 0 0 0 2px var(--card); }
+
+/* The people on the item open in the dialog: a chip each, × to take them off. */
+.people-pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+.pp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 3px 3px 3px;
+  border-radius: 999px; background: var(--bg); border: 1px solid var(--border);
+  font-size: 0.8rem; font-weight: 600; }
+.pp-x { border: none; background: none; cursor: pointer; color: var(--muted); font: inherit;
+  font-size: 1rem; line-height: 1; padding: 1px 6px; border-radius: 999px; }
+.pp-x:hover { color: var(--red-text); background: var(--red-bg); }
+.pp-none { font-size: 0.8rem; color: var(--muted); padding: 4px 0; }
 /* White initials. UCDFS.avatar() fills the circle with each person's own
    colour, and coloured text on a coloured circle is unreadable. */
 .av-ink { color: #fff; }
@@ -172,6 +185,10 @@
 .hist li:last-child { border-bottom: none; }
 .hist-when { font-size: 0.7rem; color: var(--muted); }
 .hist-body { white-space: pre-line; overflow-wrap: anywhere; }
+/* On the timeline but not a sign of them: a meeting they said no to. */
+.hist li.not-sign { opacity: 0.6; }
+.nocount { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); background: var(--bg); border-radius: 6px; padding: 1px 6px; }
 .lock { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--purple); background: var(--purple-bg); border-radius: 6px; padding: 1px 6px; }
 .note-del {
@@ -273,11 +290,12 @@
       <span class="fld-label">Waiting on</span>
       <input class="text-input" id="f-blocked" placeholder="e.g. the M6 bolts from RS">
     </label>
+    <div class="fld">
+      <span class="fld-label">Who</span>
+      <div class="people-pick" id="f-people"></div>
+      <select class="text-input" id="f-add-person" aria-label="Add someone to this item"></select>
+    </div>
     <div class="fld-row">
-      <label class="fld">
-        <span class="fld-label">Who</span>
-        <select class="text-input" id="f-owner"></select>
-      </label>
       <label class="fld">
         <span class="fld-label">Division</span>
         <select class="text-input" id="f-subteam"></select>
@@ -368,6 +386,7 @@ let SHOW_ALL_DONE = false;
 let editing = null;           // the item open in the dialog, as it was when opened
 let viewing = null;           // the person open in the dialog
 let pickedStatus = 'todo';
+let picked = [];              // people on the item open in the dialog, as {id, name, photo}
 let peopleStale = true;       // the People view needs a reload before it is shown again
 
 const DONE_DAYS = 14;         // done items stay on the board this long
@@ -428,15 +447,19 @@ function windowStart() {
   return d.toISOString().slice(0, 10);
 }
 
-/* The picker lists current members only, so an item whose owner has since
-   retired gets them added back as an option. Without it the select would show
-   "Nobody yet", and saving any other change would quietly unassign the item. */
-function personOptions(selected, none, selectedName) {
-  const known = ITEMS.people.some(p => p.id === selected);
-  const extra = selected && !known
-    ? `<option value="${esc(selected)}" selected>${esc(selectedName || 'Someone')} (retired)</option>` : '';
-  return `<option value="">${esc(none)}</option>` + extra + ITEMS.people.map(p =>
+function personOptions(selected, none) {
+  return `<option value="">${esc(none)}</option>` + ITEMS.people.map(p =>
     `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+}
+
+/* "Mo Member", "Mo & Quinn", "Mo + 2". Full name when it is one person, first
+   names when it is two, a count past that: a card is 240px wide. */
+function peopleLabel(os) {
+  const first = o => String(o.name || '').split(' ')[0];
+  if (!os.length) return 'Nobody yet';
+  if (os.length === 1) return os[0].name;
+  if (os.length === 2) return `${first(os[0])} & ${first(os[1])}`;
+  return `${first(os[0])} + ${os.length - 1}`;
 }
 
 // ── Loading ───────────────────────────────────────────────────────────────
@@ -489,10 +512,11 @@ function renderFoot() {
 function renderPeopleIntro() {
   const n = PEOPLE.quiet_days;
   $('people-intro').innerHTML = n
-    ? `<b>Quiet</b> means no sign of someone for ${plural(n, 'business day')}: not in the
-       workshop, no flowchart ticks, no purchase requests, and no update written on them or
-       their items. Moving somebody's item yourself doesn't count; writing an update does.
-       Weekends don't count. <a href="/admin">Change the number</a> (0 turns flags off for exams).`
+    ? `<b>Quiet</b> means no sign of someone for ${plural(n, 'business day')}: no team meeting
+       they said yes to, no workshop day, no flowchart ticks, no purchase requests, and no
+       update written on them or their items. Saying they can't make a meeting doesn't count,
+       and neither does moving somebody's item yourself. Weekends don't count.
+       <a href="/admin">Change the number</a> (0 turns flags off for exams).`
     : `Quiet flags are <b>off</b>. <a href="/admin">Turn them back on</a> after exams.`;
 }
 
@@ -535,7 +559,12 @@ function personRow(p) {
   const open = [it.doing ? `<b>${it.doing}</b> doing` : '', it.blocked ? `<b>${it.blocked}</b> blocked` : '',
                 it.todo ? `<b>${it.todo}</b> to do` : ''].filter(Boolean).join(' · ');
   const caps = (p.captain_of || []).map(s => `<span class="cap">Captain · ${esc(subName(s))}</span>`).join('');
-  const last = p.last_day ? `${fmtDay(p.last_day)}: ${p.last_what}` : 'No sign of them yet';
+  const last = (p.last_day ? `${fmtDay(p.last_day)}: ${p.last_what}` : 'No sign of them yet') +
+    (p.said_no ? ` · ${fmtDay(p.said_no.day)}: ${p.said_no.text}` : '');
+  // Meetings lead: they are what most people do most of the year. Workshop days
+  // only show when there are some, which outside the build season is rarely.
+  const recent = [plural(p.meetings || 0, 'meeting'),
+                  p.workshop_days ? plural(p.workshop_days, 'workshop day') : ''].filter(Boolean).join(' · ');
   return `<div class="person" role="button" tabindex="0" id="p-${esc(p.id)}" data-person="${esc(p.id)}">
     ${UCDFS.avatar(p.name, p.photo, 'av av38 av-ink')}
     <div class="person-body">
@@ -543,7 +572,7 @@ function personRow(p) {
         ${p.role_name && !(p.captain_of || []).length ? `<span class="title-tag">${esc(p.role_name)}</span>` : ''}</div>
       <div class="person-last">${esc(last)}</div>
     </div>
-    <div class="person-stats">${plural(p.workshop_days, 'workshop day')} in ${PEOPLE.workshop_span / 7} weeks<br>
+    <div class="person-stats">${recent} in ${PEOPLE.recent_span / 7} weeks<br>
       ${open || 'nothing open'}${it.stale ? ` · <b>${it.stale}</b> stale` : ''}</div>
   </div>`;
 }
@@ -577,9 +606,11 @@ function renderPerson(d) {
                 p.joined ? 'joined ' + fmtDay(p.joined) : ''].filter(Boolean);
   $('person-sub').textContent = bits.join(' · ');
   const open = d.items.filter(i => i.status !== 'done');
+  const met = d.timeline.filter(s => s.kind === 'meeting').length;
   const inShop = d.timeline.filter(s => s.kind === 'workshop').length;
   $('person-stats').innerHTML = [
-    `<div class="stat"><b>${inShop}</b> ${inShop === 1 ? 'workshop day' : 'workshop days'}</div>`,
+    `<div class="stat"><b>${met}</b> ${met === 1 ? 'meeting' : 'meetings'}</div>`,
+    inShop ? `<div class="stat"><b>${inShop}</b> ${inShop === 1 ? 'workshop day' : 'workshop days'}</div>` : '',
     `<div class="stat"><b>${open.filter(i => i.status === 'doing').length}</b> doing</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'blocked').length}</b> blocked</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'todo').length}</b> to do</div>`,
@@ -593,9 +624,10 @@ function renderPerson(d) {
       <span class="badge">${esc(statusName(i.status))}</span>
     </button>`).join('') : '<div class="hint">Nothing assigned.</div>';
   $('person-tl').innerHTML = d.timeline.length ? d.timeline.map(s => `
-    <li>
-      <div class="hist-when">${esc(fmtWhen(s.at))}
+    <li${s.counts === false ? ' class="not-sign"' : ''}>
+      <div class="hist-when">${esc(s.dateonly ? fmtDay(s.day) : fmtWhen(s.at))}
         ${s.private ? '<span class="lock">Private</span>' : ''}
+        ${s.counts === false ? '<span class="nocount">Not counted</span>' : ''}
         ${s.note_id ? `<button class="note-del" type="button" data-note="${esc(s.note_id)}">delete</button>` : ''}</div>
       <div class="hist-body">${esc(s.text)}</div>
     </li>`).join('') : '<li class="hint">No sign of them in this window.</li>';
@@ -670,8 +702,9 @@ function renderBoard() {
   const who = $('who').value;
   const shown = ITEMS.items.filter(i =>
     (BFILTER === 'all' || i.subteam === BFILTER) &&
-    (!who || (who === '-' ? !i.owner_id : i.owner_id === who)) &&
-    (!q || (i.key + ' ' + i.title + ' ' + i.description + ' ' + i.owner + ' ' + i.blocked_reason)
+    (!who || (who === '-' ? !i.owner_ids.length : i.owner_ids.includes(who))) &&
+    (!q || (i.key + ' ' + i.title + ' ' + i.description + ' ' +
+            i.owners.map(o => o.name).join(' ') + ' ' + i.blocked_reason)
              .toLowerCase().includes(q)));
 
   const order = {
@@ -716,8 +749,9 @@ function itemCard(i) {
     ${i.status === 'blocked' && i.blocked_reason ? `<div class="item-why">Waiting on ${esc(i.blocked_reason)}</div>` : ''}
     ${badges ? `<div class="item-badges">${badges}</div>` : ''}
     <div class="item-foot">
-      <div class="item-owner">${i.owner_id ? UCDFS.avatar(i.owner, i.photo, 'av av22 av-ink') + `<span>${esc(i.owner)}</span>`
-                                            : '<span>Nobody yet</span>'}</div>
+      <div class="item-owner" title="${esc(i.owners.map(o => o.name).join(', '))}">${i.owners.length
+        ? `<div class="av-stack">${i.owners.slice(0, 3).map(o => UCDFS.avatar(o.name, o.photo, 'av av22 av-ink')).join('')}</div>`
+        : ''}<span>${esc(peopleLabel(i.owners))}</span></div>
       ${quick ? `<button class="quick" type="button" data-quick="${esc(quick[0])}" data-id="${esc(i.id)}">${quick[1]}</button>` : ''}
     </div>
   </div>`;
@@ -731,7 +765,7 @@ async function addItem(e) {
   btn.disabled = true;
   try {
     const owner = $('add-owner').value;
-    const body = { title, owner_id: owner };
+    const body = { title, owner_ids: owner ? [owner] : [] };
     // Filed under the chip you are looking at, so it does not vanish the
     // moment it is made. Unset, the server takes the owner's division.
     if (BFILTER !== 'all') body.subteam = BFILTER;
@@ -774,7 +808,10 @@ function openItem(id) {
   $('item-key').textContent = `${i.key} · created ${fmtDay(i.created_at)}`;
   $('item-h').textContent = i.title;
   $('f-title').value = i.title;
-  $('f-owner').innerHTML = personOptions(i.owner_id || '', 'Nobody yet', i.owner);
+  // Everyone on it, retired members included: they are not offered in the
+  // picker, but an item they are already on keeps them unless removed here.
+  picked = i.owners.map(o => ({ ...o }));
+  renderPicked();
   $('f-subteam').innerHTML = `<option value="">None</option>` + ITEMS.subteams.map(s =>
     `<option value="${esc(s.id)}" ${s.id === i.subteam ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
   $('f-due').value = i.due_date ? String(i.due_date).slice(0, 10) : '';
@@ -788,6 +825,19 @@ function openItem(id) {
   pickStatus(i.status);
   $('item-bg').classList.remove('gone');
   loadHistory(i.id);
+}
+
+function renderPicked() {
+  $('f-people').innerHTML = picked.length ? picked.map(o => `
+    <span class="pp">${UCDFS.avatar(o.name, o.photo, 'av av22 av-ink')}${esc(o.name)}
+      <button class="pp-x" type="button" data-unpick="${esc(o.id)}" aria-label="Take ${esc(o.name)} off it">×</button></span>`).join('')
+    : '<span class="pp-none">Nobody yet</span>';
+  const left = ITEMS.people.filter(p => !picked.some(o => o.id === p.id));
+  const full = picked.length >= ((ITEMS.limits || {}).owners || 8);
+  $('f-add-person').innerHTML = `<option value="">${full ? 'That\'s as many as one item takes'
+      : picked.length ? '+ Add someone else' : '+ Add someone'}</option>` +
+    left.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  $('f-add-person').disabled = full || !left.length;
 }
 
 function pickStatus(s) {
@@ -823,6 +873,7 @@ function describe(ev) {
     case 'created':  return 'Created it';
     case 'status':   return `Moved it from ${statusName(ev.from_value)} to ${statusName(ev.to_value)}` +
                             (ev.to_value === 'blocked' && ev.body ? `: waiting on ${ev.body}` : '');
+    case 'people':   return ev.body || 'Changed who is on it';
     case 'assigned': return ev.to_value ? `Gave it to ${ev.to_name || ev.body}` : 'Took it off ' + (ev.from_name || 'its owner');
     case 'edited':   return 'Changed the ' + ev.body;
     case 'note':     return ev.body;
@@ -838,17 +889,19 @@ async function saveItem(e) {
      after this one opened. */
   const now = {
     title: $('f-title').value.trim(), status: pickedStatus,
-    owner_id: $('f-owner').value || null, subteam: $('f-subteam').value,
+    subteam: $('f-subteam').value,
     due_date: $('f-due').value || null, link: $('f-link').value.trim(),
     description: $('f-desc').value, blocked_reason: $('f-blocked').value.trim(),
   };
   const was = {
-    title: editing.title, status: editing.status, owner_id: editing.owner_id || null,
+    title: editing.title, status: editing.status,
     subteam: editing.subteam, due_date: editing.due_date ? String(editing.due_date).slice(0, 10) : null,
     link: editing.link, description: editing.description, blocked_reason: editing.blocked_reason,
   };
   const body = { id: editing.id };
   Object.keys(now).forEach(k => { if (now[k] !== was[k]) body[k] = now[k]; });
+  const ids = picked.map(o => o.id);
+  if (JSON.stringify(ids) !== JSON.stringify(editing.owner_ids)) body.owner_ids = ids;
   if (pickedStatus !== 'blocked') delete body.blocked_reason;
   if (!body.title && 'title' in body) { UCDFS.toast('Say what needs doing'); $('f-title').focus(); return; }
   if (pickedStatus === 'blocked' && !now.blocked_reason) {
@@ -948,6 +1001,15 @@ document.addEventListener('DOMContentLoaded', () => {
     $('board').addEventListener('keydown', e => {
       const c = e.target.closest('.item');
       if (c && (e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); openItem(c.dataset.item); }
+    });
+    $('f-add-person').addEventListener('change', e => {
+      const p = ITEMS.people.find(x => x.id === e.target.value);
+      if (p && !picked.some(o => o.id === p.id)) picked.push({ id: p.id, name: p.name, photo: p.photo });
+      renderPicked();
+    });
+    $('f-people').addEventListener('click', e => {
+      const b = e.target.closest('[data-unpick]');
+      if (b) { picked = picked.filter(o => o.id !== b.dataset.unpick); renderPicked(); }
     });
     $('f-status').addEventListener('click', e => {
       const b = e.target.closest('[data-status]');

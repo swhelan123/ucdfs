@@ -5291,17 +5291,23 @@ def _purchases_tile() -> dict:
 #   items    Jira-lite, typed by an admin. A title is the only required field.
 #            Continuous flow, no sprints: todo → doing → blocked → done.
 #   people   typed by nobody. Read off what members already leave behind:
-#            workshop days, flowchart ticks, purchase requests, and updates
-#            written on items they own. person_notes is the one admin-written
-#            exception.
+#            team meetings they said yes to, workshop days, flowchart ticks,
+#            purchase requests, and updates written on items they own.
+#            person_notes is the one admin-written exception.
 #
 # "Quiet" means no sign of somebody, and nobody checking in about them, for
 # tracker.quiet_days BUSINESS days (default 5; 0 turns flags off for exams and
 # Christmas), edited from /admin. Weekends never count. Bank holidays do, which
 # is a known gap rather than an oversight: a five-day threshold absorbs one.
 #
-# Meetings and week notes are deliberately NOT signals. Hardly anybody fills
-# them in, so counting them would flag the honest majority and reward the few.
+# Team meetings are the main signal during term. Workshop attendance is barely
+# used outside the build season, and an early version that leaned on it showed
+# nearly the whole team as quiet. A "yes" for a meeting on or before today
+# counts; a "no, can't make it" is drawn on the timeline with its reason but
+# does not count, because the person still was not there.
+#
+# Week notes ("what did you do instead") are NOT a signal. Hardly anybody
+# fills them in, so counting them would reward the few who do.
 #
 # Nothing here writes to the activity feed while the tracker is admin-only. A
 # feed line is on every member's dashboard, and "gave T-14 to Aoife" there
@@ -5322,6 +5328,9 @@ MAX_ITEM_DESC   = 2000
 MAX_ITEM_NOTE   = 1000
 MAX_BLOCKED     = 300
 MAX_PERSON_NOTE = 1000
+# People on one item. A bound on a picker, not a considered limit: an item
+# with nine people on it is a project, and wants splitting into items.
+MAX_OWNERS      = 8
 DEFAULT_QUIET_DAYS = 5
 # A bound on a number box, not a considered limit. Six weeks of business days
 # is longer than any break in the year, so anything above it is a typo.
@@ -5330,9 +5339,9 @@ MAX_QUIET_DAYS     = 30
 # anybody reasonably goes between showing up; past it the page says "nothing in
 # 90 days" rather than reading a season of attendance on every load.
 TRACKER_WINDOW_DAYS = 90
-# Workshop days are counted over four weeks: long enough that one missed week
-# does not read as somebody disappearing.
-WORKSHOP_SPAN_DAYS  = 28
+# Meetings and workshop days on the People list are counted over four weeks:
+# long enough that one missed week does not read as somebody disappearing.
+RECENT_SPAN_DAYS = 28
 
 
 def _quiet_days() -> int:
@@ -5537,21 +5546,52 @@ def _item_key(row: dict) -> str:
     return f"T-{int(row.get('id') or 0)}"
 
 
-def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
-    """One item as the page wants it, with how long it has sat still."""
-    status  = row.get("status") if row.get("status") in TRACKER_STATUS_IDS else "todo"
-    owner   = people.get(row.get("owner_id")) or {}
+def _owners_of(row: dict) -> list:
+    """The people on an item, in the order they were added.
+
+    owner_ids since 018, which is what lets several people work on one thing.
+    Before it there was only owner_id, so a row read from a database that has
+    not had 018 yet falls back to that one person rather than to nobody.
+    """
+    ids = row.get("owner_ids")
+    if ids is None:
+        ids = [row["owner_id"]] if row.get("owner_id") else []
+    return [i for i in ids if i]
+
+
+def _idle_days(row: dict, today: date) -> Optional[int]:
     touched = _day_of(row.get("touched_at"))
-    idle    = _business_days_since(touched, today) if touched else None
+    return _business_days_since(touched, today) if touched else None
+
+
+def _is_stale(row: dict, today: date, n: int) -> bool:
+    """Doing or blocked with nothing moving for as long as it takes a person to
+    count as quiet. One threshold for both, so switching flags off for exams
+    switches these off too, rather than leaving half the warnings on."""
+    idle = _idle_days(row, today)
+    return bool(row.get("status") in ("doing", "blocked") and n > 0
+                and idle is not None and idle >= n)
+
+
+def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
+    """One item as the page wants it, with how long it has sat still.
+
+    Owners are filtered against the accounts that exist. owner_ids is an array
+    with no foreign key, so a deleted account would otherwise linger as a
+    nameless face; filtering on the way out closes the gap the way favourites
+    do, and the next save of the item drops the id for good.
+    """
+    status  = row.get("status") if row.get("status") in TRACKER_STATUS_IDS else "todo"
+    owners  = [o for o in _owners_of(row) if o in people]
     due     = _day_of(row.get("due_date"))
     return {
         "id":             row.get("id"),
         "key":            _item_key(row),
         "title":          row.get("title") or "",
         "description":    row.get("description") or "",
-        "owner_id":       row.get("owner_id"),
-        "owner":          owner.get("name") or "",
-        "photo":          owner.get("photo"),
+        "owner_ids":      owners,
+        "owners":         [{"id": o, "name": people[o].get("name") or "Someone",
+                            "photo": people[o].get("photo")} for o in owners],
         "subteam":        row.get("subteam") or "",
         "status":         status,
         "blocked_reason": row.get("blocked_reason") or "",
@@ -5560,13 +5600,9 @@ def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
         "created_at":     row.get("created_at"),
         "touched_at":     row.get("touched_at"),
         "done_at":        row.get("done_at"),
-        "idle_days":      idle,
-        # Doing or blocked with nothing moving for as long as it takes a person
-        # to count as quiet. One threshold for both, so switching flags off for
-        # exams switches these off too, rather than leaving half the warnings on.
-        "stale":   bool(status in ("doing", "blocked") and n > 0
-                        and idle is not None and idle >= n),
-        "overdue": bool(due and status != "done" and due < today),
+        "idle_days":      _idle_days(row, today),
+        "stale":          _is_stale(row, today, n),
+        "overdue":        bool(due and status != "done" and due < today),
     }
 
 
@@ -5603,15 +5639,66 @@ def _clean_item_link(raw) -> str:
     return _clean_link_url(v) if v else ""
 
 
-def _clean_owner(raw, people: dict) -> Optional[str]:
-    """An account id, or None for nobody yet. Checked against the accounts that
-    exist: an id that names nobody would be an item owned by a ghost."""
-    v = str(raw or "").strip()
-    if not v:
-        return None
-    if v not in people:
-        raise HTTPException(400, "That person doesn't have an account")
-    return v
+def _clean_owners(raw, people: dict) -> list:
+    """Account ids, in order, de-duplicated, each one checked. [] is nobody yet.
+
+    A bare string is one person, which is what owner_id sent before 018 and
+    what anything still sending it means. Every id is checked against the
+    accounts that exist: one that names nobody would put a ghost on the item.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise HTTPException(400, "owner_ids has to be a list of people")
+    out: list = []
+    for v in raw:
+        v = str(v or "").strip()
+        if not v:
+            continue
+        if v not in people:
+            raise HTTPException(400, "That person doesn't have an account")
+        if v not in out:
+            out.append(v)
+    if len(out) > MAX_OWNERS:
+        raise HTTPException(400, f"At most {MAX_OWNERS} people on one item. Split it up")
+    return out
+
+
+def _owners_in(b: dict) -> Optional[object]:
+    """Whichever of owner_ids / owner_id the body carries, or None for
+    neither. owner_ids wins when both are sent."""
+    if "owner_ids" in b:
+        return b.get("owner_ids") if b.get("owner_ids") is not None else []
+    if "owner_id" in b:
+        return b.get("owner_id") or []
+    return None
+
+
+def _owner_columns(owners: list) -> dict:
+    """What gets written for a list of people. owner_id mirrors the first one
+    so that rolling back to an image from before 018 still shows an owner on
+    every item, rather than nobody on all of them."""
+    return {"owner_ids": owners, "owner_id": owners[0] if owners else None}
+
+
+def _write_owners(write, row: dict):
+    """Run an item write, and survive 018 not being applied yet.
+
+    With one person or none, nothing is lost by writing owner_id alone, so the
+    write is retried without owner_ids. With several there is nowhere to put
+    them, and saying so beats quietly keeping only the first.
+    """
+    try:
+        return write(row)
+    except Exception as e:
+        if "owner_ids" not in row or "owner_ids" not in str(e):
+            raise
+        if len(row["owner_ids"]) > 1:
+            raise HTTPException(503, "Several people on one item needs migration 018")
+        logger.error(f"[018] wrote without owner_ids ({e}). Has migration 018 been applied?")
+        return write({k: v for k, v in row.items() if k != "owner_ids"})
 
 
 def _clean_blocked(raw) -> str:
@@ -5665,7 +5752,7 @@ async def api_tracker_items(request: Request):
         "today":    today.isoformat(),
         "limits":   {"title": MAX_ITEM_TITLE, "description": MAX_ITEM_DESC,
                      "note": MAX_ITEM_NOTE, "blocked": MAX_BLOCKED,
-                     "person_note": MAX_PERSON_NOTE},
+                     "person_note": MAX_PERSON_NOTE, "owners": MAX_OWNERS},
     }
 
 
@@ -5682,21 +5769,23 @@ async def api_tracker_item_create(request: Request):
     b      = await request.json()
     people = _people_by_id()
     title  = _clean_item_title(b.get("title"))
-    owner  = _clean_owner(b.get("owner_id"), people)
+    owners = _clean_owners(_owners_in(b), people)
     # From a select the server filled, so an unknown value is a stale tab and
     # falls back rather than losing the item, like a link's accent.
     status = b.get("status") if b.get("status") in TRACKER_STATUS_IDS else "todo"
     blocked = _clean_blocked(b.get("blocked_reason"))
     if status == "blocked" and not blocked:
         raise HTTPException(400, "Say what it's waiting on")
+    # The first person's division, when none is given: that is who it was
+    # mostly made for.
     subteam = (_clean_subteam(b.get("subteam"))
-               or ((_get_profile(owner) or {}).get("subteam") if owner else None) or "")
+               or ((_get_profile(owners[0]) or {}).get("subteam") if owners else None) or "")
 
     now = datetime.now(TEAM_TZ).isoformat()
     row = {
         "title":          title,
         "description":    _clean_block(b.get("description"), MAX_ITEM_DESC),
-        "owner_id":       owner,
+        **_owner_columns(owners),
         "subteam":        subteam,
         "status":         status,
         "blocked_reason": blocked if status == "blocked" else "",
@@ -5707,7 +5796,10 @@ async def api_tracker_item_create(request: Request):
         "done_at":        now if status == "done" else None,
     }
     try:
-        made = (sb().table("work_items").insert(row).execute().data or [{}])[0]
+        made = (_write_owners(lambda r: sb().table("work_items").insert(r).execute(), row)
+                .data or [{}])[0]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[tracker] create failed: {e}")
         raise HTTPException(503, "Couldn't save that. Has migration 017 been applied?")
@@ -5725,7 +5817,7 @@ async def api_tracker_item_update(request: Request):
     status} and nothing else, so they cannot put back a description somebody
     changed a minute ago in another tab.
 
-    Status changes, a new owner and a new blocked reason each count as the item
+    Status changes, a change of people and a new blocked reason each count as the item
     moving (touched_at). Fixing a typo in the title does not: a three-week-old
     item made to look fresh by an edit is exactly what the stale flag is for.
     """
@@ -5767,13 +5859,18 @@ async def api_tracker_item_update(request: Request):
             upd["subteam"] = sub
             edited.append("division")
 
-    old_owner = row.get("owner_id")
-    new_owner = old_owner
-    if "owner_id" in b:
-        new_owner = _clean_owner(b.get("owner_id"), people)
-        if new_owner != old_owner:
-            upd["owner_id"] = new_owner
-            moved = True
+    old_owners = _owners_of(row)
+    added: list = []
+    removed: list = []
+    sent = _owners_in(b)
+    if sent is not None:
+        new_owners = _clean_owners(sent, people)
+        if new_owners != old_owners:
+            upd.update(_owner_columns(new_owners))
+            added   = [o for o in new_owners if o not in old_owners]
+            removed = [o for o in old_owners if o not in new_owners]
+            # A reorder alone is saved but is not the item moving.
+            moved = moved or bool(added or removed)
 
     old_status = row.get("status") or "todo"
     new_status = old_status
@@ -5815,8 +5912,11 @@ async def api_tracker_item_update(request: Request):
                                                datetime.now(TEAM_TZ).date(), _quiet_days())}
 
     try:
-        after = (sb().table("work_items").update(upd).eq("id", row["id"]).execute().data
+        after = (_write_owners(
+            lambda r: sb().table("work_items").update(r).eq("id", row["id"]).execute(), upd).data
                  or [{**row, **upd}])[0]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[tracker] update failed on {row.get('id')}: {e}")
         raise HTTPException(503, "Couldn't save that")
@@ -5824,9 +5924,15 @@ async def api_tracker_item_update(request: Request):
     if new_status != old_status:
         _item_event(row["id"], me, "status", old_status, new_status,
                     body=reason if new_status == "blocked" else "")
-    if new_owner != old_owner:
-        _item_event(row["id"], me, "assigned", old_owner or "", new_owner or "",
-                    body=(people.get(new_owner) or {}).get("name") or "nobody")
+    if added or removed:
+        # Names written now, like actor_name, so the line still reads after an
+        # account is deleted. The ids ride along for anything that needs them.
+        names = lambda ids: ", ".join((people.get(i) or {}).get("name") or "someone" for i in ids)
+        said = ([f"added {names(added)}"] if added else []) + \
+               ([f"took {names(removed)} off it"] if removed else [])
+        text = "; ".join(said)
+        _item_event(row["id"], me, "people", ",".join(old_owners), ",".join(_owners_of(after)),
+                    body=text[:1].upper() + text[1:])
     if edited:
         _item_event(row["id"], me, "edited", body=", ".join(edited))
     return {"ok": True, "item": _dress_item(after, people,
@@ -5837,7 +5943,7 @@ async def api_tracker_item_update(request: Request):
 async def api_tracker_item_note(request: Request):
     """Add an update to an item: "talked to Cian, upright CAD about 60%".
 
-    Counts as the item moving, and as a sign of its owner. That is deliberate
+    Counts as the item moving, and as a sign of everyone on it. That is deliberate
     even for "chased again, nothing yet": the quiet flag exists to make
     somebody check in, and once somebody has, it has done its job for now.
 
@@ -5924,6 +6030,7 @@ def _tracker_signals(since: date, today: date, items: list,
 
     Each one is {pid, day, at, kind, text}. The sources, and why each counts:
 
+        meeting   a team meeting on or before today that they said yes to
         workshop  an attendance row saying they were in, today or earlier
         tick      a flowchart task they ticked or unticked
         purchase  a purchase request they filed
@@ -5933,6 +6040,11 @@ def _tracker_signals(since: date, today: date, items: list,
 
     Attendance and ticks are matched on profile_id (017), never on the typed
     name. A row nobody has matched yet is skipped here and listed in /admin.
+
+    A meeting they said no to is returned too, with counts=False: worth seeing
+    on their timeline, with the reason they gave, but not a sign of them.
+    Everything else counts. dateonly marks signals with a day and no time, so
+    the page does not print a midnight nobody logged.
 
     Each source is read separately and fails separately. One missing table
     loses one kind of signal, not the page, the same rule the dashboard tiles
@@ -5948,6 +6060,26 @@ def _tracker_signals(since: date, today: date, items: list,
 
     try:
         for r in _all_rows(lambda: mine(
+                sb().table("meeting_responses")
+                .select("id,profile_id,meeting_date,attending,reason")
+                .gte("meeting_date", since_iso).lte("meeting_date", today_iso), "profile_id")):
+            d = _day_of(r.get("meeting_date"))
+            if not d or not r.get("profile_id"):
+                continue
+            what = (_session_day(d) or {}).get("name") or "the team meeting"
+            base = {"pid": r["profile_id"], "day": d, "at": f"{d.isoformat()}T00:00",
+                    "dateonly": True}
+            if r.get("attending"):
+                out.append({**base, "kind": "meeting", "text": f"Said yes to {what}"})
+            else:
+                reason = " ".join(str(r.get("reason") or "").split())
+                out.append({**base, "kind": "missed", "counts": False,
+                            "text": f"Couldn't make {what}" + (f": {reason}" if reason else "")})
+    except Exception as e:
+        logger.error(f"[tracker] meeting signals failed (012 applied?): {e}")
+
+    try:
+        for r in _all_rows(lambda: mine(
                 sb().table("attendance").select("id,date,time,status,profile_id")
                 .gte("date", since_iso).lte("date", today_iso).eq("status", "arriving"),
                 "profile_id")):
@@ -5956,7 +6088,7 @@ def _tracker_signals(since: date, today: date, items: list,
             t = _hm(r.get("time"))
             out.append({"pid": r["profile_id"], "day": _day_of(r.get("date")),
                         "at": f"{str(r.get('date'))[:10]}T{t or '00:00'}",
-                        "kind": "workshop",
+                        "dateonly": not t, "kind": "workshop",
                         "text": "In the workshop" + (f" from {t}" if t else "")})
     except Exception as e:
         logger.error(f"[tracker] attendance signals failed (017 applied?): {e}")
@@ -6003,21 +6135,26 @@ def _tracker_signals(since: date, today: date, items: list,
             elif kind == "created":
                 text = f"Created {label}"
             elif kind == "assigned":
+                # From before 018, when an item had one person.
                 text = f"Gave {label} to {e.get('body') or 'nobody'}"
+            elif kind == "people":
+                text = f"{label}: {e.get('body') or 'changed who is on it'}"
             else:
                 text = f"Edited {label}"
             if e.get("actor_id"):
                 out.append({"pid": e["actor_id"], "day": day, "at": at, "kind": "item",
                             "item_id": e.get("item_id"), "private": private, "text": text})
-            # The owner hears about it too, but only for an update somebody
+            # Everyone on the item hears about it, but only for an update somebody
             # wrote. Not for a status change made on their behalf: an admin
             # assigning an item and clicking Start would otherwise reset the
             # quiet flag on exactly the person it exists to surface. Their own
             # status changes still count, as the actor, above.
-            owner = it.get("owner_id")
-            if owner and owner != e.get("actor_id") and kind == "note":
-                out.append({"pid": owner, "day": day, "at": at, "kind": "item",
-                            "item_id": e.get("item_id"), "private": private, "text": text})
+            if kind == "note":
+                for owner in _owners_of(it):
+                    if owner != e.get("actor_id"):
+                        out.append({"pid": owner, "day": day, "at": at, "kind": "item",
+                                    "item_id": e.get("item_id"), "private": private,
+                                    "text": text})
     except Exception as e:
         logger.error(f"[tracker] item signals failed (017 applied?): {e}")
 
@@ -6070,17 +6207,20 @@ def _signal_out(s: dict) -> dict:
 
 
 def _open_counts(items: list) -> dict:
-    """{owner id: {todo, doing, blocked, stale}} over items not yet done."""
+    """{person id: {todo, doing, blocked, stale}} over items not yet done. An
+    item with three people on it counts once for each of them: it is on all
+    three of their plates."""
     today, n = datetime.now(TEAM_TZ).date(), _quiet_days()
     out: dict = {}
     for r in items or []:
         status = r.get("status")
-        if not r.get("owner_id") or status not in ("todo", "doing", "blocked"):
+        if status not in ("todo", "doing", "blocked"):
             continue
-        c = out.setdefault(r["owner_id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0})
-        c[status] += 1
-        if _dress_item(r, {}, today, n)["stale"]:
-            c["stale"] += 1
+        stale = _is_stale(r, today, n)
+        for pid in _owners_of(r):
+            c = out.setdefault(pid, {"todo": 0, "doing": 0, "blocked": 0, "stale": 0})
+            c[status] += 1
+            c["stale"] += 1 if stale else 0
     return out
 
 
@@ -6103,13 +6243,21 @@ async def api_tracker_people(request: Request):
     items   = _items_rows()
     signals = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items or [])
 
-    span_start = today - timedelta(days=WORKSHOP_SPAN_DAYS)
+    span_start = today - timedelta(days=RECENT_SPAN_DAYS)
     last: dict = {}
-    workshop: dict = {}
+    said_no: dict = {}
+    recent: dict = {}
     for s in signals:                       # newest first, so the first one wins
-        last.setdefault(s["pid"], s)
-        if s["kind"] == "workshop" and s["day"] > span_start:
-            workshop.setdefault(s["pid"], set()).add(s["day"])
+        if s.get("counts", True):
+            last.setdefault(s["pid"], s)
+        elif s["kind"] == "missed" and s["pid"] not in last:
+            # Only if it is newer than their last real sign. "Couldn't make
+            # Thursday: exams" beside a quiet flag is the answer to the
+            # question the flag asks, so it belongs on the row, not only in
+            # the timeline. It still does not count.
+            said_no.setdefault(s["pid"], s)
+        if s["kind"] in ("meeting", "workshop") and s["day"] > span_start:
+            recent.setdefault((s["pid"], s["kind"]), set()).add(s["day"])
     _label_ticks(list(last.values()))
     counts = _open_counts(items or [])
 
@@ -6124,7 +6272,10 @@ async def api_tracker_people(request: Request):
             "joined":        p["joined"].isoformat() if p["joined"] else None,
             "last_day":      s["day"].isoformat() if s else None,
             "last_what":     s["text"] if s else "",
-            "workshop_days": len(workshop.get(p["id"], ())),
+            "said_no":       ({"day": said_no[p["id"]]["day"].isoformat(),
+                               "text": said_no[p["id"]]["text"]} if p["id"] in said_no else None),
+            "meetings":      len(recent.get((p["id"], "meeting"), ())),
+            "workshop_days": len(recent.get((p["id"], "workshop"), ())),
             "items":         counts.get(p["id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0}),
         })
     people.sort(key=lambda x: (rank.get(x["state"], 9), -(x["quiet_for"] or 0), x["name"].lower()))
@@ -6133,7 +6284,7 @@ async def api_tracker_people(request: Request):
         "people":        people,
         "quiet_days":    n,
         "window_days":   TRACKER_WINDOW_DAYS,
-        "workshop_span": WORKSHOP_SPAN_DAYS,
+        "recent_span":   RECENT_SPAN_DAYS,
         "subteams":      SUBTEAMS,
         "today":         today.isoformat(),
     }
@@ -6172,8 +6323,9 @@ async def api_tracker_person(request: Request, id: str = ""):
     if not _sees_private(me):
         timeline = [s for s in timeline if not s.get("private")]
     people = _people_by_id()
-    st = _quiet_state(timeline[0]["day"] if timeline else None, person["joined"], today, n)
-    theirs = [_dress_item(r, people, today, n) for r in items if r.get("owner_id") == pid]
+    newest = next((s for s in timeline if s.get("counts", True)), None)
+    st = _quiet_state(newest["day"] if newest else None, person["joined"], today, n)
+    theirs = [_dress_item(r, people, today, n) for r in items if pid in _owners_of(r)]
     order = {s: i for i, s in enumerate(("blocked", "doing", "todo", "done"))}
     theirs.sort(key=lambda i: (order.get(i["status"], 9), -(i["idle_days"] or 0)))
     return {

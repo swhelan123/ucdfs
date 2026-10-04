@@ -543,16 +543,34 @@ Two halves, deliberately unequal in what they ask of anybody:
   typo cannot make a three-week-stale item look fresh. Updates only touch the
   fields in the body, so the one-click status buttons cannot overwrite an edit
   from another tab. Deleting echoes the title back, like links and charts.
-- **People** is typed by nobody. Somebody's last sign is the newest of: a day
-  logged in the workshop (today or earlier), a flowchart tick, a purchase
-  request, anything they did to an item, an update somebody wrote on an item
-  they own, or a note about them. Quiet is `tracker.quiet_days` **business**
-  days without one (default 5, 0 = off for exams), edited from `/admin`.
+- **An item can have several people on it** (`owner_ids`, `migrations/018`), in
+  the order they were added; the first decides the default division. An array,
+  not a join table, like favourites, so a deleted account can linger in one:
+  `_dress_item()` filters unknown ids on the way out and the next save drops
+  them. `owner_id` is still written as a copy of the first person, purely so a
+  rollback to an image from before 018 shows an owner. Read people through
+  `_owners_of()`, never `owner_id`. An update on the item is a sign of everyone
+  on it except whoever wrote it, and the item counts on each of their plates.
+- **People** is typed by nobody. Somebody's last sign is the newest of: a team
+  meeting they said yes to (today or earlier), a day logged in the workshop, a
+  flowchart tick, a purchase request, anything they did to an item, an update
+  somebody wrote on an item they own, or a note about them. Quiet is
+  `tracker.quiet_days` **business** days without one (default 5, 0 = off for
+  exams), edited from `/admin`.
+- **Meetings are the main signal during term.** Workshop attendance is barely
+  used outside the build season, and the first version, which leaned on it,
+  showed nearly the whole team as quiet on dev. `meeting_responses` is keyed by
+  account, so it needed nothing from 017.
 
 What is deliberately **not** a sign:
 
-- **Meetings and week notes.** Hardly anybody fills them in, so counting them
-  would flag the honest majority and reward the few.
+- **Saying no to a meeting.** The person still was not there. It is returned
+  with `counts: false`, drawn muted on their timeline, and its reason rides on
+  their People row when it is newer than their last real sign, because
+  "couldn't make Thursday: exams" is the answer to the question a quiet flag
+  asks.
+- **Week notes** ("what did you do instead"). Hardly anybody fills them in, so
+  counting them would reward the few who do.
 - **A status change somebody else made on your item.** An admin assigning work
   and clicking Start would otherwise reset the quiet flag on exactly the person
   the view exists to surface. A written update does count: somebody checked in,
@@ -1255,6 +1273,11 @@ matches exactly one account. It needs 015 (its quiet threshold is a row in
 is not set up, and attendance and ticks keep working unstamped, because both
 writes go through `_write_stamped()`. Those rows then show up in `/admin` as
 unmatched names to tidy.
+
+**018 adds `work_items.owner_ids`**, several people per item, backfilled from
+`owner_id`. Apply it before the image like the rest. If you do not, items with
+one person or nobody keep saving (`_write_owners()` retries without the
+column), and putting a second person on one says it needs 018.
 
 **016 creates `glossary_terms` and seeds the 61 terms the page used to carry.**
 Apply it before the code that reads it, like the others; without it `/glossary`

@@ -10,6 +10,14 @@
  * on. The tracker is gated on the role, like /admin itself, and that is the
  * point of checking it this way round.
  *
+ * Team meetings are the main signal during term: a "yes" counts, a "no, can't
+ * make it" is on the timeline but does not. Workshop attendance is barely used
+ * outside the build season, which is why meetings had to be added at all.
+ *
+ * An item can have several people on it (migrations/018). Without 018 that
+ * part says so and is skipped; one person per item keeps working either way,
+ * which is what the rest of the suite exercises.
+ *
  * Outside the tracker, 017 added profile_id to attendance and pt_done_log.
  * This suite checks that a day logged through /api/log carries the account,
  * and that a typed name matching nobody is listed in /admin and can be
@@ -221,6 +229,26 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
     `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
   await post('/api/tracker/items/delete', boss.setCookies, { id: handed.id, title: handed.title });
 
+  /* Saying no to a meeting is not a sign of you: you still were not there. It
+     is kept for the timeline, with the reason, because "exams" is worth seeing
+     next to a quiet flag. Written with the service key: the meetings page only
+     answers for the current fortnight, and this is about what the tracker
+     reads, not about that page. */
+  await sbFetch('meeting_responses', 'POST', { profile_id: ids.quiet, meeting_date: daysAgo(2),
+                                               attending: false, reason: 'exams' });
+  people = (await json(await get('/api/tracker/people', boss.setCookies))).people || [];
+  check('saying no to a meeting is not a sign of them', row(ids.quiet).state === 'none',
+    `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
+  check('but the reason is on their row, beside the flag it explains',
+    /exams/.test((row(ids.quiet).said_no || {}).text || ''), JSON.stringify(row(ids.quiet).said_no));
+  const missed = await json(await get('/api/tracker/person?id=' + ids.quiet, boss.setCookies));
+  const missLine = (missed.timeline || []).find(t => t.kind === 'missed');
+  check('but it is on their timeline, with the reason, marked as not counting',
+    !!missLine && /exams/.test(missLine.text) && missLine.counts === false,
+    JSON.stringify(missLine || null));
+  check('and does not make them look active there either', (missed.person || {}).state === 'none',
+    (missed.person || {}).state);
+
   // Thirty days ago is at least twenty business days, well past five.
   await sbFetch('attendance', 'POST', { name: 'Tracker Quiet', date: daysAgo(30),
                                         status: 'arriving', profile_id: ids.quiet });
@@ -229,6 +257,17 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
     `${row(ids.quiet).state} ${row(ids.quiet).quiet_for}`);
   check('quiet people are listed first', people.findIndex(p => p.id === ids.quiet) <
     people.findIndex(p => p.id === ids.member));
+
+  /* The positive control for the "no" above, and the reason this source
+     exists: during term a meeting is most people's only sign. */
+  const yes = (await json(await sbFetch('meeting_responses', 'POST',
+    { profile_id: ids.quiet, meeting_date: daysAgo(1), attending: true })))[0] || {};
+  people = (await json(await get('/api/tracker/people', boss.setCookies))).people || [];
+  check('saying yes to a meeting is a sign of them', row(ids.quiet).state === 'active'
+    && /Said yes/.test(row(ids.quiet).last_what), `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
+  check('and is counted on the People list', row(ids.quiet).meetings === 1,
+    String(row(ids.quiet).meetings));
+  await sbFetch(`meeting_responses?id=eq.${yes.id}`, 'DELETE');
 
   console.log('\nattendance carries the account (017)');
   const logged = await post('/api/log', quiet.setCookies, { first_name: 'Tracker', last_name: 'Quiet',
@@ -292,6 +331,46 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
   check('and it is off the list', !(um.names || []).some(n => n.key === keyOf(typed)));
   check('matching it again finds nothing to move', (await post('/api/admin/unmatched-names/assign',
     boss.setCookies, { name: typed, profile_id: ids.boss })).status === 404);
+
+  // ── Several people on one item (migrations/018) ─────────────────────
+  console.log('\nseveral people on one item');
+  const pairTitle = PREFIX + 'pair job ' + Date.now();
+  const pairR = await post('/api/tracker/items', boss.setCookies,
+    { title: pairTitle, owner_ids: [ids.member, ids.boss, ids.member] });
+  const pairText = await pairR.text();
+  if (pairR.status === 503 && /018/.test(pairText)) {
+    console.log('  ── owner_ids missing; migration 018 not applied, skipping this part ──');
+  } else {
+    const pair = (JSON.parse(pairText || '{}').item) || {};
+    check('an item can have two people on it', pairR.ok && (pair.owner_ids || []).length === 2,
+      pairText.slice(0, 120));
+    check('in the order given, the duplicate dropped',
+      (pair.owner_ids || [])[0] === ids.member && (pair.owner_ids || [])[1] === ids.boss,
+      JSON.stringify(pair.owner_ids));
+    check('with their names', (pair.owners || []).map(o => o.name).join(',') === 'Tracker Member,Tracker Admin',
+      JSON.stringify(pair.owners));
+    const ghost = await post('/api/tracker/items', boss.setCookies,
+      { title: PREFIX + 'x', owner_ids: [ids.member, '00000000-0000-0000-0000-000000000000'] });
+    check('one ghost in the list refuses the lot', ghost.status === 400, await detail(ghost));
+
+    const onIt = async id => ((await json(await get('/api/tracker/person?id=' + id, boss.setCookies)))
+      .items || []).some(i => i.id === pair.id);
+    check("it is on the first person's list", await onIt(ids.member));
+    check("and on the second person's", await onIt(ids.boss));
+
+    /* An update speaks for everyone on the item except whoever wrote it. */
+    await post('/api/tracker/items/note', boss.setCookies, { id: pair.id, body: 'pairing on it' });
+    const mt = (await json(await get('/api/tracker/person?id=' + ids.member, boss.setCookies))).timeline || [];
+    check('an update reaches everyone on it', mt.some(t => /pairing on it/.test(t.text)));
+
+    const off = await post('/api/tracker/items/update', boss.setCookies, { id: pair.id, owner_ids: [ids.member] });
+    check('someone can be taken off it', off.ok && ((((await json(off)).item || {}).owner_ids) || []).length === 1);
+    const pev = (await json(await get('/api/tracker/items/events?id=' + pair.id, boss.setCookies))).events || [];
+    const said = (pev.filter(e => e.kind === 'people').pop() || {}).body || '';
+    check('and the history says who, by name', /took Tracker Admin off/i.test(said), said);
+    check("and it is off their list", !(await onIt(ids.boss)));
+    await post('/api/tracker/items/delete', boss.setCookies, { id: pair.id, title: pairTitle });
+  }
 
   // ── The page ──────────────────────────────────────────────────────────
   console.log('\nthe page');

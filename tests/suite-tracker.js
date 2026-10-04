@@ -14,6 +14,10 @@
  * make it" is on the timeline but does not. Workshop attendance is barely used
  * outside the build season, which is why meetings had to be added at all.
  *
+ * An item can have several people on it (migrations/018). Without 018 that
+ * part says so and is skipped; one person per item keeps working either way,
+ * which is what the rest of the suite exercises.
+ *
  * Outside the tracker, 017 added profile_id to attendance and pt_done_log.
  * This suite checks that a day logged through /api/log carries the account,
  * and that a typed name matching nobody is listed in /admin and can be
@@ -327,6 +331,46 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
   check('and it is off the list', !(um.names || []).some(n => n.key === keyOf(typed)));
   check('matching it again finds nothing to move', (await post('/api/admin/unmatched-names/assign',
     boss.setCookies, { name: typed, profile_id: ids.boss })).status === 404);
+
+  // ── Several people on one item (migrations/018) ─────────────────────
+  console.log('\nseveral people on one item');
+  const pairTitle = PREFIX + 'pair job ' + Date.now();
+  const pairR = await post('/api/tracker/items', boss.setCookies,
+    { title: pairTitle, owner_ids: [ids.member, ids.boss, ids.member] });
+  const pairText = await pairR.text();
+  if (pairR.status === 503 && /018/.test(pairText)) {
+    console.log('  ── owner_ids missing; migration 018 not applied, skipping this part ──');
+  } else {
+    const pair = (JSON.parse(pairText || '{}').item) || {};
+    check('an item can have two people on it', pairR.ok && (pair.owner_ids || []).length === 2,
+      pairText.slice(0, 120));
+    check('in the order given, the duplicate dropped',
+      (pair.owner_ids || [])[0] === ids.member && (pair.owner_ids || [])[1] === ids.boss,
+      JSON.stringify(pair.owner_ids));
+    check('with their names', (pair.owners || []).map(o => o.name).join(',') === 'Tracker Member,Tracker Admin',
+      JSON.stringify(pair.owners));
+    const ghost = await post('/api/tracker/items', boss.setCookies,
+      { title: PREFIX + 'x', owner_ids: [ids.member, '00000000-0000-0000-0000-000000000000'] });
+    check('one ghost in the list refuses the lot', ghost.status === 400, await detail(ghost));
+
+    const onIt = async id => ((await json(await get('/api/tracker/person?id=' + id, boss.setCookies)))
+      .items || []).some(i => i.id === pair.id);
+    check("it is on the first person's list", await onIt(ids.member));
+    check("and on the second person's", await onIt(ids.boss));
+
+    /* An update speaks for everyone on the item except whoever wrote it. */
+    await post('/api/tracker/items/note', boss.setCookies, { id: pair.id, body: 'pairing on it' });
+    const mt = (await json(await get('/api/tracker/person?id=' + ids.member, boss.setCookies))).timeline || [];
+    check('an update reaches everyone on it', mt.some(t => /pairing on it/.test(t.text)));
+
+    const off = await post('/api/tracker/items/update', boss.setCookies, { id: pair.id, owner_ids: [ids.member] });
+    check('someone can be taken off it', off.ok && ((((await json(off)).item || {}).owner_ids) || []).length === 1);
+    const pev = (await json(await get('/api/tracker/items/events?id=' + pair.id, boss.setCookies))).events || [];
+    const said = (pev.filter(e => e.kind === 'people').pop() || {}).body || '';
+    check('and the history says who, by name', /took Tracker Admin off/i.test(said), said);
+    check("and it is off their list", !(await onIt(ids.boss)));
+    await post('/api/tracker/items/delete', boss.setCookies, { id: pair.id, title: pairTitle });
+  }
 
   // ── The page ──────────────────────────────────────────────────────────
   console.log('\nthe page');

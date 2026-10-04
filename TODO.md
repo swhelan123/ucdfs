@@ -662,6 +662,10 @@ tracker on the not-building list. Three things make it a different bet:
 - **No sprints.** The team does continuous work, so the board is todo / doing /
   blocked / done and nothing else.
 - **Private notes about a person**, not tied to an item. Admins only, forever.
+- **Several people on one item** (018), added the same day. Real work is often
+  a pair on one thing, and one name either hid who was actually on it or split
+  one job into copies that drift apart. The first person is who it was mostly
+  made for; nobody is "the owner" beyond that.
 - **Other admins seeing it is fine.** "Admin-only" means every admin account.
 - **It will open to the team.** So the privacy split is in the schema now (see
   below) rather than retrofitted the day it opens.

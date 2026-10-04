@@ -172,6 +172,10 @@
 .hist li:last-child { border-bottom: none; }
 .hist-when { font-size: 0.7rem; color: var(--muted); }
 .hist-body { white-space: pre-line; overflow-wrap: anywhere; }
+/* On the timeline but not a sign of them: a meeting they said no to. */
+.hist li.not-sign { opacity: 0.6; }
+.nocount { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); background: var(--bg); border-radius: 6px; padding: 1px 6px; }
 .lock { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--purple); background: var(--purple-bg); border-radius: 6px; padding: 1px 6px; }
 .note-del {
@@ -489,10 +493,11 @@ function renderFoot() {
 function renderPeopleIntro() {
   const n = PEOPLE.quiet_days;
   $('people-intro').innerHTML = n
-    ? `<b>Quiet</b> means no sign of someone for ${plural(n, 'business day')}: not in the
-       workshop, no flowchart ticks, no purchase requests, and no update written on them or
-       their items. Moving somebody's item yourself doesn't count; writing an update does.
-       Weekends don't count. <a href="/admin">Change the number</a> (0 turns flags off for exams).`
+    ? `<b>Quiet</b> means no sign of someone for ${plural(n, 'business day')}: no team meeting
+       they said yes to, no workshop day, no flowchart ticks, no purchase requests, and no
+       update written on them or their items. Saying they can't make a meeting doesn't count,
+       and neither does moving somebody's item yourself. Weekends don't count.
+       <a href="/admin">Change the number</a> (0 turns flags off for exams).`
     : `Quiet flags are <b>off</b>. <a href="/admin">Turn them back on</a> after exams.`;
 }
 
@@ -535,7 +540,12 @@ function personRow(p) {
   const open = [it.doing ? `<b>${it.doing}</b> doing` : '', it.blocked ? `<b>${it.blocked}</b> blocked` : '',
                 it.todo ? `<b>${it.todo}</b> to do` : ''].filter(Boolean).join(' · ');
   const caps = (p.captain_of || []).map(s => `<span class="cap">Captain · ${esc(subName(s))}</span>`).join('');
-  const last = p.last_day ? `${fmtDay(p.last_day)}: ${p.last_what}` : 'No sign of them yet';
+  const last = (p.last_day ? `${fmtDay(p.last_day)}: ${p.last_what}` : 'No sign of them yet') +
+    (p.said_no ? ` · ${fmtDay(p.said_no.day)}: ${p.said_no.text}` : '');
+  // Meetings lead: they are what most people do most of the year. Workshop days
+  // only show when there are some, which outside the build season is rarely.
+  const recent = [plural(p.meetings || 0, 'meeting'),
+                  p.workshop_days ? plural(p.workshop_days, 'workshop day') : ''].filter(Boolean).join(' · ');
   return `<div class="person" role="button" tabindex="0" id="p-${esc(p.id)}" data-person="${esc(p.id)}">
     ${UCDFS.avatar(p.name, p.photo, 'av av38 av-ink')}
     <div class="person-body">
@@ -543,7 +553,7 @@ function personRow(p) {
         ${p.role_name && !(p.captain_of || []).length ? `<span class="title-tag">${esc(p.role_name)}</span>` : ''}</div>
       <div class="person-last">${esc(last)}</div>
     </div>
-    <div class="person-stats">${plural(p.workshop_days, 'workshop day')} in ${PEOPLE.workshop_span / 7} weeks<br>
+    <div class="person-stats">${recent} in ${PEOPLE.recent_span / 7} weeks<br>
       ${open || 'nothing open'}${it.stale ? ` · <b>${it.stale}</b> stale` : ''}</div>
   </div>`;
 }
@@ -577,9 +587,11 @@ function renderPerson(d) {
                 p.joined ? 'joined ' + fmtDay(p.joined) : ''].filter(Boolean);
   $('person-sub').textContent = bits.join(' · ');
   const open = d.items.filter(i => i.status !== 'done');
+  const met = d.timeline.filter(s => s.kind === 'meeting').length;
   const inShop = d.timeline.filter(s => s.kind === 'workshop').length;
   $('person-stats').innerHTML = [
-    `<div class="stat"><b>${inShop}</b> ${inShop === 1 ? 'workshop day' : 'workshop days'}</div>`,
+    `<div class="stat"><b>${met}</b> ${met === 1 ? 'meeting' : 'meetings'}</div>`,
+    inShop ? `<div class="stat"><b>${inShop}</b> ${inShop === 1 ? 'workshop day' : 'workshop days'}</div>` : '',
     `<div class="stat"><b>${open.filter(i => i.status === 'doing').length}</b> doing</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'blocked').length}</b> blocked</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'todo').length}</b> to do</div>`,
@@ -593,9 +605,10 @@ function renderPerson(d) {
       <span class="badge">${esc(statusName(i.status))}</span>
     </button>`).join('') : '<div class="hint">Nothing assigned.</div>';
   $('person-tl').innerHTML = d.timeline.length ? d.timeline.map(s => `
-    <li>
-      <div class="hist-when">${esc(fmtWhen(s.at))}
+    <li${s.counts === false ? ' class="not-sign"' : ''}>
+      <div class="hist-when">${esc(s.dateonly ? fmtDay(s.day) : fmtWhen(s.at))}
         ${s.private ? '<span class="lock">Private</span>' : ''}
+        ${s.counts === false ? '<span class="nocount">Not counted</span>' : ''}
         ${s.note_id ? `<button class="note-del" type="button" data-note="${esc(s.note_id)}">delete</button>` : ''}</div>
       <div class="hist-body">${esc(s.text)}</div>
     </li>`).join('') : '<li class="hint">No sign of them in this window.</li>';

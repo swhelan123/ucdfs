@@ -652,7 +652,13 @@ tracker on the not-building list. Three things make it a different bet:
   a weekend.
 - **5 days, not 14.** Adjustable from `/admin`, and **0 turns flags off** for
   exams and Christmas, when they would flag everyone.
-- **Meetings and week notes do not count.** People mostly do not fill them in.
+- **Team meetings count; week notes do not.** Corrected the same day, after
+  seeing it on dev: the first version read "don't rely on the meeting progress
+  trackers" as all of `/meetings`, and leaned on workshop attendance, which
+  the team barely uses outside the build season, so nearly everyone showed as
+  quiet. A "yes" for a meeting is a sign; a "no, can't make it" is shown with
+  its reason but is not, because the person still was not there. Week notes,
+  the progress tracker nobody fills in, stay out.
 - **No sprints.** The team does continuous work, so the board is todo / doing /
   blocked / done and nothing else.
 - **Private notes about a person**, not tied to an item. Admins only, forever.

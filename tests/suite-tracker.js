@@ -10,6 +10,10 @@
  * on. The tracker is gated on the role, like /admin itself, and that is the
  * point of checking it this way round.
  *
+ * Team meetings are the main signal during term: a "yes" counts, a "no, can't
+ * make it" is on the timeline but does not. Workshop attendance is barely used
+ * outside the build season, which is why meetings had to be added at all.
+ *
  * Outside the tracker, 017 added profile_id to attendance and pt_done_log.
  * This suite checks that a day logged through /api/log carries the account,
  * and that a typed name matching nobody is listed in /admin and can be
@@ -221,6 +225,26 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
     `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
   await post('/api/tracker/items/delete', boss.setCookies, { id: handed.id, title: handed.title });
 
+  /* Saying no to a meeting is not a sign of you: you still were not there. It
+     is kept for the timeline, with the reason, because "exams" is worth seeing
+     next to a quiet flag. Written with the service key: the meetings page only
+     answers for the current fortnight, and this is about what the tracker
+     reads, not about that page. */
+  await sbFetch('meeting_responses', 'POST', { profile_id: ids.quiet, meeting_date: daysAgo(2),
+                                               attending: false, reason: 'exams' });
+  people = (await json(await get('/api/tracker/people', boss.setCookies))).people || [];
+  check('saying no to a meeting is not a sign of them', row(ids.quiet).state === 'none',
+    `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
+  check('but the reason is on their row, beside the flag it explains',
+    /exams/.test((row(ids.quiet).said_no || {}).text || ''), JSON.stringify(row(ids.quiet).said_no));
+  const missed = await json(await get('/api/tracker/person?id=' + ids.quiet, boss.setCookies));
+  const missLine = (missed.timeline || []).find(t => t.kind === 'missed');
+  check('but it is on their timeline, with the reason, marked as not counting',
+    !!missLine && /exams/.test(missLine.text) && missLine.counts === false,
+    JSON.stringify(missLine || null));
+  check('and does not make them look active there either', (missed.person || {}).state === 'none',
+    (missed.person || {}).state);
+
   // Thirty days ago is at least twenty business days, well past five.
   await sbFetch('attendance', 'POST', { name: 'Tracker Quiet', date: daysAgo(30),
                                         status: 'arriving', profile_id: ids.quiet });
@@ -229,6 +253,17 @@ const daysAgo = n => iso(new Date(Date.now() - n * 86400000));
     `${row(ids.quiet).state} ${row(ids.quiet).quiet_for}`);
   check('quiet people are listed first', people.findIndex(p => p.id === ids.quiet) <
     people.findIndex(p => p.id === ids.member));
+
+  /* The positive control for the "no" above, and the reason this source
+     exists: during term a meeting is most people's only sign. */
+  const yes = (await json(await sbFetch('meeting_responses', 'POST',
+    { profile_id: ids.quiet, meeting_date: daysAgo(1), attending: true })))[0] || {};
+  people = (await json(await get('/api/tracker/people', boss.setCookies))).people || [];
+  check('saying yes to a meeting is a sign of them', row(ids.quiet).state === 'active'
+    && /Said yes/.test(row(ids.quiet).last_what), `${row(ids.quiet).state}: ${row(ids.quiet).last_what}`);
+  check('and is counted on the People list', row(ids.quiet).meetings === 1,
+    String(row(ids.quiet).meetings));
+  await sbFetch(`meeting_responses?id=eq.${yes.id}`, 'DELETE');
 
   console.log('\nattendance carries the account (017)');
   const logged = await post('/api/log', quiet.setCookies, { first_name: 'Tracker', last_name: 'Quiet',

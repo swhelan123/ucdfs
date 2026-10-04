@@ -12,9 +12,11 @@
 --                  todo → doing → blocked → done. An append-only history per
 --                  item, same idea as pt_done_log and purchase_events.
 --    people        nothing to type at all. Derived from what people already
---                  leave behind: attendance, flowchart ticks, purchase
---                  requests, and updates on their items. person_notes is the
---                  one exception, and is admin-only forever.
+--                  leave behind: team meetings they said yes to, attendance,
+--                  flowchart ticks, purchase requests, and updates on their
+--                  items. person_notes is the one exception, and is admin-only
+--                  forever. Meetings need nothing here: meeting_responses has
+--                  been keyed by account since 012.
 --
 --  TODO.md said "do not rebuild Jira", from the Notion post-mortem. Read the
 --  Tracker section there for why this is not that: the Notion tracker asked the

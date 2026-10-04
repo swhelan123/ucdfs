@@ -5291,17 +5291,23 @@ def _purchases_tile() -> dict:
 #   items    Jira-lite, typed by an admin. A title is the only required field.
 #            Continuous flow, no sprints: todo → doing → blocked → done.
 #   people   typed by nobody. Read off what members already leave behind:
-#            workshop days, flowchart ticks, purchase requests, and updates
-#            written on items they own. person_notes is the one admin-written
-#            exception.
+#            team meetings they said yes to, workshop days, flowchart ticks,
+#            purchase requests, and updates written on items they own.
+#            person_notes is the one admin-written exception.
 #
 # "Quiet" means no sign of somebody, and nobody checking in about them, for
 # tracker.quiet_days BUSINESS days (default 5; 0 turns flags off for exams and
 # Christmas), edited from /admin. Weekends never count. Bank holidays do, which
 # is a known gap rather than an oversight: a five-day threshold absorbs one.
 #
-# Meetings and week notes are deliberately NOT signals. Hardly anybody fills
-# them in, so counting them would flag the honest majority and reward the few.
+# Team meetings are the main signal during term. Workshop attendance is barely
+# used outside the build season, and an early version that leaned on it showed
+# nearly the whole team as quiet. A "yes" for a meeting on or before today
+# counts; a "no, can't make it" is drawn on the timeline with its reason but
+# does not count, because the person still was not there.
+#
+# Week notes ("what did you do instead") are NOT a signal. Hardly anybody
+# fills them in, so counting them would reward the few who do.
 #
 # Nothing here writes to the activity feed while the tracker is admin-only. A
 # feed line is on every member's dashboard, and "gave T-14 to Aoife" there
@@ -5330,9 +5336,9 @@ MAX_QUIET_DAYS     = 30
 # anybody reasonably goes between showing up; past it the page says "nothing in
 # 90 days" rather than reading a season of attendance on every load.
 TRACKER_WINDOW_DAYS = 90
-# Workshop days are counted over four weeks: long enough that one missed week
-# does not read as somebody disappearing.
-WORKSHOP_SPAN_DAYS  = 28
+# Meetings and workshop days on the People list are counted over four weeks:
+# long enough that one missed week does not read as somebody disappearing.
+RECENT_SPAN_DAYS = 28
 
 
 def _quiet_days() -> int:
@@ -5924,6 +5930,7 @@ def _tracker_signals(since: date, today: date, items: list,
 
     Each one is {pid, day, at, kind, text}. The sources, and why each counts:
 
+        meeting   a team meeting on or before today that they said yes to
         workshop  an attendance row saying they were in, today or earlier
         tick      a flowchart task they ticked or unticked
         purchase  a purchase request they filed
@@ -5933,6 +5940,11 @@ def _tracker_signals(since: date, today: date, items: list,
 
     Attendance and ticks are matched on profile_id (017), never on the typed
     name. A row nobody has matched yet is skipped here and listed in /admin.
+
+    A meeting they said no to is returned too, with counts=False: worth seeing
+    on their timeline, with the reason they gave, but not a sign of them.
+    Everything else counts. dateonly marks signals with a day and no time, so
+    the page does not print a midnight nobody logged.
 
     Each source is read separately and fails separately. One missing table
     loses one kind of signal, not the page, the same rule the dashboard tiles
@@ -5948,6 +5960,26 @@ def _tracker_signals(since: date, today: date, items: list,
 
     try:
         for r in _all_rows(lambda: mine(
+                sb().table("meeting_responses")
+                .select("id,profile_id,meeting_date,attending,reason")
+                .gte("meeting_date", since_iso).lte("meeting_date", today_iso), "profile_id")):
+            d = _day_of(r.get("meeting_date"))
+            if not d or not r.get("profile_id"):
+                continue
+            what = (_session_day(d) or {}).get("name") or "the team meeting"
+            base = {"pid": r["profile_id"], "day": d, "at": f"{d.isoformat()}T00:00",
+                    "dateonly": True}
+            if r.get("attending"):
+                out.append({**base, "kind": "meeting", "text": f"Said yes to {what}"})
+            else:
+                reason = " ".join(str(r.get("reason") or "").split())
+                out.append({**base, "kind": "missed", "counts": False,
+                            "text": f"Couldn't make {what}" + (f": {reason}" if reason else "")})
+    except Exception as e:
+        logger.error(f"[tracker] meeting signals failed (012 applied?): {e}")
+
+    try:
+        for r in _all_rows(lambda: mine(
                 sb().table("attendance").select("id,date,time,status,profile_id")
                 .gte("date", since_iso).lte("date", today_iso).eq("status", "arriving"),
                 "profile_id")):
@@ -5956,7 +5988,7 @@ def _tracker_signals(since: date, today: date, items: list,
             t = _hm(r.get("time"))
             out.append({"pid": r["profile_id"], "day": _day_of(r.get("date")),
                         "at": f"{str(r.get('date'))[:10]}T{t or '00:00'}",
-                        "kind": "workshop",
+                        "dateonly": not t, "kind": "workshop",
                         "text": "In the workshop" + (f" from {t}" if t else "")})
     except Exception as e:
         logger.error(f"[tracker] attendance signals failed (017 applied?): {e}")
@@ -6103,13 +6135,21 @@ async def api_tracker_people(request: Request):
     items   = _items_rows()
     signals = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items or [])
 
-    span_start = today - timedelta(days=WORKSHOP_SPAN_DAYS)
+    span_start = today - timedelta(days=RECENT_SPAN_DAYS)
     last: dict = {}
-    workshop: dict = {}
+    said_no: dict = {}
+    recent: dict = {}
     for s in signals:                       # newest first, so the first one wins
-        last.setdefault(s["pid"], s)
-        if s["kind"] == "workshop" and s["day"] > span_start:
-            workshop.setdefault(s["pid"], set()).add(s["day"])
+        if s.get("counts", True):
+            last.setdefault(s["pid"], s)
+        elif s["kind"] == "missed" and s["pid"] not in last:
+            # Only if it is newer than their last real sign. "Couldn't make
+            # Thursday: exams" beside a quiet flag is the answer to the
+            # question the flag asks, so it belongs on the row, not only in
+            # the timeline. It still does not count.
+            said_no.setdefault(s["pid"], s)
+        if s["kind"] in ("meeting", "workshop") and s["day"] > span_start:
+            recent.setdefault((s["pid"], s["kind"]), set()).add(s["day"])
     _label_ticks(list(last.values()))
     counts = _open_counts(items or [])
 
@@ -6124,7 +6164,10 @@ async def api_tracker_people(request: Request):
             "joined":        p["joined"].isoformat() if p["joined"] else None,
             "last_day":      s["day"].isoformat() if s else None,
             "last_what":     s["text"] if s else "",
-            "workshop_days": len(workshop.get(p["id"], ())),
+            "said_no":       ({"day": said_no[p["id"]]["day"].isoformat(),
+                               "text": said_no[p["id"]]["text"]} if p["id"] in said_no else None),
+            "meetings":      len(recent.get((p["id"], "meeting"), ())),
+            "workshop_days": len(recent.get((p["id"], "workshop"), ())),
             "items":         counts.get(p["id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0}),
         })
     people.sort(key=lambda x: (rank.get(x["state"], 9), -(x["quiet_for"] or 0), x["name"].lower()))
@@ -6133,7 +6176,7 @@ async def api_tracker_people(request: Request):
         "people":        people,
         "quiet_days":    n,
         "window_days":   TRACKER_WINDOW_DAYS,
-        "workshop_span": WORKSHOP_SPAN_DAYS,
+        "recent_span":   RECENT_SPAN_DAYS,
         "subteams":      SUBTEAMS,
         "today":         today.isoformat(),
     }
@@ -6172,7 +6215,8 @@ async def api_tracker_person(request: Request, id: str = ""):
     if not _sees_private(me):
         timeline = [s for s in timeline if not s.get("private")]
     people = _people_by_id()
-    st = _quiet_state(timeline[0]["day"] if timeline else None, person["joined"], today, n)
+    newest = next((s for s in timeline if s.get("counts", True)), None)
+    st = _quiet_state(newest["day"] if newest else None, person["joined"], today, n)
     theirs = [_dress_item(r, people, today, n) for r in items if r.get("owner_id") == pid]
     order = {s: i for i, s in enumerate(("blocked", "doing", "todo", "done"))}
     theirs.sort(key=lambda i: (order.get(i["status"], 9), -(i["idle_days"] or 0)))

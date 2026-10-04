@@ -41,6 +41,13 @@ still being ticked off. Same team, same year, opposite outcome. The differences:
 Generalise it (see "Build Plans") rather than starting a generic task tracker
 that will die next March for the same reasons.
 
+**Amended 2026-10-04.** Half of the diagnosis was missing: Notion is also just
+hard to use, and a purpose-built tool does not have to be. That does not undo
+the rest of the table. It narrows what "do not rebuild Jira" forbids to what
+actually killed the last one: a tool that asks the *whole team* to fill in forms
+and breaks nothing when they stop. The Tracker below is the case it does not
+cover, and the section says why.
+
 ---
 
 ## Near-term: cheap dashboard wins
@@ -615,6 +622,90 @@ but it is live, and it is money.
 
 ---
 
+## Tracker  🎯  *(built 2026-10-04, admin-only)*
+
+`/tracker`, `migrations/017`. Who is working on what, and who has gone quiet.
+The mechanics and the rules are in CLAUDE.md under "The tracker"; this is the
+why.
+
+### Why this is not the thing the post-mortem forbids
+
+The person who wanted it asked for "something like Jira" for themselves, from
+an internship where they took tickets. Read literally that is the generic task
+tracker on the not-building list. Three things make it a different bet:
+
+- **One person writes the items, and it is the person who wants them.** The
+  Notion tracker needed the whole team to keep it current and died the month
+  they stopped. A tool whose only writer is its only reader lives or dies by
+  that one person, which is a much better bet.
+- **Half of it asks nobody for anything.** The People view reads what members
+  already leave behind: workshop days, flowchart ticks, purchase requests. It
+  keeps working in March, when nobody has time to update a tracker, which is
+  exactly when the Notion one stopped.
+- **Purpose-built is easier than Notion**, which was the other half of the
+  diagnosis all along. A title is the only required field; a status is one
+  click.
+
+### Decided with the person it is for
+
+- **Business days, not calendar days**, for "quiet". Nobody is quiet for having
+  a weekend.
+- **5 days, not 14.** Adjustable from `/admin`, and **0 turns flags off** for
+  exams and Christmas, when they would flag everyone.
+- **Meetings and week notes do not count.** People mostly do not fill them in.
+- **No sprints.** The team does continuous work, so the board is todo / doing /
+  blocked / done and nothing else.
+- **Private notes about a person**, not tied to an item. Admins only, forever.
+- **Other admins seeing it is fine.** "Admin-only" means every admin account.
+- **It will open to the team.** So the privacy split is in the schema now (see
+  below) rather than retrofitted the day it opens.
+
+### Two decisions made on the way that are worth knowing
+
+**A status change somebody else made is not a sign of you.** The first version
+counted any status change on your item, and the screenshot showed the bug: the
+quiet member's item was moved to Doing by the admin, and the member came up
+Active. Assigning work and clicking Start would hide exactly the people this
+view exists to surface. A *written* update does count: somebody checked in,
+which is what the flag was asking for.
+
+**The accounts went onto attendance and pt_done_log, not into a lookup.**
+Matching typed names at read time would have made the People view guess every
+time, and "Cian OB" and "Cian O'Brien" would have been two people forever. 017
+stamps the account on the row instead: backfilled where a name matches exactly
+one account, written on every new row, and the rest listed in `/admin` to match
+by hand once. That list only shrinks.
+
+### When it opens to the team
+
+- Members see items and can move and update **their own**. `_may_edit_item()`
+  already takes the item, so this is relaxing one rule. Captains (granted, from
+  `captaincies`) for their division is the obvious second step.
+- The **People view and quiet flags stay admin-only**, as the org chart's flags
+  do. Captains seeing their own division is a separate call.
+- **Private updates stay private.** That is why the flag exists now.
+- Feed lines for finished items, and the "3 things assigned to you" dashboard
+  tile from Near-term #4, become possible. Neither is safe before it opens.
+- `notify()` (see Teams notifications) for "you've been given T-14" and "T-9
+  has been blocked for a week" is what makes it load-bearing for anybody but
+  the admin.
+
+### Still open
+
+- **The flowchart overlap.** Flowcharts were going to gain an owner, a due date
+  and a blocked flag per task (see Flowcharts, "Still to do"). Do that and there
+  are two places that hold "a thing with an owner and a status". Not urgent
+  while charts are build plans and the tracker holds design-phase and team
+  work, but decide which is which before either grows into the other. The cheap
+  version: an item's link points at the chart.
+- **Kieran's Gantt chart.** Nobody knows where it is or how current it is. If it
+  turns up with real dates, they belong in `SEASON_MILESTONES` (still empty) and
+  as due dates here, not in a third tool.
+- **Bank holidays count as business days.** A five-day threshold absorbs one;
+  revisit if it flags people across Easter.
+
+---
+
 ## Tier 2: once Tier 1 has stuck
 
 ### Inventory & Orders  📦
@@ -778,8 +869,10 @@ with god mode as the only override.
   them. Mirrored files go stale and then actively mislead.
 - **Calendar**: Outlook. A read-only "next 3 events" strip on the dashboard is
   fine; owning the calendar is not.
-- **A generic task tracker**: see the Notion post-mortem above. Domain-shaped
-  build plans instead.
+- **A generic task tracker for the whole team to fill in**: see the Notion
+  post-mortem above. Domain-shaped build plans instead. The Tracker is the
+  narrow exception and says why: one writer who wants it, and half of it reads
+  what people already do.
 
 ---
 

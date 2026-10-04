@@ -28,6 +28,8 @@
 #   comp_roster, comp_requests        who is on for which day, who bought what
 #   pt_done_log                       carries user_name
 #   activity_log                      carries actor names
+#   work_items, work_item_events,     who is doing what, and admins' notes on
+#   person_notes                      named people (the tracker, 017)
 #
 # The rule is not "is it sensitive" but "is it about a person". A staging
 # environment is something you hand to a new committee member to break. Real

@@ -180,6 +180,28 @@ const LEGACY_SECTIONS = ['lv', 'tdp', 'tsac', 'cc', 'bp', 'sw', 'hv'];
       !!logged && logged.user_name === 'Plans Check',
       logged ? `user_name=${logged.user_name}` : 'no log line at all');
 
+    /* And with the account itself, not only its name (migrations/017), so the
+       tracker can count a tick as somebody's work without matching on
+       spelling. Read with the service key: the column is not in /pt/api/state,
+       because nothing on the canvas needs it. */
+    {
+      const SB = process.env.SUPABASE_URL, KEY = process.env.SUPABASE_SERVICE_KEY;
+      const r = await fetch(`${SB}/rest/v1/pt_done_log?plan_id=eq.${encodeURIComponent(chart)}` +
+        `&node_id=eq.${encodeURIComponent(nid)}&select=profile_id`,
+        { headers: { apikey: KEY, Authorization: 'Bearer ' + KEY } });
+      const body = await r.text();
+      if (!r.ok && /profile_id/.test(body)) {
+        console.log('  ── pt_done_log has no profile_id; migration 017 not applied, skipping ──');
+      } else {
+        const me = ((await get('/api/profile/me')) || {}).person || {};
+        let rows = [];
+        try { rows = JSON.parse(body); } catch (e) { /* reported below */ }
+        check('the tick carries the account as well as the name',
+          Array.isArray(rows) && rows.length > 0 && rows.every(x => x.profile_id === me.id),
+          body.slice(0, 120));
+      }
+    }
+
     await post('/pt/api/toggle',
       { plan: chart, node_id: nid, done: false, user_name: 'Somebody Else' });
     await post('/pt/api/toggle',

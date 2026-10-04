@@ -154,7 +154,7 @@ PY
 # pushes real activity further down the homepage.
 #
 # Keep in step with the signUp() calls in the suites.
-TEST_ACTORS='Meeting Principal,Meeting Director,Start Live,Glossary Member,Glossary Editor,Tour Seen,Meeting Check,Meeting Other,Start Here,Start Admin,Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Admin Claimer,Plans Check,Links Member,Links Boss,Test Bot,Purchase Member,Purchase Deptcap,Purchase Opscap,Purchase Bystander,Org Principal,Org Captain,Org Claimer,Org Vice,Org Member,Org Alum,Org Fresh,Org Viewer'
+TEST_ACTORS='Meeting Principal,Meeting Director,Start Live,Glossary Member,Glossary Editor,Tour Seen,Meeting Check,Meeting Other,Start Here,Start Admin,Profile Alpha,Profile Bravo,Profile Fresh,Profile Deep,Page Check,Comp Check,Harness Check,Admin Probe,Admin Victim,Admin Doomed,Admin Claimer,Plans Check,Links Member,Links Boss,Test Bot,Purchase Member,Purchase Deptcap,Purchase Opscap,Purchase Bystander,Org Principal,Org Captain,Org Claimer,Org Vice,Org Member,Org Alum,Org Fresh,Org Viewer,Tracker Member,Tracker Admin,Tracker Quiet'
 
 # Remove feed lines written during THIS run by those names. Guarded on both:
 # a name on its own could in principle belong to a real member, and a time
@@ -235,6 +235,36 @@ try:
 except Exception as e:
     # The table may not exist yet (016 unapplied). Never fail a run over tidying.
     print(f"  cleanup: could not tidy the glossary ({e})")
+PY
+}
+
+cleanup_tracker() {
+  # Items made by suite-tracker (migrations/017), matched on the title prefix
+  # for the reason links and glossary terms are: a run that crashes between
+  # making an item and deleting it never learns the id. Their history cascades
+  # with them. A leftover is a card on the non-prod board every admin sees.
+  #
+  # Plus attendance rows the suite types under the prefix to test unmatched
+  # names. Those outlive everything else on purpose (attendance records what
+  # happened, not who exists), so nothing else would ever remove them.
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$TEST_PREFIX" <<'PY'
+import json, sys, urllib.parse, urllib.request
+
+url, key, prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+for table, col, what in (("work_items", "title", "tracker item(s)"),
+                         ("attendance", "name", "test attendance row(s)")):
+    q = f"/rest/v1/{table}?{col}=like." + urllib.parse.quote(prefix + "*", safe="")
+    req = urllib.request.Request(url + q, headers={**hdr, "Prefer": "return=representation"},
+                                 method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            rows = json.loads(r.read() or "[]")
+        if rows:
+            print(f"  cleanup: removed {len(rows)} {what}")
+    except Exception as e:
+        # The table may not exist yet (017 unapplied). Never fail a run over tidying.
+        print(f"  cleanup: could not tidy {table} ({e})")
 PY
 }
 

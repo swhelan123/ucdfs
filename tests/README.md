@@ -66,6 +66,7 @@ test display names; both conditions are required. Add a name to `TEST_ACTORS` in
 | `plans` | charts as rows: the id whitelist, server-minted ids, and that a chart holding work cannot be deleted |
 | `links` | admin-managed hyperlink cards and the blocks they sit in: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it, and that a block holding cards cannot be deleted |
 | `glossary` | the glossary as rows: only admins, committee and granted captains may change it (a self-set captain label may not), ids are minted server-side, a term exists once whatever its capitalisation, and a definition is drawn as text, never markup |
+| `tracker` | the admin-only tracker: a member is refused the page, the card and every endpoint; an admin gets in without the override; who counts as quiet and what does not count; private updates stay marked private; and that 017's account stamp lands on attendance and that unmatched names can be matched |
 
 ## Regressions these exist to catch
 

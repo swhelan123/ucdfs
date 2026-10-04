@@ -168,6 +168,18 @@
 .su-head { font-weight: 800; font-size: 0.85rem; margin: 14px 0 6px; }
 .su-list { font-size: 0.82rem; line-height: 1.7; color: var(--muted); word-break: break-all; }
 .su-list b { color: var(--text); font-weight: 600; }
+
+/* ── Tracker settings and unmatched names ── */
+.set-row { display: flex; align-items: center; gap: 12px; padding: 14px 15px; flex-wrap: wrap; }
+.set-body { flex: 1; min-width: 200px; }
+.set-name { font-weight: 600; font-size: 0.9rem; }
+.set-sub { font-size: 0.75rem; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.set-num {
+  width: 76px; padding: 8px 10px; font: inherit; font-size: 0.9rem; text-align: center;
+  border: 2px solid var(--border); border-radius: 11px; outline: none;
+}
+.set-num:focus { border-color: var(--indigo); }
+.um-pick { max-width: 200px; }
 </style>
 </head>
 <body>
@@ -269,6 +281,32 @@
       else. They are not permissions: anybody can open any link on this list.
       <b>Quiet</b> dims a card without removing it, for something off-season or
       superseded.
+    </div>
+
+    <div class="section-label">Tracker</div>
+    <div class="card">
+      <div class="set-row">
+        <div class="set-body">
+          <div class="set-name">Quiet after</div>
+          <div class="set-sub">Business days with no sign of somebody before the tracker flags
+            them. 0 turns the flags off, for exams and Christmas.</div>
+        </div>
+        <input class="set-num" id="quiet-days" type="number" min="0" max="30" step="1"
+               aria-label="Business days before somebody counts as quiet">
+        <button class="btn btn-dark btn-sm" id="quiet-save" type="button">Save</button>
+      </div>
+    </div>
+
+    <div class="section-label">Names that match no account</div>
+    <div class="card"><div id="unmatched"></div></div>
+    <div class="note">
+      Attendance and flowchart ticks were typed by name before there were accounts.
+      Wherever a name matched <b>exactly one</b> account it was linked to it
+      automatically. These are what's left: typos, nicknames, two people with the
+      same name, people who never signed up. Matching one links every row typed that
+      way to that person, so the tracker counts them. New rows are linked as they are
+      written, so this list only gets shorter. A wrong match can't be undone from
+      here, so check before you click.
     </div>
 
     <div class="note">
@@ -903,6 +941,110 @@ async function setCaptain(subteam, profileId) {
   await loadCaptains();
 }
 
+/* ── Tracker ─────────────────────────────────────────────────────────────────
+   The quiet threshold, and typed names that 017 could not match to an account.
+   Neither writes to the activity feed: the tracker is admin-only, and a feed
+   line is on every member's dashboard. */
+let UNMATCHED = { ready: true, names: [], people: [] };
+
+async function loadSettings() {
+  const r = await fetch('/api/admin/settings');
+  if (!r.ok) throw new Error('Could not load settings');
+  const j = await r.json();
+  const box = document.getElementById('quiet-days');
+  box.value = j.quiet_days;
+  if (j.quiet_days_max) box.max = j.quiet_days_max;
+}
+
+async function saveQuiet(btn) {
+  const raw = document.getElementById('quiet-days').value.trim();
+  if (!/^\d+$/.test(raw)) { UCDFS.toast('A whole number of days, 0 or more'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quiet_days: Number(raw) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(j.quiet_days ? `Quiet after ${j.quiet_days} business day${j.quiet_days === 1 ? '' : 's'}`
+                             : 'Quiet flags are off');
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderUnmatched() {
+  const box = document.getElementById('unmatched');
+  if (!UNMATCHED.ready) {
+    box.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">This needs migration 017. Apply it and reload.</div></div>';
+    return;
+  }
+  if (!UNMATCHED.names.length) {
+    box.innerHTML = '<div class="empty"><div class="empty-icon">✅</div>' +
+      '<div class="empty-text">Every name is matched to an account.</div></div>';
+    return;
+  }
+  const esc = UCDFS.esc;
+  box.innerHTML = UNMATCHED.names.map(n => {
+    const what = [n.attendance ? `${n.attendance} workshop day${n.attendance === 1 ? '' : 's'}` : '',
+                  n.ticks ? `${n.ticks} tick${n.ticks === 1 ? '' : 's'}` : '',
+                  n.last ? 'last ' + n.last : ''].filter(Boolean).join(' · ');
+    const pick = UNMATCHED.people.map(p =>
+      `<option value="${esc(p.id)}" ${p.id === n.suggest ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+    return `
+      <div class="lnk">
+        <div class="lnk-icon">✍️</div>
+        <div class="lnk-body">
+          <div class="lnk-name">${esc(n.name)}
+            ${n.ambiguous ? '<span class="lnk-tag">two accounts have this name</span>' : ''}</div>
+          <div class="lnk-url">${esc(what)}</div>
+        </div>
+        <select class="who-role um-pick" data-key="${esc(n.key)}" aria-label="Who this is">
+          <option value="">Who is this?</option>${pick}
+        </select>
+        <button class="lnk-btn" type="button" data-match="${esc(n.key)}">Match</button>
+      </div>`;
+  }).join('');
+}
+
+async function loadUnmatched() {
+  const r = await fetch('/api/admin/unmatched-names');
+  if (!r.ok) throw new Error('Could not load unmatched names');
+  UNMATCHED = await r.json();
+  renderUnmatched();
+}
+
+async function matchName(btn, key) {
+  const n = UNMATCHED.names.find(x => x.key === key);
+  /* Found by comparing dataset values rather than through a selector: these
+     keys are names, and O'Brien and quotes in a selector are a bug waiting. */
+  const sel = Array.from(document.querySelectorAll('select[data-key]'))
+    .find(x => x.dataset.key === key);
+  const who = sel && UNMATCHED.people.find(p => p.id === sel.value);
+  if (!n || !who) { UCDFS.toast('Pick who it is first'); return; }
+  if (!confirm(`Link everything typed as "${n.name}" to ${who.name}?\n\n` +
+               "That's every unmatched workshop day and tick under that name. " +
+               "It can't be undone from here.")) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/unmatched-names/assign', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: n.name, profile_id: who.id }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    UCDFS.toast(`Linked to ${who.name}`);
+    await loadUnmatched();
+  } catch (e) {
+    btn.disabled = false;
+    UCDFS.toast(e.message || "Couldn't match that");
+  }
+}
+
 async function boot() {
   UCDFS.renderPill();
   document.getElementById('god-switch').addEventListener('click', toggleGod);
@@ -934,6 +1076,13 @@ async function boot() {
   });
   document.getElementById('grp-add').addEventListener('click', addBlock);
 
+  document.getElementById('quiet-save').addEventListener('click',
+    e => saveQuiet(e.currentTarget));
+  document.getElementById('unmatched').addEventListener('click', e => {
+    const b = e.target.closest('button[data-match]');
+    if (b) matchName(b, b.dataset.match);
+  });
+
   try {
     await load();
   } catch (e) {
@@ -959,6 +1108,20 @@ async function boot() {
     document.getElementById('groups').innerHTML =
       '<div class="empty"><div class="empty-icon">⚠️</div>' +
       '<div class="empty-text">Could not load the blocks.</div></div>';
+  }
+
+  try {
+    await loadSettings();
+  } catch (e) {
+    UCDFS.toast('Could not load the tracker setting');
+  }
+
+  try {
+    await loadUnmatched();
+  } catch (e) {
+    document.getElementById('unmatched').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>' +
+      '<div class="empty-text">Could not load unmatched names.</div></div>';
   }
 }
 

@@ -403,6 +403,22 @@ APPLETS = [
         "group":  "reference",
     },
     {
+        "id":     "tracker",
+        "name":   "Tracker",
+        "icon":   "🎯",
+        "route":  "/tracker",
+        "file":   "tracker.html",
+        "blurb":  "Who's working on what, what's stuck, and who's gone quiet",
+        "accent": "indigo",
+        "status": "live",
+        "subteams": ["all"],
+        # Admin-only while it is one person's tool. Every /api/tracker/*
+        # endpoint checks again: this field hides the card and the page, and
+        # hiding a page is not a permission. See the Tracker section of TODO.md
+        # for what changes when it opens to the team.
+        "requires_role": "admin",
+    },
+    {
         "id":     "admin",
         "name":   "Admin",
         "icon":   "🔑",
@@ -412,8 +428,8 @@ APPLETS = [
         "accent": "red",
         "status": "live",
         "subteams": ["all"],
-        # The only gated entry. Everyone else never sees the card at all,
-        # /api/applets omits it rather than showing a tile that 403s.
+        # Gated, like the tracker above. Everyone else never sees the card at
+        # all: /api/applets omits it rather than showing a tile that 403s.
         "requires_role": "admin",
     },
     # ── Archive ───────────────────────────────────────────────────────────
@@ -1241,11 +1257,62 @@ def _me_name(request: Request) -> str:
     return " ".join(_public_profile(current_profile(request)).get("name", "").split())
 
 
+def _fold_name(s: str) -> str:
+    """The comparable form of a typed name: case folded, whitespace collapsed.
+    migrations/017 does the same in SQL for its backfill, and the two have to
+    agree or the backfill and the live writes disagree about who someone is."""
+    return " ".join((s or "").split()).lower()
+
+
 def _same_person(a: str, b: str) -> bool:
     """Case-folded, whitespace-collapsed name comparison. Same rule as
     _require_own_row: rows typed by hand before accounts existed spell people
     inconsistently, and "shane whelan" is "Shane  Whelan"."""
-    return " ".join((a or "").split()).lower() == " ".join((b or "").split()).lower()
+    return _fold_name(a) == _fold_name(b)
+
+
+def _profile_id_for_name(name: str) -> Optional[str]:
+    """The one account whose name this is, or None.
+
+    None when nobody matches AND when two people do. Same rule as the 017
+    backfill: guessing between two members with the same name would put one
+    person's history on the other with nothing on screen to say so. A null
+    stays visible in /admin as an unmatched name; a wrong id is invisible.
+    """
+    key = _fold_name(name)
+    if not key:
+        return None
+    try:
+        rows = sb().table("profiles").select("id,first_name,last_name").execute().data or []
+    except Exception as e:
+        logger.error(f"[names] profile lookup failed: {e}")
+        return None
+    hits = [r["id"] for r in rows
+            if _fold_name((r.get("first_name") or "") + " " + (r.get("last_name") or "")) == key]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _write_stamped(write, row: dict):
+    """Run a write whose row carries profile_id, and survive 017 not being
+    applied yet.
+
+    attendance and pt_done_log gained the column in 017. Writing it to a
+    database that does not have it is a PostgREST error, and these are the two
+    busiest writes on the site: logging a day and ticking a task must not start
+    failing because a migration was forgotten. So the write is retried without
+    the stamp, which costs only the attribution, and the row then shows up in
+    /admin as an unmatched name once 017 lands.
+
+    Retried only when the error names the column. Anything else is a real
+    failure and is raised exactly as it was before this existed.
+    """
+    try:
+        return write(row)
+    except Exception as e:
+        if "profile_id" not in row or "profile_id" not in str(e):
+            raise
+        logger.error(f"[017] wrote without profile_id ({e}). Has migration 017 been applied?")
+        return write({k: v for k, v in row.items() if k != "profile_id"})
 
 
 # ── God mode ──────────────────────────────────────────────────────────────────
@@ -1843,38 +1910,81 @@ async def api_admin_captain_set(request: Request):
 @app.get("/api/admin/settings")
 async def api_admin_settings(request: Request):
     require_role(request, "admin")
-    return {"threshold_eur": str(_threshold_eur())}
+    return {"threshold_eur": str(_threshold_eur()),
+            "quiet_days": _quiet_days(), "quiet_days_max": MAX_QUIET_DAYS}
 
 
 @app.post("/api/admin/settings")
 async def api_admin_settings_set(request: Request):
-    """Change the approval threshold.
+    """Change a setting: the approval threshold, the tracker's quiet threshold,
+    or both. Only the keys present in the body are touched.
 
-    Data rather than a constant because it will be argued about and changing it
-    must not be a deploy. It does not reach back: every open request froze the
+    Data rather than constants because they will be argued about and changing
+    them must not be a deploy.
+
+    The approval threshold does not reach back: every open request froze the
     threshold it was filed under, so moving this decides what happens next
     rather than silently rewriting what a queue of pending requests needs.
+
+    The quiet threshold is read live, so changing it re-draws every flag on the
+    next page load. 0 turns the flags off, for exams and Christmas.
+
+    Everything is validated before anything is written, so a bad value for one
+    key cannot leave the other half-saved.
     """
     me = require_role(request, "admin")
     b  = await request.json()
-    try:
-        v = Decimal(str(b.get("threshold_eur")))
-    except (InvalidOperation, ValueError, TypeError):
-        raise HTTPException(400, "That is not a number")
-    if v < 0:
-        raise HTTPException(400, "A threshold cannot be negative")
-    try:
+    if "threshold_eur" not in b and "quiet_days" not in b:
+        raise HTTPException(400, "Nothing to change")
+
+    threshold = None
+    if "threshold_eur" in b:
+        try:
+            threshold = Decimal(str(b.get("threshold_eur")))
+        except (InvalidOperation, ValueError, TypeError):
+            raise HTTPException(400, "That is not a number")
+        if threshold < 0:
+            raise HTTPException(400, "A threshold cannot be negative")
+
+    quiet = None
+    if "quiet_days" in b:
+        raw = b.get("quiet_days")
+        # Whole days only. int(True) is 1 and int(5.9) is 5, and neither is
+        # what anybody typed, so both are refused rather than quietly read.
+        if isinstance(raw, bool) or not re.fullmatch(r"\s*\d+\s*", str(raw)):
+            raise HTTPException(400, "Quiet days has to be a whole number of days")
+        quiet = int(str(raw))
+        if quiet > MAX_QUIET_DAYS:
+            raise HTTPException(400, f"Quiet days can be at most {MAX_QUIET_DAYS}")
+
+    def put(key: str, value: str):
         supabase.table("settings").upsert({
-            "key": "finance.threshold_eur", "value": str(v),
+            "key": key, "value": value,
             "updated_at": datetime.now(TEAM_TZ).isoformat(),
             "updated_by": me.get("id"),
         }, on_conflict="key").execute()
-    except Exception as e:
-        logger.error(f"[admin] threshold save failed: {e}")
-        raise HTTPException(503, "Couldn't save that. Has migration 015 been applied?")
-    log_activity("admin", _public_profile(me).get("name"),
-                 "set the approval threshold to", f"EUR {v}")
-    return {"ok": True, "threshold_eur": str(v)}
+
+    out: dict = {"ok": True}
+    if quiet is not None:
+        try:
+            put("tracker.quiet_days", str(quiet))
+        except Exception as e:
+            logger.error(f"[admin] quiet days save failed: {e}")
+            raise HTTPException(503, "Couldn't save that. Has migration 015 been applied?")
+        # No feed line. The tracker is admin-only, and "set the quiet threshold
+        # to 5" on every dashboard would announce it to the whole team.
+        out["quiet_days"] = quiet
+
+    if threshold is not None:
+        try:
+            put("finance.threshold_eur", str(threshold))
+        except Exception as e:
+            logger.error(f"[admin] threshold save failed: {e}")
+            raise HTTPException(503, "Couldn't save that. Has migration 015 been applied?")
+        log_activity("admin", _public_profile(me).get("name"),
+                     "set the approval threshold to", f"EUR {threshold}")
+        out["threshold_eur"] = str(threshold)
+    return out
 
 
 @app.post("/api/admin/user/delete")
@@ -3201,15 +3311,23 @@ async def media_avatar(filename: str):
 # ── Supabase helpers ──────────────────────────────────────────────────────────
 def upsert_attendance(name: str, target_date: str, status: str,
                       arrival_time: Optional[str],
-                      departure_time: Optional[str] = None):
+                      departure_time: Optional[str] = None,
+                      profile_id: Optional[str] = None):
     logger.info(f"Upserting: {name} {target_date} {status} {arrival_time} → {departure_time}")
-    result = supabase.table("attendance").upsert({
+    row = {
         "name":           name,
         "date":           target_date,
         "status":         status,
         "time":           arrival_time,
         "departure_time": departure_time,
-    }, on_conflict="name,date").execute()
+    }
+    # Whose row this is, as an account rather than a spelling (017). Still
+    # keyed on the name: the unique constraint and every reader predate the
+    # column, and this adds to them rather than replacing them.
+    if profile_id:
+        row["profile_id"] = profile_id
+    result = _write_stamped(
+        lambda r: supabase.table("attendance").upsert(r, on_conflict="name,date").execute(), row)
     logger.info(f"Upsert result: {result}")
 
 
@@ -3485,13 +3603,16 @@ async def pt_toggle(request: Request):
         supabase.table("pt_progress").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
     else:
         supabase.table("pt_done").delete().eq("plan_id", pid).eq("node_id", node_id).execute()
-    # Append-only audit log: never overwrite previous entries
-    supabase.table("pt_done_log").insert({
-        "plan_id":   pid,
-        "node_id":   node_id,
-        "done":      done,
-        "user_name": user_name,
-    }).execute()
+    # Append-only audit log: never overwrite previous entries. Signed with the
+    # account as well as the name (017), so the tracker can count this tick as
+    # somebody's work without matching on spelling.
+    _write_stamped(lambda r: supabase.table("pt_done_log").insert(r).execute(), {
+        "plan_id":    pid,
+        "node_id":    node_id,
+        "done":       done,
+        "user_name":  user_name,
+        "profile_id": current_profile(request)["id"],
+    })
     return {"ok": True}
 
 
@@ -3952,9 +4073,15 @@ async def log_web(request: Request):
 
     name = f"{first_name} {last_name}"
     _require_own_row(request, name)
+    # Your own row carries your account. A row god mode writes for somebody
+    # else carries theirs only if exactly one account has that name; otherwise
+    # it stays unstamped and turns up in /admin to be matched by hand.
+    owner = (current_profile(request)["id"] if _same_person(name, _me_name(request))
+             else _profile_id_for_name(name))
     logger.info(f"[log_web] {name} | {target_date} | {status} | {arrival_time} → {departure_time}")
     try:
-        upsert_attendance(name, target_date, status, arrival_time, departure_time)
+        upsert_attendance(name, target_date, status, arrival_time, departure_time,
+                          profile_id=owner)
         if status == "arriving":
             parts = [f"Logged {name} as coming in on {target_date}"]
             if arrival_time:   parts.append(f"arriving {arrival_time}")
@@ -5152,6 +5279,1073 @@ def _purchases_tile() -> dict:
     else:
         detail = "nothing requested yet"
     return {"open": len(open_rows), "approved": approved, "detail": detail}
+
+
+# ── Tracker (migrations/017) ──────────────────────────────────────────────────
+# Who is working on what, and who has gone quiet. Admin-only for now: the
+# registry entry hides the card and the page, and every endpoint here checks
+# again through _require_tracker, because hiding a page is not a permission.
+#
+# Two halves, deliberately unequal in what they ask of anybody:
+#
+#   items    Jira-lite, typed by an admin. A title is the only required field.
+#            Continuous flow, no sprints: todo → doing → blocked → done.
+#   people   typed by nobody. Read off what members already leave behind:
+#            workshop days, flowchart ticks, purchase requests, and updates
+#            written on items they own. person_notes is the one admin-written
+#            exception.
+#
+# "Quiet" means no sign of somebody, and nobody checking in about them, for
+# tracker.quiet_days BUSINESS days (default 5; 0 turns flags off for exams and
+# Christmas), edited from /admin. Weekends never count. Bank holidays do, which
+# is a known gap rather than an oversight: a five-day threshold absorbs one.
+#
+# Meetings and week notes are deliberately NOT signals. Hardly anybody fills
+# them in, so counting them would flag the honest majority and reward the few.
+#
+# Nothing here writes to the activity feed while the tracker is admin-only. A
+# feed line is on every member's dashboard, and "gave T-14 to Aoife" there
+# would announce a tool the team cannot open.
+#
+# Everything goes through sb(), like meetings: none of it runs on the tile pool
+# today, and uniform is cheaper than remembering which helper might one day.
+
+TRACKER_STATUSES = [
+    {"id": "todo",    "name": "To do"},
+    {"id": "doing",   "name": "Doing"},
+    {"id": "blocked", "name": "Blocked"},
+    {"id": "done",    "name": "Done"},
+]
+TRACKER_STATUS_IDS = [s["id"] for s in TRACKER_STATUSES]
+MAX_ITEM_TITLE  = 140
+MAX_ITEM_DESC   = 2000
+MAX_ITEM_NOTE   = 1000
+MAX_BLOCKED     = 300
+MAX_PERSON_NOTE = 1000
+DEFAULT_QUIET_DAYS = 5
+# A bound on a number box, not a considered limit. Six weeks of business days
+# is longer than any break in the year, so anything above it is a typo.
+MAX_QUIET_DAYS     = 30
+# How far back the People view reads. Ninety days is a whole term, the longest
+# anybody reasonably goes between showing up; past it the page says "nothing in
+# 90 days" rather than reading a season of attendance on every load.
+TRACKER_WINDOW_DAYS = 90
+# Workshop days are counted over four weeks: long enough that one missed week
+# does not read as somebody disappearing.
+WORKSHOP_SPAN_DAYS  = 28
+
+
+def _quiet_days() -> int:
+    """Business days without a sign of somebody before they are flagged."""
+    raw = _setting("tracker.quiet_days", str(DEFAULT_QUIET_DAYS))
+    try:
+        v = int(str(raw).strip())
+    except ValueError:
+        logger.error(f"[settings] quiet days {raw!r} is not a number; using the default")
+        return DEFAULT_QUIET_DAYS
+    return v if 0 <= v <= MAX_QUIET_DAYS else DEFAULT_QUIET_DAYS
+
+
+def _require_tracker(request: Request) -> dict:
+    """Admins, for now. On the role and not the override, like /admin itself:
+    this is a tool somebody uses all day, and needing to be elevated to read it
+    would mean an admin elevated all day, which is what god mode exists to stop.
+
+    One function, so opening the tracker to the team is one change here."""
+    return require_role(request, "admin")
+
+
+def _may_edit_item(profile: dict, item: dict) -> bool:
+    """Who may change this item. Admins, for now.
+
+    The item is passed in although nothing reads it yet, so that opening up is
+    relaxing this one rule (an owner moving their own item, a granted captain
+    their division's) rather than adding a check to every endpoint. Captain
+    means a row in captaincies, never the label on somebody's card.
+    """
+    return god_on(profile) or (profile or {}).get("role") == "admin"
+
+
+def _sees_private(profile: dict) -> bool:
+    """Who reads private notes. Admins, and that does not change when the
+    tracker opens: a note written on the understanding that only admins read
+    it stays that way. Filtered on the way out even while only admins can call
+    the endpoint, so the rule is in place before the day it matters."""
+    return god_on(profile) or (profile or {}).get("role") == "admin"
+
+
+def _all_rows(build, page: int = 1000) -> list:
+    """Every row a query matches, a page at a time.
+
+    PostgREST stops at 1000 rows per response and does not say so, and
+    attendance passes that inside a term. A count that is silently short is
+    worse than a slow one, so the reads behind the People view page through.
+    `build` returns a fresh query each time, ordered by id so pages neither
+    overlap nor skip.
+    """
+    out, start = [], 0
+    while True:
+        chunk = build().order("id").range(start, start + page - 1).execute().data or []
+        out.extend(chunk)
+        if len(chunk) < page:
+            return out
+        start += page
+
+
+def _day_of(value) -> Optional[date]:
+    """The Dublin calendar day of a date or timestamp string, or None.
+
+    Dublin, not UTC: a tick at 00:30 in July is the day it was on the clock in
+    the workshop, and counting it as the day before is a business day wrong.
+    """
+    if not value:
+        return None
+    s = str(value)
+    try:
+        if len(s) == 10:
+            return date.fromisoformat(s)
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(TEAM_TZ).date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _local_at(value) -> str:
+    """'YYYY-MM-DDTHH:MM' on the Dublin clock, so signals from four tables sort
+    against each other as plain strings."""
+    try:
+        return (datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                .astimezone(TEAM_TZ).strftime("%Y-%m-%dT%H:%M"))
+    except (TypeError, ValueError):
+        return str(value or "")[:16]
+
+
+def _since_ts(day: date) -> str:
+    """Midnight on `day` in Dublin, as a timestamp a timestamptz filter takes."""
+    return datetime(day.year, day.month, day.day, tzinfo=TEAM_TZ).isoformat()
+
+
+def _business_days_since(day: date, today: date) -> int:
+    """Weekdays after `day`, up to and including `today`.
+
+    Seen on a Friday and checked the following Monday is one, not three. That
+    is the whole reason this counts business days: nobody is quiet for having
+    had a weekend.
+    """
+    if day >= today:
+        return 0
+    n, d = 0, day + timedelta(days=1)
+    while d <= today:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def _quiet_state(last: Optional[date], joined: Optional[date], today: date, n: int) -> dict:
+    """Where somebody stands.
+
+        active  seen within n business days
+        quiet   not seen for n business days or more
+        none    nothing at all in the window: never appeared, or not for 90 days
+        new     nothing yet, but they joined less than n business days ago, so
+                there has not been time to be quiet. September is full of these.
+        off     flags are switched off (n = 0)
+
+    `quiet_for` is business days since the last sign, whatever the state.
+    """
+    since = _business_days_since(last, today) if last else None
+    if n <= 0:
+        return {"state": "off", "quiet_for": since}
+    if last is None:
+        if joined and _business_days_since(joined, today) < n:
+            return {"state": "new", "quiet_for": None}
+        return {"state": "none", "quiet_for": None}
+    return {"state": "quiet" if since >= n else "active", "quiet_for": since}
+
+
+def _tracker_roster() -> list:
+    """Everyone the People view shows, which is everyone but retired members.
+
+    Retired members are off it for the reason they are off the org chart: a
+    view built to notice who has gone quiet would otherwise flag every alum
+    on the team, every day, forever.
+    """
+    rows = (sb().table("profiles").select("id,first_name,last_name,subteam,created_at")
+            .execute().data or [])
+    try:
+        details = {d.get("id"): d for d in
+                   (sb().table("profile_details")
+                    .select("id,year,role_label,photo_ext,photo_rev").execute().data or [])}
+    except Exception as e:
+        logger.error(f"[tracker] profile details unavailable: {e}")
+        details = {}
+    leads: dict = {}
+    for sub, pid in _captains().items():
+        leads.setdefault(pid, []).append(sub)
+
+    out = []
+    for r in rows:
+        d = details.get(r.get("id")) or {}
+        if d.get("year") == "Alum":
+            continue
+        role = ROLES_BY_VALUE.get(d.get("role_label") or "")
+        name = ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip()
+        out.append({
+            "id":         r.get("id"),
+            "name":       name or "Someone",
+            "photo":      _avatar_url(r.get("id"), d),
+            "subteam":    r.get("subteam") or "",
+            # The title on their card, for context only. Captaincy below is
+            # the granted one, which is the one that means anything.
+            "role_name":  (role or {}).get("label", ""),
+            "captain_of": sorted(leads.get(r.get("id"), [])),
+            "joined":     _day_of(r.get("created_at")),
+        })
+    out.sort(key=lambda p: p["name"].lower())
+    return out
+
+
+# ── Items ─────────────────────────────────────────────────────────────────────
+
+def _items_rows() -> Optional[list]:
+    """Every item, or None when 017 has not been applied."""
+    try:
+        return _all_rows(lambda: sb().table("work_items").select("*"))
+    except Exception as e:
+        logger.error(f"[tracker] items read failed (017 applied?): {e}")
+        return None
+
+
+def _item_or_404(raw) -> dict:
+    try:
+        iid = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Which item?")
+    try:
+        rows = sb().table("work_items").select("*").eq("id", iid).execute().data or []
+    except Exception as e:
+        logger.error(f"[tracker] item {iid} read failed: {e}")
+        raise HTTPException(503, "Couldn't read that item. Has migration 017 been applied?")
+    if not rows:
+        raise HTTPException(404, "That item no longer exists")
+    return rows[0]
+
+
+def _item_key(row: dict) -> str:
+    """T-14, for saying out loud. The row id, like PR-…: unique, permanent,
+    and nothing for two creates to race over."""
+    return f"T-{int(row.get('id') or 0)}"
+
+
+def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
+    """One item as the page wants it, with how long it has sat still."""
+    status  = row.get("status") if row.get("status") in TRACKER_STATUS_IDS else "todo"
+    owner   = people.get(row.get("owner_id")) or {}
+    touched = _day_of(row.get("touched_at"))
+    idle    = _business_days_since(touched, today) if touched else None
+    due     = _day_of(row.get("due_date"))
+    return {
+        "id":             row.get("id"),
+        "key":            _item_key(row),
+        "title":          row.get("title") or "",
+        "description":    row.get("description") or "",
+        "owner_id":       row.get("owner_id"),
+        "owner":          owner.get("name") or "",
+        "photo":          owner.get("photo"),
+        "subteam":        row.get("subteam") or "",
+        "status":         status,
+        "blocked_reason": row.get("blocked_reason") or "",
+        "due_date":       row.get("due_date"),
+        "link":           row.get("link") or "",
+        "created_at":     row.get("created_at"),
+        "touched_at":     row.get("touched_at"),
+        "done_at":        row.get("done_at"),
+        "idle_days":      idle,
+        # Doing or blocked with nothing moving for as long as it takes a person
+        # to count as quiet. One threshold for both, so switching flags off for
+        # exams switches these off too, rather than leaving half the warnings on.
+        "stale":   bool(status in ("doing", "blocked") and n > 0
+                        and idle is not None and idle >= n),
+        "overdue": bool(due and status != "done" and due < today),
+    }
+
+
+def _clean_item_title(raw) -> str:
+    title = " ".join(str(raw or "").split())[:MAX_ITEM_TITLE]
+    if not title:
+        raise HTTPException(400, "Say what needs doing")
+    return title
+
+
+def _clean_block(raw, limit: int) -> str:
+    """Free text that keeps its paragraph breaks and loses runs of them. Same
+    rule as glossary definitions."""
+    s = str(raw or "").replace("\r\n", "\n")
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    return re.sub(r"\n{3,}", "\n\n", s).strip()[:limit].strip()
+
+
+def _clean_due(raw) -> Optional[str]:
+    v = str(raw or "").strip()
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(v).isoformat()
+    except ValueError:
+        raise HTTPException(400, "A due date has to be YYYY-MM-DD")
+
+
+def _clean_item_link(raw) -> str:
+    """Optional, but when present it goes into an href, so it gets the same
+    scheme whitelist dashboard links do. javascript: escapes perfectly and
+    still runs."""
+    v = str(raw or "").strip()
+    return _clean_link_url(v) if v else ""
+
+
+def _clean_owner(raw, people: dict) -> Optional[str]:
+    """An account id, or None for nobody yet. Checked against the accounts that
+    exist: an id that names nobody would be an item owned by a ghost."""
+    v = str(raw or "").strip()
+    if not v:
+        return None
+    if v not in people:
+        raise HTTPException(400, "That person doesn't have an account")
+    return v
+
+
+def _clean_blocked(raw) -> str:
+    return " ".join(str(raw or "").split())[:MAX_BLOCKED]
+
+
+def _item_event(item_id, actor: dict, kind: str, from_value: str = "",
+                to_value: str = "", body: str = "", private: bool = False) -> None:
+    """Append to an item's history. Never raises into the caller, like
+    _pr_log: losing a history line is worth less than failing a change that
+    actually happened. Notes are the exception and write their own row,
+    because there the line IS the change."""
+    try:
+        sb().table("work_item_events").insert({
+            "item_id":    item_id,
+            "actor_id":   actor.get("id"),
+            "actor_name": _public_profile(actor).get("name") or "",
+            "kind":       kind,
+            "from_value": from_value or "",
+            "to_value":   to_value or "",
+            "body":       body or "",
+            "private":    bool(private),
+        }).execute()
+    except Exception as e:
+        logger.error(f"[tracker] event log failed for item {item_id}: {e}")
+
+
+@app.get("/api/tracker/items")
+async def api_tracker_items(request: Request):
+    """Every item, plus who they can be given to. The board filters on the
+    page, so every chip and the search are instant."""
+    me    = _require_tracker(request)
+    rows  = _items_rows()
+    today = datetime.now(TEAM_TZ).date()
+    n     = _quiet_days()
+    try:
+        roster = _tracker_roster()
+    except Exception as e:
+        logger.error(f"[tracker] roster failed: {e}")
+        roster = []
+    people = _people_by_id()
+    return {
+        "ready":    rows is not None,
+        "items":    [_dress_item(r, people, today, n) for r in rows or []],
+        "people":   [{"id": p["id"], "name": p["name"], "photo": p["photo"],
+                      "subteam": p["subteam"]} for p in roster],
+        "subteams": SUBTEAMS,
+        "statuses": TRACKER_STATUSES,
+        "quiet_days": n,
+        "me":       me["id"],
+        "today":    today.isoformat(),
+        "limits":   {"title": MAX_ITEM_TITLE, "description": MAX_ITEM_DESC,
+                     "note": MAX_ITEM_NOTE, "blocked": MAX_BLOCKED,
+                     "person_note": MAX_PERSON_NOTE},
+    }
+
+
+@app.post("/api/tracker/items")
+async def api_tracker_item_create(request: Request):
+    """Make an item. A title is all it needs.
+
+    Every other field is optional on purpose. The Notion tracker died partly
+    because making a task was filling in a form, and an item that cannot be
+    captured in the five seconds somebody mentions it is an item that never
+    gets captured. Ids come from the database; one in the body is ignored.
+    """
+    me     = _require_tracker(request)
+    b      = await request.json()
+    people = _people_by_id()
+    title  = _clean_item_title(b.get("title"))
+    owner  = _clean_owner(b.get("owner_id"), people)
+    # From a select the server filled, so an unknown value is a stale tab and
+    # falls back rather than losing the item, like a link's accent.
+    status = b.get("status") if b.get("status") in TRACKER_STATUS_IDS else "todo"
+    blocked = _clean_blocked(b.get("blocked_reason"))
+    if status == "blocked" and not blocked:
+        raise HTTPException(400, "Say what it's waiting on")
+    subteam = (_clean_subteam(b.get("subteam"))
+               or ((_get_profile(owner) or {}).get("subteam") if owner else None) or "")
+
+    now = datetime.now(TEAM_TZ).isoformat()
+    row = {
+        "title":          title,
+        "description":    _clean_block(b.get("description"), MAX_ITEM_DESC),
+        "owner_id":       owner,
+        "subteam":        subteam,
+        "status":         status,
+        "blocked_reason": blocked if status == "blocked" else "",
+        "due_date":       _clean_due(b.get("due_date")),
+        "link":           _clean_item_link(b.get("link")),
+        "created_by":     me["id"],
+        "touched_at":     now,
+        "done_at":        now if status == "done" else None,
+    }
+    try:
+        made = (sb().table("work_items").insert(row).execute().data or [{}])[0]
+    except Exception as e:
+        logger.error(f"[tracker] create failed: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 017 been applied?")
+
+    _item_event(made.get("id"), me, "created", to_value=status, body=title)
+    today = datetime.now(TEAM_TZ).date()
+    return {"ok": True, "item": _dress_item(made, people, today, _quiet_days())}
+
+
+@app.post("/api/tracker/items/update")
+async def api_tracker_item_update(request: Request):
+    """Change an item. Only the fields present in the body are touched.
+
+    That is what makes the one-click status buttons safe: they send {id,
+    status} and nothing else, so they cannot put back a description somebody
+    changed a minute ago in another tab.
+
+    Status changes, a new owner and a new blocked reason each count as the item
+    moving (touched_at). Fixing a typo in the title does not: a three-week-old
+    item made to look fresh by an edit is exactly what the stale flag is for.
+    """
+    me  = _require_tracker(request)
+    b   = await request.json()
+    row = _item_or_404(b.get("id"))
+    if not _may_edit_item(me, row):
+        raise HTTPException(403, "That one isn't yours to change")
+    people = _people_by_id()
+    now    = datetime.now(TEAM_TZ).isoformat()
+
+    upd: dict = {}
+    edited: list = []
+    moved = False
+
+    if "title" in b:
+        title = _clean_item_title(b.get("title"))
+        if title != (row.get("title") or ""):
+            upd["title"] = title
+            edited.append("title")
+    if "description" in b:
+        desc = _clean_block(b.get("description"), MAX_ITEM_DESC)
+        if desc != (row.get("description") or ""):
+            upd["description"] = desc
+            edited.append("description")
+    if "due_date" in b:
+        due = _clean_due(b.get("due_date"))
+        if due != (str(row.get("due_date"))[:10] if row.get("due_date") else None):
+            upd["due_date"] = due
+            edited.append("due date")
+    if "link" in b:
+        link = _clean_item_link(b.get("link"))
+        if link != (row.get("link") or ""):
+            upd["link"] = link
+            edited.append("link")
+    if "subteam" in b:
+        sub = _clean_subteam(b.get("subteam")) or ""
+        if sub != (row.get("subteam") or ""):
+            upd["subteam"] = sub
+            edited.append("division")
+
+    old_owner = row.get("owner_id")
+    new_owner = old_owner
+    if "owner_id" in b:
+        new_owner = _clean_owner(b.get("owner_id"), people)
+        if new_owner != old_owner:
+            upd["owner_id"] = new_owner
+            moved = True
+
+    old_status = row.get("status") or "todo"
+    new_status = old_status
+    if "status" in b:
+        new_status = b.get("status")
+        # Refused, unlike on create. Here the status is the change being asked
+        # for, and falling back would silently move the item somewhere nobody
+        # chose.
+        if new_status not in TRACKER_STATUS_IDS:
+            raise HTTPException(400, "That isn't a status")
+        if new_status != old_status:
+            upd["status"]  = new_status
+            upd["done_at"] = now if new_status == "done" else None
+            moved = True
+
+    old_reason = row.get("blocked_reason") or ""
+    reason = old_reason
+    if new_status == "blocked":
+        if "blocked_reason" in b:
+            reason = _clean_blocked(b.get("blocked_reason"))
+        # What it is waiting on is the whole value of the state: "blocked" on
+        # its own is a shrug, "blocked on the M6 bolts" is something a person
+        # can go and fix.
+        if not reason:
+            raise HTTPException(400, "Say what it's waiting on")
+        if reason != old_reason:
+            upd["blocked_reason"] = reason
+            moved = True
+            if new_status == old_status:
+                edited.append("what it's waiting on")
+    elif old_reason:
+        # Unblocked. A reason left behind would be read later as current.
+        upd["blocked_reason"] = ""
+
+    if moved:
+        upd["touched_at"] = now
+    if not upd:
+        return {"ok": True, "item": _dress_item(row, people,
+                                               datetime.now(TEAM_TZ).date(), _quiet_days())}
+
+    try:
+        after = (sb().table("work_items").update(upd).eq("id", row["id"]).execute().data
+                 or [{**row, **upd}])[0]
+    except Exception as e:
+        logger.error(f"[tracker] update failed on {row.get('id')}: {e}")
+        raise HTTPException(503, "Couldn't save that")
+
+    if new_status != old_status:
+        _item_event(row["id"], me, "status", old_status, new_status,
+                    body=reason if new_status == "blocked" else "")
+    if new_owner != old_owner:
+        _item_event(row["id"], me, "assigned", old_owner or "", new_owner or "",
+                    body=(people.get(new_owner) or {}).get("name") or "nobody")
+    if edited:
+        _item_event(row["id"], me, "edited", body=", ".join(edited))
+    return {"ok": True, "item": _dress_item(after, people,
+                                           datetime.now(TEAM_TZ).date(), _quiet_days())}
+
+
+@app.post("/api/tracker/items/note")
+async def api_tracker_item_note(request: Request):
+    """Add an update to an item: "talked to Cian, upright CAD about 60%".
+
+    Counts as the item moving, and as a sign of its owner. That is deliberate
+    even for "chased again, nothing yet": the quiet flag exists to make
+    somebody check in, and once somebody has, it has done its job for now.
+
+    `private` must be literally true. A string "false" is truthy, and a note
+    meant for the team landing as private is the safe failure, but the other
+    way round is not, so nothing is guessed.
+    """
+    me  = _require_tracker(request)
+    b   = await request.json()
+    row = _item_or_404(b.get("id"))
+    if not _may_edit_item(me, row):
+        raise HTTPException(403, "That one isn't yours to change")
+    body = _clean_block(b.get("body"), MAX_ITEM_NOTE)
+    if not body:
+        raise HTTPException(400, "Write something first")
+    private = b.get("private") is True
+    try:
+        sb().table("work_item_events").insert({
+            "item_id":    row["id"],
+            "actor_id":   me.get("id"),
+            "actor_name": _public_profile(me).get("name") or "",
+            "kind":       "note",
+            "body":       body,
+            "private":    private,
+        }).execute()
+        sb().table("work_items").update(
+            {"touched_at": datetime.now(TEAM_TZ).isoformat()}).eq("id", row["id"]).execute()
+    except Exception as e:
+        logger.error(f"[tracker] note failed on {row.get('id')}: {e}")
+        raise HTTPException(503, "Couldn't save that")
+    return {"ok": True}
+
+
+@app.post("/api/tracker/items/delete")
+async def api_tracker_item_delete(request: Request):
+    """Remove an item and its history. The caller echoes the title back, the
+    same rail as deleting a link, a chart or a glossary term: the board can be
+    minutes stale, and the id under the button may no longer be the words on
+    screen. For "we're not doing this after all", which is what delete is for;
+    finished work is moved to done, not deleted."""
+    me  = _require_tracker(request)
+    b   = await request.json()
+    row = _item_or_404(b.get("id"))
+    if not _may_edit_item(me, row):
+        raise HTTPException(403, "That one isn't yours to change")
+    if str(b.get("title") or "").strip() != (row.get("title") or ""):
+        raise HTTPException(400, "That item has changed since the page loaded. Reload and try again")
+    try:
+        sb().table("work_items").delete().eq("id", row["id"]).execute()
+    except Exception as e:
+        logger.error(f"[tracker] delete failed on {row.get('id')}: {e}")
+        raise HTTPException(503, "Couldn't delete that")
+    return {"ok": True}
+
+
+@app.get("/api/tracker/items/events")
+async def api_tracker_item_events(request: Request, id: int = 0):
+    """One item's history, oldest first, with private lines only for those who
+    may read them."""
+    me = _require_tracker(request)
+    if not id:
+        raise HTTPException(400, "Which item?")
+    try:
+        rows = (sb().table("work_item_events").select("*")
+                .eq("item_id", id).order("created_at").execute().data or [])
+    except Exception as e:
+        logger.error(f"[tracker] events failed for {id}: {e}")
+        rows = []
+    if not _sees_private(me):
+        rows = [r for r in rows if not r.get("private")]
+    people = _people_by_id()
+    for r in rows:
+        if r.get("kind") == "assigned":
+            r["from_name"] = (people.get(r.get("from_value")) or {}).get("name") or ""
+            r["to_name"]   = (people.get(r.get("to_value")) or {}).get("name") or ""
+    return {"events": rows}
+
+
+# ── People ────────────────────────────────────────────────────────────────────
+
+def _tracker_signals(since: date, today: date, items: list,
+                     only: Optional[str] = None) -> list:
+    """Every sign of somebody between `since` and today, newest first.
+
+    Each one is {pid, day, at, kind, text}. The sources, and why each counts:
+
+        workshop  an attendance row saying they were in, today or earlier
+        tick      a flowchart task they ticked or unticked
+        purchase  a purchase request they filed
+        item      anything they did to any item, or an update somebody wrote
+                  on an item they own (somebody checked in)
+        note      an admin's note about them: somebody checked in
+
+    Attendance and ticks are matched on profile_id (017), never on the typed
+    name. A row nobody has matched yet is skipped here and listed in /admin.
+
+    Each source is read separately and fails separately. One missing table
+    loses one kind of signal, not the page, the same rule the dashboard tiles
+    follow.
+    """
+    out: list = []
+    since_iso = since.isoformat()
+    since_ts  = _since_ts(since)
+    today_iso = today.isoformat()
+
+    def mine(q, col):
+        return q.eq(col, only) if only else q
+
+    try:
+        for r in _all_rows(lambda: mine(
+                sb().table("attendance").select("id,date,time,status,profile_id")
+                .gte("date", since_iso).lte("date", today_iso).eq("status", "arriving"),
+                "profile_id")):
+            if not r.get("profile_id"):
+                continue
+            t = _hm(r.get("time"))
+            out.append({"pid": r["profile_id"], "day": _day_of(r.get("date")),
+                        "at": f"{str(r.get('date'))[:10]}T{t or '00:00'}",
+                        "kind": "workshop",
+                        "text": "In the workshop" + (f" from {t}" if t else "")})
+    except Exception as e:
+        logger.error(f"[tracker] attendance signals failed (017 applied?): {e}")
+
+    try:
+        for r in _all_rows(lambda: mine(
+                sb().table("pt_done_log").select("id,plan_id,node_id,done,profile_id,created_at")
+                .gte("created_at", since_ts), "profile_id")):
+            if not r.get("profile_id"):
+                continue
+            out.append({"pid": r["profile_id"], "day": _day_of(r.get("created_at")),
+                        "at": _local_at(r.get("created_at")), "kind": "tick",
+                        "done": bool(r.get("done")),
+                        "ref": (r.get("plan_id"), r.get("node_id")),
+                        "text": "Ticked a flowchart task" if r.get("done")
+                                else "Unticked a flowchart task"})
+    except Exception as e:
+        logger.error(f"[tracker] tick signals failed (017 applied?): {e}")
+
+    try:
+        for r in _all_rows(lambda: mine(
+                sb().table("purchase_requests").select("id,item,requester_id,created_at")
+                .gte("created_at", since_ts), "requester_id")):
+            out.append({"pid": r.get("requester_id"), "day": _day_of(r.get("created_at")),
+                        "at": _local_at(r.get("created_at")), "kind": "purchase",
+                        "text": "Asked for " + (r.get("item") or "something")})
+    except Exception as e:
+        logger.error(f"[tracker] purchase signals failed: {e}")
+
+    by_id = {r.get("id"): r for r in items or []}
+    try:
+        for e in _all_rows(lambda: sb().table("work_item_events")
+                           .select("id,item_id,actor_id,kind,to_value,body,private,created_at")
+                           .gte("created_at", since_ts)):
+            it    = by_id.get(e.get("item_id")) or {}
+            label = (f"{_item_key(it)} “{it.get('title')}”" if it else "a deleted item")
+            kind  = e.get("kind")
+            day, at = _day_of(e.get("created_at")), _local_at(e.get("created_at"))
+            private = bool(e.get("private"))
+            if kind == "note":
+                text = f"Update on {label}: {(e.get('body') or '')[:140]}"
+            elif kind == "status":
+                text = f"{label} moved to {e.get('to_value')}"
+            elif kind == "created":
+                text = f"Created {label}"
+            elif kind == "assigned":
+                text = f"Gave {label} to {e.get('body') or 'nobody'}"
+            else:
+                text = f"Edited {label}"
+            if e.get("actor_id"):
+                out.append({"pid": e["actor_id"], "day": day, "at": at, "kind": "item",
+                            "item_id": e.get("item_id"), "private": private, "text": text})
+            # The owner hears about it too, but only for an update somebody
+            # wrote. Not for a status change made on their behalf: an admin
+            # assigning an item and clicking Start would otherwise reset the
+            # quiet flag on exactly the person it exists to surface. Their own
+            # status changes still count, as the actor, above.
+            owner = it.get("owner_id")
+            if owner and owner != e.get("actor_id") and kind == "note":
+                out.append({"pid": owner, "day": day, "at": at, "kind": "item",
+                            "item_id": e.get("item_id"), "private": private, "text": text})
+    except Exception as e:
+        logger.error(f"[tracker] item signals failed (017 applied?): {e}")
+
+    try:
+        for r in _all_rows(lambda: mine(
+                sb().table("person_notes").select("id,profile_id,author_name,body,created_at")
+                .gte("created_at", since_ts), "profile_id")):
+            out.append({"pid": r.get("profile_id"), "day": _day_of(r.get("created_at")),
+                        "at": _local_at(r.get("created_at")), "kind": "note",
+                        "note_id": r.get("id"), "private": True,
+                        "text": f"Note from {r.get('author_name') or 'an admin'}: {r.get('body') or ''}"})
+    except Exception as e:
+        logger.error(f"[tracker] note signals failed (017 applied?): {e}")
+
+    if only:
+        out = [s for s in out if s["pid"] == only]
+    out = [s for s in out if s.get("day")]
+    out.sort(key=lambda s: s["at"], reverse=True)
+    return out
+
+
+def _label_ticks(signals: list) -> None:
+    """Name the task a tick was on, in place, for the signals given and no
+    others. The People list only labels each person's latest sign, so this is
+    a handful of ids rather than a term of them in one query string."""
+    ticks = [s for s in signals if s.get("kind") == "tick" and s.get("ref")]
+    if not ticks:
+        return
+    try:
+        node_ids = sorted({s["ref"][1] for s in ticks if s["ref"][1]})
+        labels = {(n.get("plan_id"), n.get("id")): n.get("label") for n in
+                  (sb().table("pt_nodes").select("plan_id,id,label")
+                   .in_("id", node_ids).execute().data or [])}
+        plans = {p.get("id"): p.get("name") for p in
+                 (sb().table("plans").select("id,name").execute().data or [])}
+    except Exception as e:
+        logger.error(f"[tracker] tick labels failed: {e}")
+        return
+    for s in ticks:
+        label = labels.get(s["ref"])
+        chart = plans.get(s["ref"][0]) or "a chart"
+        verb  = "Ticked" if s.get("done") else "Unticked"
+        s["text"] = f"{verb} “{label}” on {chart}" if label else f"{verb} a task on {chart}"
+
+
+def _signal_out(s: dict) -> dict:
+    """A signal as JSON: dates as strings, internals dropped."""
+    return {k: (v.isoformat() if isinstance(v, date) else v)
+            for k, v in s.items() if k not in ("pid", "ref", "done")}
+
+
+def _open_counts(items: list) -> dict:
+    """{owner id: {todo, doing, blocked, stale}} over items not yet done."""
+    today, n = datetime.now(TEAM_TZ).date(), _quiet_days()
+    out: dict = {}
+    for r in items or []:
+        status = r.get("status")
+        if not r.get("owner_id") or status not in ("todo", "doing", "blocked"):
+            continue
+        c = out.setdefault(r["owner_id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0})
+        c[status] += 1
+        if _dress_item(r, {}, today, n)["stale"]:
+            c["stale"] += 1
+    return out
+
+
+@app.get("/api/tracker/people")
+async def api_tracker_people(request: Request):
+    """Everyone, with when they were last seen and what they have on.
+
+    Nothing on this page was typed for it. That is the point: it answers "who
+    has gone quiet?" from what people do anyway, so it keeps working in March
+    when nobody has time to update a tracker.
+    """
+    _require_tracker(request)
+    today = datetime.now(TEAM_TZ).date()
+    n     = _quiet_days()
+    try:
+        roster = _tracker_roster()
+    except Exception as e:
+        logger.error(f"[tracker] roster failed: {e}")
+        raise HTTPException(503, "Couldn't load the team")
+    items   = _items_rows()
+    signals = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items or [])
+
+    span_start = today - timedelta(days=WORKSHOP_SPAN_DAYS)
+    last: dict = {}
+    workshop: dict = {}
+    for s in signals:                       # newest first, so the first one wins
+        last.setdefault(s["pid"], s)
+        if s["kind"] == "workshop" and s["day"] > span_start:
+            workshop.setdefault(s["pid"], set()).add(s["day"])
+    _label_ticks(list(last.values()))
+    counts = _open_counts(items or [])
+
+    rank = {"quiet": 0, "none": 1, "active": 2, "new": 3, "off": 4}
+    people = []
+    for p in roster:
+        s  = last.get(p["id"])
+        st = _quiet_state(s["day"] if s else None, p["joined"], today, n)
+        people.append({
+            **p,
+            **st,
+            "joined":        p["joined"].isoformat() if p["joined"] else None,
+            "last_day":      s["day"].isoformat() if s else None,
+            "last_what":     s["text"] if s else "",
+            "workshop_days": len(workshop.get(p["id"], ())),
+            "items":         counts.get(p["id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0}),
+        })
+    people.sort(key=lambda x: (rank.get(x["state"], 9), -(x["quiet_for"] or 0), x["name"].lower()))
+    return {
+        "ready":         items is not None,
+        "people":        people,
+        "quiet_days":    n,
+        "window_days":   TRACKER_WINDOW_DAYS,
+        "workshop_span": WORKSHOP_SPAN_DAYS,
+        "subteams":      SUBTEAMS,
+        "today":         today.isoformat(),
+    }
+
+
+@app.get("/api/tracker/person")
+async def api_tracker_person(request: Request, id: str = ""):
+    """One person: their items, and everything they have left a trace of in
+    the last ninety days, newest first, with notes about them in among it."""
+    me = _require_tracker(request)
+    pid = (id or "").strip()
+    if not pid:
+        raise HTTPException(400, "Which person?")
+    today = datetime.now(TEAM_TZ).date()
+    n     = _quiet_days()
+    try:
+        roster = _tracker_roster()
+    except Exception as e:
+        logger.error(f"[tracker] roster failed: {e}")
+        raise HTTPException(503, "Couldn't load the team")
+    person = next((p for p in roster if p["id"] == pid), None)
+    if not person:
+        # Retired members are off the list but not unreadable: an old item
+        # can still name one, and clicking through should not 404.
+        prof = _get_profile(pid)
+        if not prof:
+            raise HTTPException(404, "No such person")
+        person = {"id": pid, "name": _public_profile(prof).get("name") or "Someone",
+                  "photo": (_people_by_id().get(pid) or {}).get("photo"),
+                  "subteam": prof.get("subteam") or "", "role_name": "",
+                  "captain_of": [], "joined": _day_of(prof.get("created_at"))}
+
+    items    = _items_rows() or []
+    timeline = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items, only=pid)
+    _label_ticks(timeline)
+    if not _sees_private(me):
+        timeline = [s for s in timeline if not s.get("private")]
+    people = _people_by_id()
+    st = _quiet_state(timeline[0]["day"] if timeline else None, person["joined"], today, n)
+    theirs = [_dress_item(r, people, today, n) for r in items if r.get("owner_id") == pid]
+    order = {s: i for i, s in enumerate(("blocked", "doing", "todo", "done"))}
+    theirs.sort(key=lambda i: (order.get(i["status"], 9), -(i["idle_days"] or 0)))
+    return {
+        "person":   {**person, **st,
+                     "joined": person["joined"].isoformat() if person["joined"] else None},
+        "timeline": [_signal_out(s) for s in timeline],
+        "items":    theirs,
+        "quiet_days":  n,
+        "window_days": TRACKER_WINDOW_DAYS,
+    }
+
+
+@app.post("/api/tracker/notes")
+async def api_tracker_note_add(request: Request):
+    """A note about a person, not tied to any item. Admin-only forever; there
+    is no public version of this table. It also counts as a sign of them, for
+    the reason an item update does: somebody checked in."""
+    me  = _require_tracker(request)
+    b   = await request.json()
+    pid = str(b.get("profile_id") or "").strip()
+    if not pid or not _get_profile(pid):
+        raise HTTPException(404, "No such person")
+    body = _clean_block(b.get("body"), MAX_PERSON_NOTE)
+    if not body:
+        raise HTTPException(400, "Write something first")
+    try:
+        made = (sb().table("person_notes").insert({
+            "profile_id":  pid,
+            "author_id":   me.get("id"),
+            "author_name": _public_profile(me).get("name") or "",
+            "body":        body,
+        }).execute().data or [{}])[0]
+    except Exception as e:
+        logger.error(f"[tracker] note on {pid} failed: {e}")
+        raise HTTPException(503, "Couldn't save that. Has migration 017 been applied?")
+    return {"ok": True, "id": made.get("id")}
+
+
+@app.post("/api/tracker/notes/delete")
+async def api_tracker_note_delete(request: Request):
+    """Remove a note about somebody. Any admin may, not only its author: these
+    are notes about a named person, and getting one out of the database when
+    it should not be there matters more than who wrote it."""
+    _require_tracker(request)
+    b = await request.json()
+    try:
+        nid = int(b.get("id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Which note?")
+    try:
+        gone = sb().table("person_notes").delete().eq("id", nid).execute().data or []
+    except Exception as e:
+        logger.error(f"[tracker] note delete failed on {nid}: {e}")
+        raise HTTPException(503, "Couldn't delete that")
+    if not gone:
+        raise HTTPException(404, "That note no longer exists")
+    return {"ok": True}
+
+
+# ── Names that match no account ──────────────────────────────────────────────
+# attendance and pt_done_log rows whose typed name 017 could not match to
+# exactly one account: typos, nicknames, two people sharing a name, people who
+# never made one. Listed in /admin and matched by hand, once. New rows are
+# stamped as they are written, so this list only ever shrinks.
+
+def _unmatched_rows() -> tuple:
+    """(attendance rows, tick rows) with no account, or raises when 017 is
+    not applied (the profile_id filter names a column that is not there)."""
+    att = _all_rows(lambda: sb().table("attendance").select("id,name,date")
+                    .is_("profile_id", "null"))
+    ticks = _all_rows(lambda: sb().table("pt_done_log").select("id,user_name,created_at")
+                      .is_("profile_id", "null"))
+    return att, ticks
+
+
+@app.get("/api/admin/unmatched-names")
+async def api_admin_unmatched_names(request: Request):
+    require_role(request, "admin")
+    try:
+        att, ticks = _unmatched_rows()
+    except Exception as e:
+        logger.error(f"[admin] unmatched names failed (017 applied?): {e}")
+        return {"ready": False, "names": [], "people": []}
+
+    groups: dict = {}
+
+    def add(name, day, field):
+        key = _fold_name(name)
+        # "Unknown" is pt_done_log's column default, written when a tick had no
+        # name at all. It is not anybody to match.
+        if not key or key == "unknown":
+            return
+        g = groups.setdefault(key, {"spellings": {}, "attendance": 0, "ticks": 0, "last": ""})
+        spelled = " ".join(str(name).split())
+        g["spellings"][spelled] = g["spellings"].get(spelled, 0) + 1
+        g[field] += 1
+        g["last"] = max(g["last"], str(day or "")[:10])
+
+    for r in att:
+        add(r.get("name"), r.get("date"), "attendance")
+    for r in ticks:
+        add(r.get("user_name"), _day_of(r.get("created_at")), "ticks")
+
+    people  = _people_by_id()
+    by_name: dict = {}
+    for pid, p in people.items():
+        by_name.setdefault(_fold_name(p.get("name")), []).append(pid)
+
+    names = []
+    for key, g in groups.items():
+        hits = by_name.get(key, [])
+        names.append({
+            "key":        key,
+            # The spelling used most, which is the one worth showing.
+            "name":       max(g["spellings"].items(), key=lambda kv: kv[1])[0],
+            "attendance": g["attendance"],
+            "ticks":      g["ticks"],
+            "last":       g["last"],
+            # Preselected in the picker when exactly one account has this
+            # name: rows typed before that person signed up. Two accounts with
+            # it is why the backfill left it, so that is said rather than
+            # guessed.
+            "suggest":    hits[0] if len(hits) == 1 else None,
+            "ambiguous":  len(hits) > 1,
+        })
+    names.sort(key=lambda x: x["last"], reverse=True)
+    return {
+        "ready":  True,
+        "names":  names,
+        "people": sorted(({"id": pid, "name": p.get("name") or "Someone"}
+                          for pid, p in people.items()), key=lambda p: p["name"].lower()),
+    }
+
+
+@app.post("/api/admin/unmatched-names/assign")
+async def api_admin_unmatched_assign(request: Request):
+    """Say whose a typed name is. Every unmatched attendance row and tick under
+    that spelling (folded) gets the account.
+
+    Only rows that are still unmatched are touched, so this can never move a
+    row away from the account it already belongs to. The flip side is that a
+    wrong match is not undone from here; it is a SQL fix, which the confirm on
+    the page says before anyone clicks.
+    """
+    require_role(request, "admin")
+    b   = await request.json()
+    key = _fold_name(b.get("name"))
+    pid = str(b.get("profile_id") or "").strip()
+    if not key:
+        raise HTTPException(400, "Which name?")
+    if not pid or not _get_profile(pid):
+        raise HTTPException(404, "No such account")
+    try:
+        att, ticks = _unmatched_rows()
+    except Exception as e:
+        logger.error(f"[admin] unmatched names failed (017 applied?): {e}")
+        raise HTTPException(503, "Has migration 017 been applied?")
+    att_ids  = [r["id"] for r in att if _fold_name(r.get("name")) == key]
+    tick_ids = [r["id"] for r in ticks if _fold_name(r.get("user_name")) == key]
+    if not att_ids and not tick_ids:
+        raise HTTPException(404, "Nothing is left under that name. Reload and check")
+    try:
+        # In chunks: the ids go into the query string, and a term of
+        # attendance in one URL is longer than a proxy will carry.
+        for table, ids in (("attendance", att_ids), ("pt_done_log", tick_ids)):
+            for i in range(0, len(ids), 200):
+                (sb().table(table).update({"profile_id": pid})
+                 .in_("id", ids[i:i + 200]).is_("profile_id", "null").execute())
+    except Exception as e:
+        logger.error(f"[admin] matching {key!r} to {pid} failed: {e}")
+        raise HTTPException(503, "Couldn't save that. Some rows may have been matched; reload")
+    return {"ok": True, "attendance": len(att_ids), "ticks": len(tick_ids)}
 
 
 # ── Competition Hub ───────────────────────────────────────────────────────────

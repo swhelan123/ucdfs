@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UCDFS Tracker</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#15386e">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+/* Tracker-only styles. Header, tabs, chips, cards, buttons, inputs, ring,
+   toast and empty states come from shared.css. */
+:root { --page-max: 1180px; }
+
+.intro { color: var(--muted); font-size: 0.84rem; line-height: 1.55; margin-bottom: 14px; }
+.intro a { color: var(--indigo); font-weight: 600; text-decoration: none; }
+.intro a:hover { text-decoration: underline; }
+.warn {
+  background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--text);
+  border-radius: 14px; padding: 12px 15px; font-size: 0.84rem; line-height: 1.5;
+  margin-bottom: 16px;
+}
+.gone { display: none !important; }
+
+/* ── People ── */
+.people { margin-bottom: 22px; }
+/* A div with role=button rather than a <button>: a button may only hold
+   phrasing content, and this row holds an avatar and two lines of text. */
+.person {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 15px; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.person:last-child { border-bottom: none; }
+.person:hover { background: var(--bg); }
+.person-body { flex: 1; min-width: 0; }
+.person-name { font-weight: 700; font-size: 0.9rem; display: flex; align-items: center;
+  gap: 7px; flex-wrap: wrap; }
+.person-last { font-size: 0.76rem; color: var(--muted); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-stats { font-size: 0.74rem; color: var(--muted); text-align: right;
+  flex-shrink: 0; line-height: 1.5; }
+.person-stats b { color: var(--text); font-weight: 700; }
+.cap {
+  font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 6px; border-radius: 6px; background: var(--ucd-navy); color: var(--ucd-gold);
+}
+.title-tag { font-size: 0.72rem; font-weight: 500; color: var(--muted); }
+@media (max-width: 560px) { .person-stats { display: none; } }
+
+/* One pill per state. Quiet is the one the page exists to surface, so it is
+   the only loud one. */
+.state {
+  display: inline-block; font-size: 0.64rem; font-weight: 800; padding: 2px 8px;
+  border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+}
+.st-quiet  { background: var(--red-bg);    color: var(--red-text); border: 1px solid var(--red-mid); }
+.st-none   { background: var(--bg);        color: var(--red-text); border: 1px solid var(--border); }
+.st-active { background: var(--green-bg);  color: var(--green-text); }
+.st-new    { background: var(--indigo-bg); color: var(--indigo); }
+.st-off    { background: var(--bg);        color: var(--muted); }
+
+/* ── Board ── */
+.add-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.add-row .text-input { flex: 1; min-width: 200px; padding: 11px 14px; }
+.add-row select.text-input { flex: 0 0 190px; min-width: 150px; }
+.add-row .btn { flex-shrink: 0; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.toolbar .text-input { flex: 1; min-width: 160px; padding: 9px 13px; font-size: 0.85rem; }
+.toolbar select.text-input { flex: 0 0 190px; }
+
+.board { display: grid; gap: 12px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.col { background: var(--border); border-radius: 16px; padding: 8px; min-height: 80px; }
+.col-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px 9px;
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); }
+.col-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.col-empty { font-size: 0.78rem; color: var(--muted); text-align: center; padding: 14px 6px; }
+.col-more {
+  width: 100%; margin-top: 4px; padding: 8px; border: none; border-radius: 10px;
+  background: transparent; font: inherit; font-size: 0.76rem; font-weight: 600;
+  color: var(--muted); cursor: pointer;
+}
+.col-more:hover { background: var(--card); color: var(--text); }
+
+.item {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 11px; margin-bottom: 7px; cursor: pointer; box-shadow: var(--shadow-sm);
+  transition: border-color .12s, transform .12s;
+}
+.item:hover { border-color: var(--indigo-border); transform: translateY(-1px); }
+.item.stale { border-left: 4px solid var(--red); }
+.item.flash { border-color: var(--indigo); }
+.item-key { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; color: var(--muted); }
+.item-title { font-size: 0.86rem; font-weight: 700; line-height: 1.35; margin-top: 2px;
+  overflow-wrap: anywhere; }
+.item-why { font-size: 0.76rem; color: var(--red-text); margin-top: 5px; line-height: 1.4; }
+.item-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.item-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.item-owner { display: flex; align-items: center; gap: 6px; font-size: 0.75rem;
+  color: var(--muted); min-width: 0; flex: 1; }
+.item-owner span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av22 { width: 22px; height: 22px; font-size: 0.52rem; }
+/* White initials. UCDFS.avatar() fills the circle with each person's own
+   colour, and coloured text on a coloured circle is unreadable. */
+.av-ink { color: #fff; }
+.badge {
+  font-size: 0.64rem; font-weight: 800; padding: 2px 7px; border-radius: 999px;
+  background: var(--bg); color: var(--muted); white-space: nowrap;
+}
+.badge-late  { background: var(--red-bg); color: var(--red-text); }
+.badge-stale { background: var(--red-bg); color: var(--red-text); }
+.quick {
+  border: 1px solid var(--border); background: var(--card); border-radius: 8px;
+  padding: 3px 9px; font: inherit; font-size: 0.72rem; font-weight: 700;
+  color: var(--muted); cursor: pointer;
+}
+.quick:hover { border-color: var(--indigo); color: var(--indigo); }
+
+/* ── Dialogs ──
+   Two of them, and the item one can open over the person one: clicking an item
+   in somebody's list should not lose your place in their timeline. */
+.dlg-bg {
+  position: fixed; inset: 0; z-index: 1500; background: rgba(15,23,42,.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px 14px; overflow-y: auto;
+}
+.dlg-bg.top { z-index: 1600; }
+.dlg { width: 100%; max-width: 620px; margin: auto; padding: 20px; }
+.dlg-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.dlg-title { flex: 1; min-width: 0; }
+.dlg-h { font-size: 1.1rem; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
+.dlg-sub { font-size: 0.78rem; color: var(--muted); margin-top: 3px; }
+.dlg-x {
+  border: none; background: none; font-size: 1.3rem; line-height: 1; cursor: pointer;
+  color: var(--muted); padding: 2px 6px; border-radius: 8px;
+}
+.dlg-x:hover { background: var(--bg); color: var(--text); }
+.fld { display: block; margin-bottom: 11px; }
+.fld-label { display: block; font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin-bottom: 5px; }
+.fld .text-input { padding: 9px 12px; font-size: 0.88rem; }
+.fld-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.fld-row .fld { flex: 1; min-width: 150px; }
+.area { min-height: 80px; resize: vertical; line-height: 1.5; }
+.seg { display: flex; gap: 5px; flex-wrap: wrap; }
+.seg-btn {
+  flex: 1; min-width: 70px; padding: 8px 6px; border: 2px solid var(--border);
+  border-radius: 10px; background: var(--card); font: inherit; font-size: 0.8rem;
+  font-weight: 700; color: var(--muted); cursor: pointer;
+}
+.seg-btn.on { border-color: var(--dark); background: var(--dark); color: #fff; }
+.dlg-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.spacer { flex: 1; }
+.link-del {
+  border: none; background: none; cursor: pointer; padding: 6px 2px;
+  font: inherit; font-size: 0.78rem; font-weight: 700; color: var(--red-text);
+}
+.link-del:hover { text-decoration: underline; }
+.dlg-sec { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px; }
+.dlg-sec-h { font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
+.check { display: flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--muted);
+  margin: 8px 0; cursor: pointer; }
+.hint { font-size: 0.74rem; color: var(--muted); line-height: 1.5; margin: 4px 0 8px; }
+
+.hist { list-style: none; }
+.hist li { font-size: 0.8rem; line-height: 1.5; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.hist li:last-child { border-bottom: none; }
+.hist-when { font-size: 0.7rem; color: var(--muted); }
+.hist-body { white-space: pre-line; overflow-wrap: anywhere; }
+.lock { font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--purple); background: var(--purple-bg); border-radius: 6px; padding: 1px 6px; }
+.note-del {
+  border: none; background: none; cursor: pointer; font: inherit; font-size: 0.7rem;
+  color: var(--muted); padding: 0 4px; margin-left: 6px;
+}
+.note-del:hover { color: var(--red-text); text-decoration: underline; }
+
+.mini { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 8px 0; border: none; border-bottom: 1px solid var(--border); background: none;
+  font: inherit; color: inherit; cursor: pointer; }
+.mini:last-child { border-bottom: none; }
+.mini:hover .mini-title { color: var(--indigo); }
+.mini-title { flex: 1; min-width: 0; font-size: 0.84rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.stat { background: var(--bg); border-radius: 10px; padding: 7px 11px; font-size: 0.76rem;
+  color: var(--muted); }
+.stat b { color: var(--text); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div id="main" style="display:none">
+  <header>
+    <div class="header-inner">
+      <a class="back-link" href="/" title="All tools" aria-label="All tools">←</a>
+      <div class="logo logo-indigo">🎯</div>
+      <div class="header-text">
+        <div class="header-title">Tracker</div>
+        <div class="header-sub">Who's on what · admins only</div>
+      </div>
+      <div class="name-pill">
+        <div class="pill-avatar" id="pill-avatar"></div>
+        <span class="pill-name" id="pill-name"></span>
+        <span class="pill-change" onclick="UCDFS.signOut()">sign out</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="warn gone" id="not-ready">
+      The tracker's tables aren't on this database yet. Migration 017 needs
+      applying before items can be added; the People view below is working from
+      what it can read without it.
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" id="tab-people" type="button" data-tab="people">👥 People</button>
+      <button class="tab"        id="tab-board"  type="button" data-tab="board">🗂️ Board</button>
+    </div>
+
+    <!-- ── People ─────────────────────────────────────────────────────── -->
+    <div id="panel-people">
+      <p class="intro" id="people-intro"></p>
+      <div class="chips" id="people-chips"></div>
+      <div id="people"></div>
+    </div>
+
+    <!-- ── Board ──────────────────────────────────────────────────────── -->
+    <div id="panel-board" class="gone">
+      <form class="add-row" id="add-form" autocomplete="off">
+        <input class="text-input" id="add-title" placeholder="What needs doing?" aria-label="New item">
+        <select class="text-input" id="add-owner" aria-label="Who's doing it"></select>
+        <button class="btn btn-dark" id="add-btn" type="submit">Add</button>
+      </form>
+      <div class="toolbar">
+        <input class="text-input" id="q" type="search" placeholder="Search items" aria-label="Search items">
+        <select class="text-input" id="who" aria-label="Whose items"></select>
+      </div>
+      <div class="chips" id="board-chips"></div>
+      <div class="board" id="board"></div>
+    </div>
+
+    <div class="foot">UCD Formula Student · <span id="foot"></span></div>
+  </div>
+</div>
+
+<!-- ── One item ───────────────────────────────────────────────────────── -->
+<div class="dlg-bg top gone" id="item-bg">
+  <form class="card dlg" id="item-form" role="dialog" aria-modal="true" aria-labelledby="item-h" novalidate>
+    <div class="dlg-head">
+      <div class="dlg-title">
+        <div class="dlg-sub" id="item-key"></div>
+        <div class="dlg-h" id="item-h"></div>
+      </div>
+      <button class="dlg-x" type="button" data-close="item" aria-label="Close">×</button>
+    </div>
+
+    <label class="fld">
+      <span class="fld-label">Title</span>
+      <input class="text-input" id="f-title">
+    </label>
+    <div class="fld">
+      <span class="fld-label">Status</span>
+      <div class="seg" id="f-status"></div>
+    </div>
+    <label class="fld gone" id="f-blocked-wrap">
+      <span class="fld-label">Waiting on</span>
+      <input class="text-input" id="f-blocked" placeholder="e.g. the M6 bolts from RS">
+    </label>
+    <div class="fld-row">
+      <label class="fld">
+        <span class="fld-label">Who</span>
+        <select class="text-input" id="f-owner"></select>
+      </label>
+      <label class="fld">
+        <span class="fld-label">Division</span>
+        <select class="text-input" id="f-subteam"></select>
+      </label>
+      <label class="fld">
+        <span class="fld-label">Due</span>
+        <input class="text-input" id="f-due" type="date">
+      </label>
+    </div>
+    <label class="fld">
+      <span class="fld-label">Link</span>
+      <input class="text-input" id="f-link" placeholder="https://… Onshape, SharePoint, a chart">
+    </label>
+    <label class="fld">
+      <span class="fld-label">Notes on the task</span>
+      <textarea class="text-input area" id="f-desc" placeholder="What done looks like, anything worth knowing"></textarea>
+    </label>
+    <div class="dlg-actions">
+      <button class="link-del" id="f-delete" type="button">Delete</button>
+      <span class="spacer"></span>
+      <a class="btn btn-ghost btn-sm gone" id="f-open-link" target="_blank" rel="noopener">Open link ↗</a>
+      <button class="btn btn-dark btn-sm" id="f-save" type="submit">Save</button>
+    </div>
+
+    <div class="dlg-sec">
+      <div class="dlg-sec-h">Add an update</div>
+      <textarea class="text-input area" id="u-body" placeholder="Talked to them, where it's at, what's next"></textarea>
+      <label class="check"><input type="checkbox" id="u-private"> Private: only admins will ever see this, even once the team can open the tracker</label>
+      <button class="btn btn-indigo btn-sm" id="u-add" type="button">Add update</button>
+    </div>
+
+    <div class="dlg-sec">
+      <div class="dlg-sec-h">History</div>
+      <ul class="hist" id="item-hist"></ul>
+    </div>
+  </form>
+</div>
+
+<!-- ── One person ─────────────────────────────────────────────────────── -->
+<div class="dlg-bg gone" id="person-bg">
+  <div class="card dlg" role="dialog" aria-modal="true" aria-labelledby="person-h">
+    <div class="dlg-head">
+      <div id="person-av"></div>
+      <div class="dlg-title">
+        <div class="dlg-h" id="person-h"></div>
+        <div class="dlg-sub" id="person-sub"></div>
+      </div>
+      <button class="dlg-x" type="button" data-close="person" aria-label="Close">×</button>
+    </div>
+    <div class="stats" id="person-stats"></div>
+
+    <div class="dlg-sec">
+      <div class="dlg-sec-h">Note about them</div>
+      <textarea class="text-input area" id="n-body" placeholder="e.g. wants to move to aero; exams until the 12th"></textarea>
+      <div class="hint">Admins only, always. Write it as if they'll read it: anyone can ask what's held about them.</div>
+      <button class="btn btn-indigo btn-sm" id="n-add" type="button">Add note</button>
+    </div>
+
+    <div class="dlg-sec">
+      <div class="dlg-sec-h">Their items</div>
+      <div id="person-items"></div>
+      <button class="btn btn-ghost btn-sm" id="person-new" type="button">+ Give them something</button>
+    </div>
+
+    <div class="dlg-sec">
+      <div class="dlg-sec-h" id="person-tl-h">Last 90 days</div>
+      <ul class="hist" id="person-tl"></ul>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/shared.js"></script>
+<script>
+/* The tracker. Admin-only: the server refuses everyone else on every endpoint,
+   and nothing on this page decides who may do what. */
+const esc = s => UCDFS.esc(s);
+const $ = id => document.getElementById(id);
+const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
+
+let ITEMS = { items: [], people: [], subteams: [], statuses: [], quiet_days: 5, ready: true };
+let PEOPLE = { people: [], subteams: [], quiet_days: 5 };
+let TAB = 'people';
+let PFILTER = 'all';          // people chip
+let BFILTER = 'all';          // board chip
+let SHOW_ALL_DONE = false;
+let editing = null;           // the item open in the dialog, as it was when opened
+let viewing = null;           // the person open in the dialog
+let pickedStatus = 'todo';
+let peopleStale = true;       // the People view needs a reload before it is shown again
+
+const DONE_DAYS = 14;         // done items stay on the board this long
+
+// ── Small helpers ─────────────────────────────────────────────────────────
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || "Couldn't do that");
+  return d;
+}
+
+function fmtDay(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00');
+  return d.toLocaleDateString('en-IE', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return fmtDay(iso);
+  return d.toLocaleString('en-IE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+
+function subName(id) {
+  const s = (ITEMS.subteams.length ? ITEMS.subteams : PEOPLE.subteams).find(x => x.id === id);
+  return s ? s.name : '';
+}
+
+function statusName(id) {
+  const s = ITEMS.statuses.find(x => x.id === id);
+  return s ? s.name : id;
+}
+
+function statePill(p) {
+  switch (p.state) {
+    // Business days, which is what the threshold counts. The intro says so.
+    case 'quiet':  return `<span class="state st-quiet">Quiet · ${plural(p.quiet_for, 'day')}</span>`;
+    case 'none':   return `<span class="state st-none">${p.joined && p.joined >= windowStart()
+                              ? 'Not seen since joining' : 'Nothing in ' + PEOPLE.window_days + ' days'}</span>`;
+    case 'new':    return '<span class="state st-new">New</span>';
+    case 'off':    return '<span class="state st-off">Flags off</span>';
+    default:       return '<span class="state st-active">Active</span>';
+  }
+}
+
+function windowStart() {
+  if (!PEOPLE.today) return '';
+  const d = new Date(PEOPLE.today + 'T12:00:00');
+  d.setDate(d.getDate() - (PEOPLE.window_days || 90));
+  return d.toISOString().slice(0, 10);
+}
+
+/* The picker lists current members only, so an item whose owner has since
+   retired gets them added back as an option. Without it the select would show
+   "Nobody yet", and saving any other change would quietly unassign the item. */
+function personOptions(selected, none, selectedName) {
+  const known = ITEMS.people.some(p => p.id === selected);
+  const extra = selected && !known
+    ? `<option value="${esc(selected)}" selected>${esc(selectedName || 'Someone')} (retired)</option>` : '';
+  return `<option value="">${esc(none)}</option>` + extra + ITEMS.people.map(p =>
+    `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+}
+
+// ── Loading ───────────────────────────────────────────────────────────────
+
+async function loadItems() {
+  ITEMS = await api('/api/tracker/items');
+  $('not-ready').classList.toggle('gone', ITEMS.ready !== false);
+  const l = ITEMS.limits || {};
+  if (l.title) { $('add-title').maxLength = l.title; $('f-title').maxLength = l.title; }
+  if (l.description) $('f-desc').maxLength = l.description;
+  if (l.note) $('u-body').maxLength = l.note;
+  if (l.blocked) $('f-blocked').maxLength = l.blocked;
+  if (l.person_note) $('n-body').maxLength = l.person_note;
+  renderAddOwner();
+  renderWho();
+  renderBoardChips();
+  renderBoard();
+  renderFoot();
+}
+
+async function loadPeople() {
+  if (!PEOPLE.people.length) $('people').innerHTML = RING;
+  PEOPLE = await api('/api/tracker/people');
+  peopleStale = false;
+  renderPeopleIntro();
+  renderPeopleChips();
+  renderPeople();
+  renderFoot();
+}
+
+/* After anything changes. The board always reloads; the People view reloads
+   now if it is the tab on screen, and on its next showing otherwise, since it
+   is the heavier of the two requests. */
+async function changed() {
+  peopleStale = true;
+  const jobs = [loadItems()];
+  if (TAB === 'people') jobs.push(loadPeople());
+  await Promise.all(jobs);
+}
+
+function renderFoot() {
+  const open = ITEMS.items.filter(i => i.status !== 'done').length;
+  const quiet = PEOPLE.people.filter(p => p.state === 'quiet').length;
+  $('foot').textContent = `${plural(open, 'open item')} · ${plural(PEOPLE.people.length, 'person', 'people')}` +
+    (quiet ? ` · ${quiet} quiet` : '');
+}
+
+// ── People ────────────────────────────────────────────────────────────────
+
+function renderPeopleIntro() {
+  const n = PEOPLE.quiet_days;
+  $('people-intro').innerHTML = n
+    ? `<b>Quiet</b> means no sign of someone for ${plural(n, 'business day')}: not in the
+       workshop, no flowchart ticks, no purchase requests, and no update written on them or
+       their items. Moving somebody's item yourself doesn't count; writing an update does.
+       Weekends don't count. <a href="/admin">Change the number</a> (0 turns flags off for exams).`
+    : `Quiet flags are <b>off</b>. <a href="/admin">Turn them back on</a> after exams.`;
+}
+
+function needsLook(p) { return p.state === 'quiet' || p.state === 'none'; }
+
+function renderPeopleChips() {
+  const el = $('people-chips');
+  const look = PEOPLE.people.filter(needsLook).length;
+  const chips = [{ id: 'all', name: 'Everyone' }, { id: 'look', name: 'Needs a look', count: look }]
+    .concat(PEOPLE.subteams.map(s => ({ id: s.id, name: s.name })));
+  el.innerHTML = '';
+  chips.forEach(c => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    if (PFILTER === c.id) b.classList.add('active');
+    b.innerHTML = esc(c.name) + (c.count !== undefined ? ` <span class="chip-count">${c.count}</span>` : '');
+    b.onclick = () => { PFILTER = c.id; renderPeopleChips(); renderPeople(); };
+    el.appendChild(b);
+  });
+}
+
+function renderPeople() {
+  const list = PEOPLE.people.filter(p =>
+    PFILTER === 'all' || (PFILTER === 'look' ? needsLook(p) : p.subteam === PFILTER));
+  const groups = PEOPLE.subteams.map(s => ({ id: s.id, name: s.name }))
+    .concat([{ id: '', name: 'No division yet' }]);
+  const html = groups.map(g => {
+    const rows = list.filter(p => (p.subteam || '') === g.id);
+    if (!rows.length) return '';
+    return `<div class="section-label">${esc(g.name)}</div>
+      <div class="card people">${rows.map(personRow).join('')}</div>`;
+  }).join('');
+  $('people').innerHTML = html || `<div class="empty"><div class="empty-icon">🙂</div>
+    <div class="empty-text">${PFILTER === 'look' ? 'Nobody needs a look right now.' : 'Nobody here.'}</div></div>`;
+}
+
+function personRow(p) {
+  const it = p.items || {};
+  const open = [it.doing ? `<b>${it.doing}</b> doing` : '', it.blocked ? `<b>${it.blocked}</b> blocked` : '',
+                it.todo ? `<b>${it.todo}</b> to do` : ''].filter(Boolean).join(' · ');
+  const caps = (p.captain_of || []).map(s => `<span class="cap">Captain · ${esc(subName(s))}</span>`).join('');
+  const last = p.last_day ? `${fmtDay(p.last_day)}: ${p.last_what}` : 'No sign of them yet';
+  return `<div class="person" role="button" tabindex="0" id="p-${esc(p.id)}" data-person="${esc(p.id)}">
+    ${UCDFS.avatar(p.name, p.photo, 'av av38 av-ink')}
+    <div class="person-body">
+      <div class="person-name">${esc(p.name)} ${statePill(p)} ${caps}
+        ${p.role_name && !(p.captain_of || []).length ? `<span class="title-tag">${esc(p.role_name)}</span>` : ''}</div>
+      <div class="person-last">${esc(last)}</div>
+    </div>
+    <div class="person-stats">${plural(p.workshop_days, 'workshop day')} in ${PEOPLE.workshop_span / 7} weeks<br>
+      ${open || 'nothing open'}${it.stale ? ` · <b>${it.stale}</b> stale` : ''}</div>
+  </div>`;
+}
+
+async function openPerson(id) {
+  viewing = id;
+  $('person-h').textContent = '…';
+  $('person-sub').textContent = '';
+  $('person-av').innerHTML = '';
+  $('person-stats').innerHTML = '';
+  $('person-items').innerHTML = '';
+  $('person-tl').innerHTML = RING;
+  $('n-body').value = '';
+  $('person-bg').classList.remove('gone');
+  try {
+    renderPerson(await api('/api/tracker/person?id=' + encodeURIComponent(id)));
+  } catch (e) {
+    $('person-tl').innerHTML = '';
+    UCDFS.toast(e.message);
+  }
+}
+
+function renderPerson(d) {
+  const p = d.person;
+  if (p.id !== viewing) return;
+  $('person-av').innerHTML = UCDFS.avatar(p.name, p.photo, 'av av38 av-ink');
+  $('person-h').innerHTML = `${esc(p.name)} ${statePill(p)}`;
+  const bits = [subName(p.subteam) || 'No division',
+                ...(p.captain_of || []).map(s => 'Captain of ' + subName(s)),
+                p.role_name && !(p.captain_of || []).length ? p.role_name : '',
+                p.joined ? 'joined ' + fmtDay(p.joined) : ''].filter(Boolean);
+  $('person-sub').textContent = bits.join(' · ');
+  const open = d.items.filter(i => i.status !== 'done');
+  const inShop = d.timeline.filter(s => s.kind === 'workshop').length;
+  $('person-stats').innerHTML = [
+    `<div class="stat"><b>${inShop}</b> ${inShop === 1 ? 'workshop day' : 'workshop days'}</div>`,
+    `<div class="stat"><b>${open.filter(i => i.status === 'doing').length}</b> doing</div>`,
+    `<div class="stat"><b>${open.filter(i => i.status === 'blocked').length}</b> blocked</div>`,
+    `<div class="stat"><b>${open.filter(i => i.status === 'todo').length}</b> to do</div>`,
+  ].join('');
+  $('person-tl-h').textContent = `Last ${d.window_days} days`;
+  $('person-items').innerHTML = d.items.length ? d.items.map(i => `
+    <button class="mini" type="button" data-item="${esc(i.id)}">
+      <span class="item-key">${esc(i.key)}</span>
+      <span class="mini-title">${esc(i.title)}</span>
+      ${i.stale ? `<span class="badge badge-stale">${plural(i.idle_days, 'day')} still</span>` : ''}
+      <span class="badge">${esc(statusName(i.status))}</span>
+    </button>`).join('') : '<div class="hint">Nothing assigned.</div>';
+  $('person-tl').innerHTML = d.timeline.length ? d.timeline.map(s => `
+    <li>
+      <div class="hist-when">${esc(fmtWhen(s.at))}
+        ${s.private ? '<span class="lock">Private</span>' : ''}
+        ${s.note_id ? `<button class="note-del" type="button" data-note="${esc(s.note_id)}">delete</button>` : ''}</div>
+      <div class="hist-body">${esc(s.text)}</div>
+    </li>`).join('') : '<li class="hint">No sign of them in this window.</li>';
+}
+
+function closePerson() { $('person-bg').classList.add('gone'); viewing = null; }
+
+async function addPersonNote() {
+  const body = $('n-body').value.trim();
+  if (!body) { UCDFS.toast('Write something first'); return; }
+  const btn = $('n-add');
+  btn.disabled = true;
+  try {
+    await api('/api/tracker/notes', { profile_id: viewing, body });
+    $('n-body').value = '';
+    await changed();
+    UCDFS.toast('Noted');
+    await openPerson(viewing);
+  } catch (e) {
+    UCDFS.toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deletePersonNote(id) {
+  if (!confirm('Delete this note? There\'s no undo.')) return;
+  try {
+    await api('/api/tracker/notes/delete', { id: Number(id) });
+    await changed();
+    await openPerson(viewing);
+  } catch (e) {
+    UCDFS.toast(e.message);
+  }
+}
+
+// ── Board ─────────────────────────────────────────────────────────────────
+
+function renderAddOwner() {
+  const keep = $('add-owner').value;
+  $('add-owner').innerHTML = personOptions(keep, 'Nobody yet');
+}
+
+function renderWho() {
+  const keep = $('who').value;
+  $('who').innerHTML = `<option value="">Everyone</option><option value="-">Nobody yet</option>` +
+    ITEMS.people.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  $('who').value = keep;
+}
+
+function renderBoardChips() {
+  const el = $('board-chips');
+  el.innerHTML = '';
+  [{ id: 'all', name: 'All divisions' }].concat(ITEMS.subteams).forEach(s => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    if (BFILTER === s.id) b.classList.add('active');
+    b.textContent = s.name;
+    b.onclick = () => { BFILTER = s.id; renderBoardChips(); renderBoard(); };
+    el.appendChild(b);
+  });
+}
+
+function daysAgo(iso) {
+  if (!iso) return Infinity;
+  return (Date.now() - new Date(iso).getTime()) / 86400000;
+}
+
+function renderBoard() {
+  const q = $('q').value.trim().toLowerCase();
+  const who = $('who').value;
+  const shown = ITEMS.items.filter(i =>
+    (BFILTER === 'all' || i.subteam === BFILTER) &&
+    (!who || (who === '-' ? !i.owner_id : i.owner_id === who)) &&
+    (!q || (i.key + ' ' + i.title + ' ' + i.description + ' ' + i.owner + ' ' + i.blocked_reason)
+             .toLowerCase().includes(q)));
+
+  const order = {
+    // Overdue first, then soonest due, then newest. What to pick up next.
+    todo:    (a, b) => (b.overdue - a.overdue) || String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')) || b.id - a.id,
+    // The longest-idle on top: the one somebody should ask about.
+    doing:   (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
+    blocked: (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
+    done:    (a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')),
+  };
+
+  $('board').innerHTML = ITEMS.statuses.map(s => {
+    let col = shown.filter(i => i.status === s.id).sort(order[s.id]);
+    let more = '';
+    if (s.id === 'done') {
+      const older = col.filter(i => daysAgo(i.done_at) > DONE_DAYS);
+      if (!SHOW_ALL_DONE && older.length) {
+        col = col.filter(i => daysAgo(i.done_at) <= DONE_DAYS);
+        more = `<button class="col-more" type="button" data-more="1">Show ${plural(older.length, 'older one')}</button>`;
+      } else if (SHOW_ALL_DONE && older.length) {
+        more = `<button class="col-more" type="button" data-more="0">Only the last ${DONE_DAYS} days</button>`;
+      }
+    }
+    return `<div class="col" data-col="${esc(s.id)}">
+      <div class="col-head">${esc(s.name)}<span class="col-count">${col.length}</span></div>
+      ${col.map(itemCard).join('') || `<div class="col-empty">${s.id === 'blocked' ? 'Nothing stuck' : 'Nothing here'}</div>`}
+      ${more}
+    </div>`;
+  }).join('');
+}
+
+function itemCard(i) {
+  const quick = { todo: ['doing', 'Start'], doing: ['done', 'Done'], blocked: ['doing', 'Unblock'] }[i.status];
+  const badges = [
+    i.overdue ? `<span class="badge badge-late">Due ${esc(fmtDay(i.due_date))}</span>`
+              : (i.due_date && i.status !== 'done' ? `<span class="badge">Due ${esc(fmtDay(i.due_date))}</span>` : ''),
+    i.stale ? `<span class="badge badge-stale">${plural(i.idle_days, 'day')} still</span>` : '',
+  ].join('');
+  return `<div class="item${i.stale ? ' stale' : ''}" id="i-${esc(i.id)}" data-item="${esc(i.id)}" role="button" tabindex="0">
+    <div class="item-key">${esc(i.key)}${i.subteam ? ' · ' + esc(subName(i.subteam)) : ''}</div>
+    <div class="item-title">${esc(i.title)}</div>
+    ${i.status === 'blocked' && i.blocked_reason ? `<div class="item-why">Waiting on ${esc(i.blocked_reason)}</div>` : ''}
+    ${badges ? `<div class="item-badges">${badges}</div>` : ''}
+    <div class="item-foot">
+      <div class="item-owner">${i.owner_id ? UCDFS.avatar(i.owner, i.photo, 'av av22 av-ink') + `<span>${esc(i.owner)}</span>`
+                                            : '<span>Nobody yet</span>'}</div>
+      ${quick ? `<button class="quick" type="button" data-quick="${esc(quick[0])}" data-id="${esc(i.id)}">${quick[1]}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+async function addItem(e) {
+  e.preventDefault();
+  const title = $('add-title').value.trim();
+  if (!title) { $('add-title').focus(); return; }
+  const btn = $('add-btn');
+  btn.disabled = true;
+  try {
+    const owner = $('add-owner').value;
+    const body = { title, owner_id: owner };
+    // Filed under the chip you are looking at, so it does not vanish the
+    // moment it is made. Unset, the server takes the owner's division.
+    if (BFILTER !== 'all') body.subteam = BFILTER;
+    const d = await api('/api/tracker/items', body);
+    $('add-title').value = '';
+    await changed();
+    flash(d.item.id);
+    $('add-title').focus();
+  } catch (err) {
+    UCDFS.toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function flash(id) {
+  const el = $('i-' + id);
+  if (!el) return;
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1400);
+}
+
+async function quickMove(id, status) {
+  try {
+    await api('/api/tracker/items/update', { id: Number(id), status });
+    await changed();
+    UCDFS.toast(`Moved to ${statusName(status)}`);
+  } catch (e) {
+    UCDFS.toast(e.message);
+  }
+}
+
+// ── One item ──────────────────────────────────────────────────────────────
+
+function openItem(id) {
+  const i = id ? ITEMS.items.find(x => String(x.id) === String(id)) : null;
+  if (!i) return;
+  editing = i;
+  $('item-key').textContent = `${i.key} · created ${fmtDay(i.created_at)}`;
+  $('item-h').textContent = i.title;
+  $('f-title').value = i.title;
+  $('f-owner').innerHTML = personOptions(i.owner_id || '', 'Nobody yet', i.owner);
+  $('f-subteam').innerHTML = `<option value="">None</option>` + ITEMS.subteams.map(s =>
+    `<option value="${esc(s.id)}" ${s.id === i.subteam ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+  $('f-due').value = i.due_date ? String(i.due_date).slice(0, 10) : '';
+  $('f-link').value = i.link;
+  $('f-desc').value = i.description;
+  $('f-blocked').value = i.blocked_reason;
+  $('f-open-link').classList.toggle('gone', !i.link);
+  if (i.link) $('f-open-link').href = i.link;
+  $('u-body').value = '';
+  $('u-private').checked = false;
+  pickStatus(i.status);
+  $('item-bg').classList.remove('gone');
+  loadHistory(i.id);
+}
+
+function pickStatus(s) {
+  pickedStatus = s;
+  $('f-status').innerHTML = ITEMS.statuses.map(x =>
+    `<button class="seg-btn${x.id === s ? ' on' : ''}" type="button" data-status="${esc(x.id)}">${esc(x.name)}</button>`).join('');
+  $('f-blocked-wrap').classList.toggle('gone', s !== 'blocked');
+  if (s === 'blocked' && editing && editing.status !== 'blocked') $('f-blocked').focus();
+}
+
+function closeItem() { $('item-bg').classList.add('gone'); editing = null; }
+
+async function loadHistory(id) {
+  $('item-hist').innerHTML = RING;
+  try {
+    const d = await api('/api/tracker/items/events?id=' + encodeURIComponent(id));
+    if (!editing || editing.id !== id) return;
+    const rows = (d.events || []).slice().reverse();
+    $('item-hist').innerHTML = rows.map(ev => `
+      <li>
+        <div class="hist-when">${esc(ev.actor_name || 'Someone')} · ${esc(fmtWhen(ev.created_at))}
+          ${ev.private ? '<span class="lock">Private</span>' : ''}</div>
+        <div class="hist-body">${esc(describe(ev))}</div>
+      </li>`).join('') || '<li class="hint">Nothing yet.</li>';
+  } catch (e) {
+    $('item-hist').innerHTML = '';
+    UCDFS.toast(e.message);
+  }
+}
+
+function describe(ev) {
+  switch (ev.kind) {
+    case 'created':  return 'Created it';
+    case 'status':   return `Moved it from ${statusName(ev.from_value)} to ${statusName(ev.to_value)}` +
+                            (ev.to_value === 'blocked' && ev.body ? `: waiting on ${ev.body}` : '');
+    case 'assigned': return ev.to_value ? `Gave it to ${ev.to_name || ev.body}` : 'Took it off ' + (ev.from_name || 'its owner');
+    case 'edited':   return 'Changed the ' + ev.body;
+    case 'note':     return ev.body;
+    default:         return ev.kind;
+  }
+}
+
+async function saveItem(e) {
+  e.preventDefault();
+  if (!editing) return;
+  /* Only what changed is sent. The server touches only the fields it is
+     given, so an edit here cannot put back something another tab changed
+     after this one opened. */
+  const now = {
+    title: $('f-title').value.trim(), status: pickedStatus,
+    owner_id: $('f-owner').value || null, subteam: $('f-subteam').value,
+    due_date: $('f-due').value || null, link: $('f-link').value.trim(),
+    description: $('f-desc').value, blocked_reason: $('f-blocked').value.trim(),
+  };
+  const was = {
+    title: editing.title, status: editing.status, owner_id: editing.owner_id || null,
+    subteam: editing.subteam, due_date: editing.due_date ? String(editing.due_date).slice(0, 10) : null,
+    link: editing.link, description: editing.description, blocked_reason: editing.blocked_reason,
+  };
+  const body = { id: editing.id };
+  Object.keys(now).forEach(k => { if (now[k] !== was[k]) body[k] = now[k]; });
+  if (pickedStatus !== 'blocked') delete body.blocked_reason;
+  if (!body.title && 'title' in body) { UCDFS.toast('Say what needs doing'); $('f-title').focus(); return; }
+  if (pickedStatus === 'blocked' && !now.blocked_reason) {
+    UCDFS.toast("Say what it's waiting on"); $('f-blocked').focus(); return;
+  }
+  if (Object.keys(body).length === 1) { closeItem(); return; }
+  const btn = $('f-save');
+  btn.disabled = true;
+  try {
+    const id = editing.id;
+    await api('/api/tracker/items/update', body);
+    closeItem();
+    await changed();
+    if (viewing) openPerson(viewing);
+    flash(id);
+    UCDFS.toast('Saved');
+  } catch (err) {
+    UCDFS.toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function addUpdate() {
+  if (!editing) return;
+  const body = $('u-body').value.trim();
+  if (!body) { UCDFS.toast('Write something first'); $('u-body').focus(); return; }
+  const btn = $('u-add');
+  btn.disabled = true;
+  try {
+    await api('/api/tracker/items/note', { id: editing.id, body, private: $('u-private').checked });
+    $('u-body').value = '';
+    $('u-private').checked = false;
+    const id = editing.id;
+    await changed();
+    editing = ITEMS.items.find(x => x.id === id) || editing;
+    loadHistory(id);
+    if (viewing) openPerson(viewing);
+    UCDFS.toast('Update added');
+  } catch (e) {
+    UCDFS.toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteItem() {
+  if (!editing) return;
+  if (!confirm(`Delete ${editing.key} “${editing.title}”? Its history goes with it, and there's no undo.\n\n` +
+               'Finished work belongs in Done, not here. Delete is for things you are not doing after all.')) return;
+  try {
+    await api('/api/tracker/items/delete', { id: editing.id, title: editing.title });
+    closeItem();
+    await changed();
+    if (viewing) openPerson(viewing);
+    UCDFS.toast('Deleted');
+  } catch (e) {
+    UCDFS.toast(e.message);
+  }
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+
+function showTab(t) {
+  TAB = t === 'board' ? 'board' : 'people';
+  $('tab-people').classList.toggle('active', TAB === 'people');
+  $('tab-board').classList.toggle('active', TAB === 'board');
+  $('panel-people').classList.toggle('gone', TAB !== 'people');
+  $('panel-board').classList.toggle('gone', TAB !== 'board');
+  history.replaceState(null, '', '#' + TAB);
+  if (TAB === 'people' && peopleStale) loadPeople().catch(e => UCDFS.toast(e.message));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  UCDFS.gate(async () => {
+    UCDFS.renderPill();
+    document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+    $('add-form').addEventListener('submit', addItem);
+    $('q').addEventListener('input', renderBoard);
+    $('who').addEventListener('change', renderBoard);
+    $('people').addEventListener('click', e => {
+      const b = e.target.closest('[data-person]');
+      if (b) openPerson(b.dataset.person);
+    });
+    $('people').addEventListener('keydown', e => {
+      const b = e.target.closest('[data-person]');
+      if (b && (e.key === 'Enter' || e.key === ' ') && e.target === b) { e.preventDefault(); openPerson(b.dataset.person); }
+    });
+    $('board').addEventListener('click', e => {
+      const q = e.target.closest('[data-quick]');
+      if (q) { e.stopPropagation(); quickMove(q.dataset.id, q.dataset.quick); return; }
+      const m = e.target.closest('[data-more]');
+      if (m) { SHOW_ALL_DONE = m.dataset.more === '1'; renderBoard(); return; }
+      const c = e.target.closest('[data-item]');
+      if (c) openItem(c.dataset.item);
+    });
+    $('board').addEventListener('keydown', e => {
+      const c = e.target.closest('.item');
+      if (c && (e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); openItem(c.dataset.item); }
+    });
+    $('f-status').addEventListener('click', e => {
+      const b = e.target.closest('[data-status]');
+      if (b) pickStatus(b.dataset.status);
+    });
+    $('item-form').addEventListener('submit', saveItem);
+    $('f-delete').addEventListener('click', deleteItem);
+    $('u-add').addEventListener('click', addUpdate);
+    $('n-add').addEventListener('click', addPersonNote);
+    $('person-items').addEventListener('click', e => {
+      const b = e.target.closest('[data-item]');
+      if (b) openItem(b.dataset.item);
+    });
+    $('person-tl').addEventListener('click', e => {
+      const b = e.target.closest('[data-note]');
+      if (b) deletePersonNote(b.dataset.note);
+    });
+    $('person-new').addEventListener('click', () => {
+      /* Straight to the board's add box with them already picked: one place
+         to make items, so there is one set of rules for making them. */
+      const who = viewing;
+      closePerson();
+      showTab('board');
+      $('add-owner').value = who;
+      $('add-title').focus();
+    });
+    document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',
+      () => b.dataset.close === 'item' ? closeItem() : closePerson()));
+    $('item-bg').addEventListener('mousedown', e => { if (e.target === $('item-bg')) closeItem(); });
+    $('person-bg').addEventListener('mousedown', e => { if (e.target === $('person-bg')) closePerson(); });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (!$('item-bg').classList.contains('gone')) closeItem();
+      else if (!$('person-bg').classList.contains('gone')) closePerson();
+    });
+
+    $('people').innerHTML = RING;
+    try {
+      await Promise.all([loadItems(), loadPeople()]);
+    } catch (e) {
+      UCDFS.toast(e.message);
+    }
+    showTab(location.hash === '#board' ? 'board' : 'people');
+  });
+});
+</script>
+</body>
+</html>

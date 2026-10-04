@@ -37,6 +37,8 @@ static/
   flowcharts.html     card-based applet: the chart picker, at /flowcharts
   admin.html          card-based applet: roles, god mode, deleting accounts
                       (requires_role: admin)
+  tracker.html        card-based applet: who's on what, who has gone quiet
+                      (requires_role: admin)
   pt.html             full-screen canvas tool: draws any one chart, at /plan/<id>
   harness.html        full-screen canvas tool
 migrations/           SQL, applied by hand in the Supabase SQL editor
@@ -93,7 +95,7 @@ cards" below for why the line falls there and not somewhere tidier.
   layout" below.
 
 Current applet ids: `attendance`, `meetings`, `purchases`, `profiles`, `org`,
-`flowcharts`, `comp`, `glossary` (under `reference`), `admin`, and
+`flowcharts`, `comp`, `glossary` (under `reference`), `tracker`, `admin`, and
 under `archive`: `harness`, `pt`. Link ids are whatever is in the table; the
 seeded ones are `vcu`, `harnesshive`, `onshape`, `sharepoint`, `fsstats`,
 `fswiki`, `fsae-reddit` and, under `archive`, `mech`.
@@ -517,6 +519,89 @@ never "whatever the client sent". Deleting a `pt_done_log` line removes the
 **record** of a tick, not the tick. `pt_done` is a different table and the
 build plan is untouched. The deletion is not itself logged: a line saying a line
 was deleted is noise at the top of the one place you were trying to clear.
+
+## The tracker
+
+`/tracker` (`migrations/017`) answers two questions for whoever runs the team:
+who is working on what, and who has gone quiet. **Admin-only for now**, and
+built to open to the team later. The design and the reasoning against TODO.md's
+"do not rebuild Jira" are in the Tracker section there.
+
+It is gated on the **role, not the override**, like `/admin` and links: it is a
+tool somebody reads all day, and needing to be elevated to read it would mean an
+admin elevated all day. `requires_role` hides the card and the page; every
+`/api/tracker/*` endpoint checks again through `_require_tracker()`, because
+hiding a page is not a permission.
+
+Two halves, deliberately unequal in what they ask of anybody:
+
+- **Items** are Jira-lite and typed by an admin. A title is the only required
+  field, because the Notion tracker died partly of form-filling. Continuous
+  flow: `todo → doing → blocked → done`, no sprints, no estimates. Blocked
+  requires saying what it is waiting on. `touched_at` is when it last *moved*
+  (status, owner, blocked reason, an update), not `updated_at`, so fixing a
+  typo cannot make a three-week-stale item look fresh. Updates only touch the
+  fields in the body, so the one-click status buttons cannot overwrite an edit
+  from another tab. Deleting echoes the title back, like links and charts.
+- **People** is typed by nobody. Somebody's last sign is the newest of: a day
+  logged in the workshop (today or earlier), a flowchart tick, a purchase
+  request, anything they did to an item, an update somebody wrote on an item
+  they own, or a note about them. Quiet is `tracker.quiet_days` **business**
+  days without one (default 5, 0 = off for exams), edited from `/admin`.
+
+What is deliberately **not** a sign:
+
+- **Meetings and week notes.** Hardly anybody fills them in, so counting them
+  would flag the honest majority and reward the few.
+- **A status change somebody else made on your item.** An admin assigning work
+  and clicking Start would otherwise reset the quiet flag on exactly the person
+  the view exists to surface. A written update does count: somebody checked in,
+  and that is what the flag was asking for.
+
+Privacy, decided now so opening up is not a rewrite:
+
+- `work_item_events.private` marks an update **admins only, forever**. A note
+  written on the understanding that only admins read it must not become
+  visible the day that stops being true. `_sees_private()` already filters on
+  the way out even though only admins can call the endpoints yet.
+- `person_notes` has no public version at all, and cascades with the account:
+  they are notes about a named person. The page says to write them as if the
+  person will read them, because under GDPR they can ask to.
+- **The People view stays admin-only after the tracker opens**, for the reason
+  the org chart's flags do: "so-and-so has gone quiet" is gossip to a member and
+  actionable to an admin.
+- **Nothing writes to the activity feed**, the one place this breaks "new
+  applets call `log_activity()`". A feed line is on every member's dashboard,
+  and "gave T-14 to Aoife" there would announce a tool the team cannot open.
+  The quiet-days setting does not log either, unlike the € threshold beside it.
+
+Opening up is three functions: `_require_tracker()` (who may read),
+`_may_edit_item()` (who may change an item; it already takes the item so an
+owner or a granted captain can be let in), and `_sees_private()`, which does not
+change.
+
+### Accounts on the name-keyed tables
+
+`attendance` and `pt_done_log` key people by the name that was typed, which
+predates accounts. 017 adds a nullable `profile_id` to both so the People view
+never matches on spelling:
+
+- **Backfilled only where the folded name matches exactly one account.** Two
+  members with the same name stay null rather than one inheriting the other's
+  history with nothing on screen to say so. `_profile_id_for_name()` follows the
+  same rule for a row god mode writes on somebody's behalf.
+- **Every new row is stamped**: your own attendance with your id, a tick with
+  the caller's. Through `_write_stamped()`, which retries without the column if
+  PostgREST says it is not there, so a forgotten 017 costs attribution and not
+  the two busiest writes on the site.
+- **What is left is listed in `/admin`** under "Names that match no account":
+  typos, nicknames, the ambiguous, people who never signed up. Matching one
+  stamps every still-unmatched row with that spelling. It never moves a row
+  that already has an account, which also means a wrong match is a SQL fix,
+  and the confirm says so.
+- `_fold_name()` in Python and the `lower(btrim(regexp_replace(…)))` in 017 are
+  the same fold and have to stay that way. Collapse first, trim second:
+  `btrim` only strips spaces.
 
 ## Roles, permissions and god mode
 
@@ -1163,6 +1248,14 @@ correctly. 010 shipped and was applied, which makes it a snapshot of what ran;
 the block it used, `tools`, is not seeded by 011 at all, because it was never a
 subject but "the main grid", and the *first* block is what that means now.
 
+**017 is the tracker** (`work_items`, `work_item_events`, `person_notes`) and
+adds `profile_id` to `attendance` and `pt_done_log`, backfilled where a name
+matches exactly one account. It needs 015 (its quiet threshold is a row in
+`settings`). Apply it first like the rest; if you do not, the tracker says it
+is not set up, and attendance and ticks keep working unstamped, because both
+writes go through `_write_stamped()`. Those rows then show up in `/admin` as
+unmatched names to tidy.
+
 **016 creates `glossary_terms` and seeds the 61 terms the page used to carry.**
 Apply it before the code that reads it, like the others; without it `/glossary`
 says it is not set up. Re-runnable: the seed skips anything already there, by
@@ -1181,8 +1274,8 @@ there names charts into existence.
 `scripts/seed-nonprod.sh` copies the reference data down from production: the
 charts and their graphs, the competition schedule, the harness document,
 `comp_meta` and the glossary. It copies **nothing that is about a person**: no
-profiles, attendance, roster, requests, `pt_done_log` or `activity_log`, all of
-which carry names, and no photos, which are files on disk in a per-tier
+profiles, attendance, roster, requests, `pt_done_log`, `activity_log` or the
+tracker's three tables, all of which carry names, and no photos, which are files on disk in a per-tier
 directory for exactly this reason. `glossary_terms.updated_by` is stripped too. `plans.created_by` is stripped on the way for the same reason: the
 chart is reference data, the name of whoever made it is not.
 

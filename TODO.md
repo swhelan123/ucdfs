@@ -686,6 +686,47 @@ stamps the account on the row instead: backfilled where a name matches exactly
 one account, written on every new row, and the rest listed in `/admin` to match
 by hand once. That list only shrinks.
 
+### Planning, added 2026-10-22 (019)
+
+Asked for by the person it is for, ahead of the 19 November design freeze:
+which area of the car something is, how long it takes, what it waits on, what
+is critical, and which deadline it is for; a strip counting down to each
+division's freeze; pasting this week's Teams message in instead of retyping
+it, and getting one back out. Mechanics in CLAUDE.md, *Planning (019)*. How
+each piece stays on the right side of the post-mortem:
+
+- **A title is still the only required field.** Every planning field is
+  optional, hidden without 019, and an item with none of them is the item it
+  always was. The quick-add box is still one line, and `N` gets you to it.
+- **No sprints, no points, no velocity.** `duration_days` draws a due date when
+  nobody gave one, marked "est.", and that is all it does. Nothing adds them up
+  or measures anybody against them.
+- **Planning is not movement.** None of it bumps `touched_at`, so tidying the
+  board cannot make a three-week-stale item look fresh.
+- **Paste-to-create is the five-second capture rule at scale.** The weekly
+  message already gets written; pasting it in is how it becomes items without
+  a form per line. It never guesses a person: a name that matches nobody, or
+  more than one somebody, is flagged for a human to settle.
+- **Still nothing on the feed.** Not the pasted items, not the freeze dates.
+- **The People view stays admin-only.** It gained counts (open, critical,
+  overdue, a "No open items" chip) and one new kind of sign, a commit on a
+  linked GitHub branch or PR. Not a whole repo: that would mark everyone on
+  the shared repo active, which is the same "somebody else acted for you"
+  mistake as counting an admin's status change.
+- **Private updates stay private** in the new "This week" summary too.
+
+Decided along the way, unasked:
+
+- The freeze dates are **settings rows, not `SEASON_MILESTONES`**, because they
+  move and moving one must not be a deploy. One `design_freeze` key resolves
+  per division, so an item never has to know which date it is.
+- A done dependency counts from **the day it was done**, not its due date:
+  that is when the work behind it could actually start.
+- **Undo after a status change** is a second, ordinary status change, so the
+  history shows both. The history records what happened, and this did.
+- The weekly message uses a first name where it is unique on the team and the
+  full name where it is not, for the reason the parser will not guess.
+
 ### When it opens to the team
 
 - Members see items and can move and update **their own**. `_may_edit_item()`
@@ -709,8 +750,11 @@ by hand once. That list only shrinks.
   work, but decide which is which before either grows into the other. The cheap
   version: an item's link points at the chart.
 - **Kieran's Gantt chart.** Nobody knows where it is or how current it is. If it
-  turns up with real dates, they belong in `SEASON_MILESTONES` (still empty) and
-  as due dates here, not in a third tool.
+  turns up with real dates, fixed ones belong in `SEASON_MILESTONES` (still
+  empty) and the rest as items here, with durations and `waits_on`, which is
+  most of what a Gantt chart holds. Not a third tool.
+- **Bulk changes are one request per item.** Fine at the size of a selection
+  anybody makes by hand; if it ever is not, a bulk endpoint, not a faster loop.
 - **Bank holidays count as business days.** A five-day threshold absorbs one;
   revisit if it flags people across Easter.
 

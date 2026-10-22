@@ -179,6 +179,8 @@
   border: 2px solid var(--border); border-radius: 11px; outline: none;
 }
 .set-num:focus { border-color: var(--indigo); }
+.set-date { width: 160px; text-align: left; }
+.set-row + .set-row { border-top: 1px solid var(--border); }
 .um-pick { max-width: 200px; }
 </style>
 </head>
@@ -294,6 +296,25 @@
         <input class="set-num" id="quiet-days" type="number" min="0" max="30" step="1"
                aria-label="Business days before somebody counts as quiet">
         <button class="btn btn-dark btn-sm" id="quiet-save" type="button">Save</button>
+      </div>
+      <!-- One row per division, saved separately: moving Mechanical's freeze
+           must not need anybody to re-confirm Electrical's. -->
+      <div class="set-row">
+        <div class="set-body">
+          <div class="set-name"><label for="freeze-pt">Electrical design freeze</label></div>
+          <div class="set-sub">The countdown at the top of the tracker, and the date items marked
+            "design freeze" in Electrical are counted against.</div>
+        </div>
+        <input class="set-num set-date" id="freeze-pt" type="date" data-freeze="pt">
+        <button class="btn btn-dark btn-sm" type="button" data-freeze-save="pt">Save</button>
+      </div>
+      <div class="set-row">
+        <div class="set-body">
+          <div class="set-name"><label for="freeze-mech">Mechanical design freeze</label></div>
+          <div class="set-sub">The same, for Mechanical. Operations has no freeze.</div>
+        </div>
+        <input class="set-num set-date" id="freeze-mech" type="date" data-freeze="mech">
+        <button class="btn btn-dark btn-sm" type="button" data-freeze-save="mech">Save</button>
       </div>
     </div>
 
@@ -942,8 +963,9 @@ async function setCaptain(subteam, profileId) {
 }
 
 /* ── Tracker ─────────────────────────────────────────────────────────────────
-   The quiet threshold, and typed names that 017 could not match to an account.
-   Neither writes to the activity feed: the tracker is admin-only, and a feed
+   The quiet threshold, the two design freeze dates, and typed names that 017
+   could not match to an account.
+   None of them writes to the activity feed: the tracker is admin-only, and a feed
    line is on every member's dashboard. */
 let UNMATCHED = { ready: true, names: [], people: [] };
 
@@ -954,6 +976,33 @@ async function loadSettings() {
   const box = document.getElementById('quiet-days');
   box.value = j.quiet_days;
   if (j.quiet_days_max) box.max = j.quiet_days_max;
+  Object.entries(j.design_freeze || {}).forEach(([sub, d]) => {
+    const el = document.getElementById('freeze-' + sub);
+    if (el) el.value = d;
+  });
+}
+
+/* A design freeze, one division at a time. Checked here only for being filled
+   in; the server is what decides whether it is a real date. */
+async function saveFreeze(btn, sub) {
+  const v = document.getElementById('freeze-' + sub).value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { UCDFS.toast('Pick a date'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/admin/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ design_freeze: { [sub]: v } }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Failed');
+    const d = new Date(j.design_freeze[sub] + 'T12:00:00');
+    UCDFS.toast(`${sub === 'pt' ? 'Electrical' : 'Mechanical'} freeze: ` +
+                d.toLocaleDateString('en-IE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }));
+  } catch (e) {
+    UCDFS.toast(e.message || "Couldn't save that");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function saveQuiet(btn) {
@@ -1078,6 +1127,8 @@ async function boot() {
 
   document.getElementById('quiet-save').addEventListener('click',
     e => saveQuiet(e.currentTarget));
+  document.querySelectorAll('[data-freeze-save]').forEach(b =>
+    b.addEventListener('click', () => saveFreeze(b, b.dataset.freezeSave)));
   document.getElementById('unmatched').addEventListener('click', e => {
     const b = e.target.closest('button[data-match]');
     if (b) matchName(b, b.dataset.match);
@@ -1113,7 +1164,7 @@ async function boot() {
   try {
     await loadSettings();
   } catch (e) {
-    UCDFS.toast('Could not load the tracker setting');
+    UCDFS.toast('Could not load the tracker settings');
   }
 
   try {

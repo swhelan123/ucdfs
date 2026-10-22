@@ -8,6 +8,7 @@ import uuid
 import base64
 import binascii
 import logging
+import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
@@ -1911,13 +1912,17 @@ async def api_admin_captain_set(request: Request):
 async def api_admin_settings(request: Request):
     require_role(request, "admin")
     return {"threshold_eur": str(_threshold_eur()),
-            "quiet_days": _quiet_days(), "quiet_days_max": MAX_QUIET_DAYS}
+            "quiet_days": _quiet_days(), "quiet_days_max": MAX_QUIET_DAYS,
+            "design_freeze": {s: _design_freeze(s).isoformat() for s in FREEZE_SUBTEAMS},
+            "design_freeze_default": DESIGN_FREEZE_DEFAULT.isoformat()}
 
 
 @app.post("/api/admin/settings")
 async def api_admin_settings_set(request: Request):
     """Change a setting: the approval threshold, the tracker's quiet threshold,
-    or both. Only the keys present in the body are touched.
+    the design freeze dates, or any mix. Only the keys present in the body are
+    touched, and design_freeze is {division id: date} with only the divisions
+    sent, so saving Mechanical's date never rewrites Electrical's.
 
     Data rather than constants because they will be argued about and changing
     them must not be a deploy.
@@ -1927,15 +1932,26 @@ async def api_admin_settings_set(request: Request):
     rather than silently rewriting what a queue of pending requests needs.
 
     The quiet threshold is read live, so changing it re-draws every flag on the
-    next page load. 0 turns the flags off, for exams and Christmas.
+    next page load. 0 turns the flags off, for exams and Christmas. The freeze
+    dates are read live too, by the tracker's milestone strip.
 
     Everything is validated before anything is written, so a bad value for one
     key cannot leave the other half-saved.
     """
     me = require_role(request, "admin")
     b  = await request.json()
-    if "threshold_eur" not in b and "quiet_days" not in b:
+    if not any(k in b for k in ("threshold_eur", "quiet_days", "design_freeze")):
         raise HTTPException(400, "Nothing to change")
+
+    freezes: dict = {}
+    if "design_freeze" in b:
+        sent = b.get("design_freeze")
+        if not isinstance(sent, dict) or not sent:
+            raise HTTPException(400, "design_freeze is {division: date}")
+        for sub, raw in sent.items():
+            if sub not in FREEZE_SUBTEAMS:
+                raise HTTPException(400, "Only Electrical and Mechanical have a design freeze")
+            freezes[sub] = _clean_freeze(raw)
 
     threshold = None
     if "threshold_eur" in b:
@@ -1974,6 +1990,16 @@ async def api_admin_settings_set(request: Request):
         # No feed line. The tracker is admin-only, and "set the quiet threshold
         # to 5" on every dashboard would announce it to the whole team.
         out["quiet_days"] = quiet
+
+    for sub, d in freezes.items():
+        try:
+            put(_freeze_key(sub), d.isoformat())
+        except Exception as e:
+            logger.error(f"[admin] design freeze save failed: {e}")
+            raise HTTPException(503, "Couldn't save that. Has migration 015 been applied?")
+        # No feed line either, for the reason quiet days has none: the strip
+        # it moves is on a page only admins can open.
+        out.setdefault("design_freeze", {})[sub] = d.isoformat()
 
     if threshold is not None:
         try:
@@ -5343,6 +5369,59 @@ TRACKER_WINDOW_DAYS = 90
 # long enough that one missed week does not read as somebody disappearing.
 RECENT_SPAN_DAYS = 28
 
+# ── Planning (migrations/019) ────────────────────────────────────────────────
+# Optional fields that let the board answer "what is next, and will we make
+# the design freeze": an area, a duration, a start, what an item waits on, a
+# critical flag, and which milestone it is for. A title is still the only
+# required field; an item with none of these behaves exactly as before. No
+# sprints, no points, no velocity: duration_days exists to draw a due date
+# nobody typed, marked "est.", not to measure anybody against.
+#
+# Electrical's breakdown, because Electrical asked. Checked here rather than in
+# the schema, like statuses, so a new area is one line. "other" is the catch-all
+# rather than a list that tries to cover the whole car.
+TRACKER_AREAS = [
+    {"id": "accumulator", "name": "Accumulator", "accent": "amber"},
+    {"id": "circuits",    "name": "Circuits",    "accent": "teal"},
+    {"id": "software",    "name": "Software",    "accent": "indigo"},
+    {"id": "motor",       "name": "Motor",       "accent": "green"},
+    {"id": "other",       "name": "Other",       "accent": "purple"},
+]
+TRACKER_AREA_IDS = [a["id"] for a in TRACKER_AREAS]
+PLANNING_COLUMNS = ("area", "duration_days", "starts_on", "waits_on", "critical", "milestone")
+# Bounds on boxes, not considered limits. Half a year of business days is
+# longer than any one job on the car, and an item waiting on more than twelve
+# others is a milestone pretending to be a task.
+MAX_DURATION_DAYS = 120
+MAX_WAITS         = 12
+# "Due soon" on a card: this many business days or fewer.
+DUE_SOON_DAYS     = 3
+# The design freeze, one per division, in settings as milestone.design_freeze.<id>
+# and edited from /admin. This is the date a division with no row gets, so a
+# fresh database draws a sensible strip rather than a broken one.
+DESIGN_FREEZE_DEFAULT = date(2026, 11, 19)
+FREEZE_SUBTEAMS       = ("pt", "mech")
+# Pasting a list in: a bound on one paste, so a mis-paste of a whole document
+# is refused rather than turned into four hundred items.
+MAX_PASTE_LINES = 100
+# What people are called in the room, against what their account says. Keys
+# are folded the way _name_key() folds; each value lists names the account may
+# carry instead, matched as a full name or a first name. Add to it when the
+# paste preview flags somebody everyone knows by another name: it is the one
+# place a nickname is allowed to mean an account, and only ever in a preview a
+# person confirms.
+NAME_ALIASES = {
+    "cj":    ["chetanjot"],
+    # Goes by Anrai; the account (from Teams) says Weeraphong.
+    "anrai": ["weeraphong"],
+}
+# Last commit on a linked GitHub branch or PR, cached in memory. Unauthenticated
+# GitHub allows 60 requests an hour from one address, so the cache is what
+# keeps a board of links under it; a failure is cached too, for the same
+# reason, and simply shows nothing.
+GITHUB_TTL_S       = 20 * 60
+GITHUB_MAX_FETCHES = 15
+
 
 def _quiet_days() -> int:
     """Business days without a sign of somebody before they are flagged."""
@@ -5381,6 +5460,399 @@ def _sees_private(profile: dict) -> bool:
     it stays that way. Filtered on the way out even while only admins can call
     the endpoint, so the rule is in place before the day it matters."""
     return god_on(profile) or (profile or {}).get("role") == "admin"
+
+
+def _freeze_key(subteam: str) -> str:
+    return f"milestone.design_freeze.{subteam}"
+
+
+def _design_freeze(subteam: str) -> Optional[date]:
+    """A division's design freeze, from settings, or the default when there is
+    no row. None for a division that has no freeze at all (Operations).
+
+    Read live, like the quiet threshold, so moving the date in /admin moves the
+    tracker's strip on the next load with no deploy. A row that is somehow not
+    a date falls back rather than blanking the page.
+    """
+    if subteam not in FREEZE_SUBTEAMS:
+        return None
+    raw = _setting(_freeze_key(subteam), DESIGN_FREEZE_DEFAULT.isoformat())
+    try:
+        return date.fromisoformat(str(raw).strip())
+    except ValueError:
+        logger.error(f"[settings] design freeze {raw!r} for {subteam} is not a date; using the default")
+        return DESIGN_FREEZE_DEFAULT
+
+
+def _clean_freeze(raw) -> date:
+    """A design freeze date as typed in /admin. A real calendar date, so
+    2026-02-30 is refused rather than rolled into March, and within a century
+    either way, so a year typed as 0226 is a typo and not a deadline."""
+    v = raw.strip() if isinstance(raw, str) else ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise HTTPException(400, "A design freeze has to be a date, YYYY-MM-DD")
+    try:
+        d = date.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(400, "That date doesn't exist")
+    if not 2000 <= d.year <= 2100:
+        raise HTTPException(400, "That date is out of range")
+    return d
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")
+
+
+def _milestones() -> list:
+    """Every deadline an item can be attached to, as {key, name, date, subteam}.
+
+    The two design freezes come from settings and carry their division: one key,
+    design_freeze, serves both, and resolves against the item's own division.
+    SEASON_MILESTONES stays the home of fixed dates (it is hand-edited once a
+    season, and the dashboard countdown reads it), and is merged in here at read
+    time, with the competition itself last. subteam '' means everybody's.
+    """
+    out = [{"key": "design_freeze", "name": f"{SUBTEAMS_BY_ID[s]['name']} design freeze",
+            "date": _design_freeze(s), "subteam": s} for s in FREEZE_SUBTEAMS]
+    out += [{"key": "season_" + _slug(label), "name": label, "date": d, "subteam": ""}
+            for label, d in SEASON_MILESTONES]
+    out.append({"key": "competition", "name": FSUK_NAME, "date": FSUK_DATE, "subteam": ""})
+    return out
+
+
+def _resolve_milestone(row: dict, milestones: list) -> Optional[dict]:
+    """Which of the milestones an item is for, given its division. design_freeze
+    on an Operations item, or on one with no division, is no date at all: that
+    division has no freeze, and borrowing Electrical's would be a guess."""
+    key = row.get("milestone")
+    if not key:
+        return None
+    sub = row.get("subteam") or ""
+    return next((m for m in milestones
+                 if m["key"] == key and (not m["subteam"] or m["subteam"] == sub)), None)
+
+
+def _add_business_days(start: date, n: int) -> date:
+    """`n` weekdays after `start`: Friday plus one is Monday. The inverse of
+    _business_days_since, so a derived due date and the quiet count agree
+    about what a working day is."""
+    d, left = start, max(0, int(n))
+    while left > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            left -= 1
+    return d
+
+
+def _waits_of(row: dict) -> list:
+    """The ids an item waits on, as ints, in order, de-duplicated. Null before
+    019 or for an item that never set them."""
+    out: list = []
+    for v in row.get("waits_on") or []:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if i not in out:
+            out.append(i)
+    return out
+
+
+def _plan(rows: list, today: date) -> dict:
+    """{item id: {"due": date or None, "derived": bool}} for every item.
+
+    An explicit due_date always wins. Otherwise, with a duration, the due date
+    is the start plus that many business days, and the start is, in order:
+    starts_on; the latest finish among what it waits on; today. "Finish" is the
+    day a done item was done, since that is when the work behind it could
+    actually start, and the due date (explicit or derived) of one still open.
+    An item with a duration and nothing to start from therefore drifts with
+    today, which is honest: "about three days from whenever somebody starts".
+
+    Loops are refused when waits_on is saved, so this terminates; `seen` is
+    there for a database somebody edited by hand.
+    """
+    by_id = {r.get("id"): r for r in rows}
+    memo: dict = {}
+
+    def finish(iid: int, seen: frozenset) -> Optional[date]:
+        r = by_id.get(iid)
+        if not r:
+            return None
+        if r.get("status") == "done" and r.get("done_at"):
+            return _day_of(r.get("done_at"))
+        return due(iid, seen)["due"]
+
+    def due(iid: int, seen: frozenset) -> dict:
+        if iid in memo:
+            return memo[iid]
+        r = by_id.get(iid) or {}
+        out = {"due": _day_of(r.get("due_date")), "derived": False}
+        n = r.get("duration_days")
+        if not out["due"] and isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+            start = _day_of(r.get("starts_on"))
+            if not start:
+                seen = seen | {iid}
+                ends = [finish(w, seen) for w in _waits_of(r) if w in by_id and w not in seen]
+                ends = [d for d in ends if d]
+                start = max(ends) if ends else today
+            out = {"due": _add_business_days(start, n), "derived": True}
+        memo[iid] = out
+        return out
+
+    return {iid: due(iid, frozenset()) for iid in by_id}
+
+
+def _loop_through(graph: dict, start: int) -> Optional[list]:
+    """A path of waits from `start` back to itself, or None."""
+    stack = [(w, [start, w]) for w in graph.get(start, [])]
+    seen: set = set()
+    while stack:
+        node, path = stack.pop()
+        if node == start:
+            return path
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend((w, path + [w]) for w in graph.get(node, []))
+    return None
+
+
+def _clean_waits(raw, rows: list, self_id: Optional[int]) -> list:
+    """Item ids this one waits on, checked.
+
+    Ids that name no item are dropped, the way _dress_item drops a deleted
+    account from owner_ids: the board may be minutes stale, and losing a wait
+    on something already deleted is what anyone would want. An item waiting on
+    itself, or a wait that closes a loop, is refused: a loop has no start, so
+    nothing in it could ever be Ready and its derived dates would be nonsense.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise HTTPException(400, "waits_on has to be a list of items")
+    known = {r.get("id") for r in rows}
+    out: list = []
+    for v in raw:
+        if isinstance(v, bool):
+            raise HTTPException(400, "waits_on has to be a list of items")
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "waits_on has to be a list of items")
+        if self_id is not None and i == self_id:
+            raise HTTPException(400, "An item can't wait on itself")
+        if i in known and i not in out:
+            out.append(i)
+    if len(out) > MAX_WAITS:
+        raise HTTPException(400, f"At most {MAX_WAITS} things to wait on. Split it up")
+    if self_id is not None and out:
+        graph = {r.get("id"): _waits_of(r) for r in rows}
+        graph[self_id] = out
+        loop = _loop_through(graph, self_id)
+        if loop:
+            raise HTTPException(400, "That would make a loop: " +
+                                " waits on ".join(f"T-{i}" for i in loop))
+    return out
+
+
+def _clean_area(raw) -> Optional[str]:
+    """An area id or None. Refused rather than guessed when it names nothing:
+    the paste flow and the dialog both send ids the server listed, so an
+    unknown one is a bug worth hearing about, not a stale tab."""
+    v = str(raw or "").strip().lower()
+    if not v:
+        return None
+    if v not in TRACKER_AREA_IDS:
+        raise HTTPException(400, "That isn't an area")
+    return v
+
+
+def _clean_duration(raw) -> Optional[int]:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    # Whole days only, for the reason quiet_days is: int(True) is 1.
+    if isinstance(raw, bool) or not re.fullmatch(r"\s*\d+\s*", str(raw)):
+        raise HTTPException(400, "A duration is a whole number of working days")
+    n = int(str(raw))
+    if n > MAX_DURATION_DAYS:
+        raise HTTPException(400, f"At most {MAX_DURATION_DAYS} working days. Split it up")
+    return n
+
+
+def _clean_starts(raw) -> Optional[str]:
+    v = str(raw or "").strip()
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(v).isoformat()
+    except ValueError:
+        raise HTTPException(400, "A start date has to be YYYY-MM-DD")
+
+
+def _clean_milestone(raw, milestones: list) -> Optional[str]:
+    v = str(raw or "").strip()
+    if not v:
+        return None
+    if v not in {m["key"] for m in milestones}:
+        raise HTTPException(400, "That isn't a milestone")
+    return v
+
+
+def _planning_in(b: dict, rows: list, self_id: Optional[int], milestones: list) -> dict:
+    """The 019 fields present in a body, cleaned. Only the keys sent come back,
+    so an update touches exactly what was asked for."""
+    out: dict = {}
+    if "area" in b:
+        out["area"] = _clean_area(b.get("area"))
+    if "duration_days" in b:
+        out["duration_days"] = _clean_duration(b.get("duration_days"))
+    if "starts_on" in b:
+        out["starts_on"] = _clean_starts(b.get("starts_on"))
+    if "waits_on" in b:
+        out["waits_on"] = _clean_waits(b.get("waits_on"), rows, self_id)
+    if "critical" in b:
+        # Literally true, like private on a note: "false" is a truthy string.
+        out["critical"] = b.get("critical") is True
+    if "milestone" in b:
+        out["milestone"] = _clean_milestone(b.get("milestone"), milestones)
+    return out
+
+
+def _is_unset(col: str, v) -> bool:
+    """What a planning column holds when nobody has set it."""
+    return v is None or v == [] or (col == "critical" and v is False)
+
+
+def _write_planning(write, row: dict):
+    """Run an item write, and survive 019 not being applied yet.
+
+    Same shape as _write_owners. PostgREST names the column it does not know,
+    so a write that mentions one of 019's is retried without them when none of
+    them carries a value, which is every write the board made before 019. One
+    that does set something has nowhere to put it, and saying so beats
+    pretending it saved.
+    """
+    try:
+        return write(row)
+    except Exception as e:
+        cols = [c for c in PLANNING_COLUMNS if c in row]
+        if not cols or not any(c in str(e) for c in PLANNING_COLUMNS):
+            raise
+        if any(not _is_unset(c, row[c]) for c in cols):
+            raise HTTPException(503, "Planning fields need migration 019")
+        logger.error(f"[019] wrote without the planning columns ({e}). Has migration 019 been applied?")
+        return write({k: v for k, v in row.items() if k not in PLANNING_COLUMNS})
+
+
+def _planning_ready() -> bool:
+    """Has 019 been applied? Asked once per board load, so the page can say so
+    instead of offering fields that would refuse to save."""
+    try:
+        sb().table("work_items").select("area,waits_on,milestone").limit(1).execute()
+        return True
+    except Exception as e:
+        logger.error(f"[tracker] planning columns unavailable (019 applied?): {e}")
+        return False
+
+
+# ── GitHub ────────────────────────────────────────────────────────────────────
+
+_gh_cache: dict = {}
+
+
+def _github_target(link: str) -> Optional[dict]:
+    """{owner, repo, kind, ref} for a github.com repo, branch or PR url, or None.
+
+        https://github.com/o/r                 repo     its default branch
+        https://github.com/o/r/tree/feat/x     branch   feat/x (slashes and all)
+        https://github.com/o/r/commits/feat/x  branch
+        https://github.com/o/r/pull/12         pr       12, whatever follows it
+
+    Anything deeper (a file, an issue) reads as the repo, which is still the
+    question "is anything happening there".
+    """
+    try:
+        u = urlparse(str(link or "").strip())
+    except ValueError:
+        return None
+    if u.scheme not in ("http", "https") or (u.hostname or "").lower() not in ("github.com", "www.github.com"):
+        return None
+    parts = [p for p in u.path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    ok = re.compile(r"^[A-Za-z0-9_.-]+$")
+    owner, repo = parts[0], re.sub(r"\.git$", "", parts[1])
+    if not ok.match(owner) or not ok.match(repo):
+        return None
+    base = {"owner": owner, "repo": repo}
+    if len(parts) >= 4 and parts[2] == "pull" and parts[3].isdigit():
+        return {**base, "kind": "pr", "ref": parts[3]}
+    if len(parts) >= 4 and parts[2] in ("tree", "commits"):
+        return {**base, "kind": "branch", "ref": "/".join(parts[3:])}
+    return {**base, "kind": "repo", "ref": ""}
+
+
+async def _last_commit(client, t: dict) -> Optional[str]:
+    """The newest commit's timestamp on a target, or None on any failure. A
+    private repo, a typo, GitHub's rate limit: all of them show nothing."""
+    api = f"https://api.github.com/repos/{t['owner']}/{t['repo']}"
+    try:
+        if t["kind"] == "pr":
+            # Oldest first, up to a hundred: the last is the newest for any PR
+            # this team will open.
+            r = await client.get(f"{api}/pulls/{t['ref']}/commits", params={"per_page": 100})
+            r.raise_for_status()
+            commits = r.json() or []
+            c = commits[-1] if commits else None
+        else:
+            params = {"per_page": 1}
+            if t["kind"] == "branch":
+                params["sha"] = t["ref"]
+            r = await client.get(f"{api}/commits", params=params)
+            r.raise_for_status()
+            c = (r.json() or [None])[0]
+        return ((c or {}).get("commit") or {}).get("committer", {}).get("date")
+    except Exception as e:
+        logger.info(f"[github] {t['owner']}/{t['repo']} {t['kind']} {t['ref']}: {e}")
+        return None
+
+
+async def _commits_for(rows: list) -> dict:
+    """{item id: last commit timestamp} for open items linking to GitHub.
+
+    Server-side so the browser never talks to a third party for this page, and
+    cached so a board of links costs GitHub nothing on most loads. Fetches are
+    capped per request: past the cap an item simply has no date this time and
+    gets one on a later load, which beats a board that waits on GitHub.
+    """
+    now = time.time()
+    want: dict = {}
+    for r in rows:
+        if r.get("status") == "done":
+            continue
+        t = _github_target(r.get("link") or "")
+        if t:
+            k = (t["owner"].lower(), t["repo"].lower(), t["kind"], t["ref"])
+            want.setdefault(k, (t, []))[1].append(r.get("id"))
+    missing = [k for k in want if not (_gh_cache.get(k) and _gh_cache[k][0] > now)][:GITHUB_MAX_FETCHES]
+    if missing:
+        try:
+            async with httpx.AsyncClient(timeout=5, follow_redirects=True, headers={
+                    "Accept": "application/vnd.github+json", "User-Agent": "ucdfs-tracker"}) as client:
+                got = await asyncio.gather(*(_last_commit(client, want[k][0]) for k in missing))
+            for k, when in zip(missing, got):
+                _gh_cache[k] = (now + GITHUB_TTL_S, when)
+        except Exception as e:
+            logger.error(f"[github] fetch failed: {e}")
+    out: dict = {}
+    for k, (_t, ids) in want.items():
+        hit = _gh_cache.get(k)
+        if hit and hit[1]:
+            for i in ids:
+                out[i] = hit[1]
+    return out
 
 
 def _all_rows(build, page: int = 1000) -> list:
@@ -5502,6 +5974,8 @@ def _tracker_roster() -> list:
         out.append({
             "id":         r.get("id"),
             "name":       name or "Someone",
+            # For matching a pasted "Aoife: …" to an account; see _match_name.
+            "first":      (r.get("first_name") or "").strip(),
             "photo":      _avatar_url(r.get("id"), d),
             "subteam":    r.get("subteam") or "",
             # The title on their card, for context only. Captaincy below is
@@ -5573,17 +6047,40 @@ def _is_stale(row: dict, today: date, n: int) -> bool:
                 and idle is not None and idle >= n)
 
 
-def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
+def _item_ctx(rows: list, today: date, commits: Optional[dict] = None) -> dict:
+    """What dressing one item needs to know about the others: derived dates,
+    what it waits on, the milestones, and any GitHub dates already fetched."""
+    return {"plan": _plan(rows, today), "by_id": {r.get("id"): r for r in rows},
+            "milestones": _milestones(), "commits": commits or {}}
+
+
+def _dress_item(row: dict, people: dict, today: date, n: int,
+                ctx: Optional[dict] = None) -> dict:
     """One item as the page wants it, with how long it has sat still.
 
     Owners are filtered against the accounts that exist. owner_ids is an array
     with no foreign key, so a deleted account would otherwise linger as a
     nameless face; filtering on the way out closes the gap the way favourites
-    do, and the next save of the item drops the id for good.
+    do, and the next save of the item drops the id for good. waits_on gets the
+    same treatment against the items that exist.
+
+    `due` is the date the board draws: due_date when somebody set one, else one
+    derived from duration_days (due_derived, drawn "est."). due_date stays the
+    stored value, so the dialog edits what was typed and not what was worked out.
     """
+    ctx     = ctx or _item_ctx([row], today)
     status  = row.get("status") if row.get("status") in TRACKER_STATUS_IDS else "todo"
     owners  = [o for o in _owners_of(row) if o in people]
-    due     = _day_of(row.get("due_date"))
+    plan    = ctx["plan"].get(row.get("id")) or {"due": _day_of(row.get("due_date")), "derived": False}
+    due     = plan["due"]
+    by_id   = ctx["by_id"]
+    waits   = [w for w in _waits_of(row) if w in by_id and w != row.get("id")]
+    area    = row.get("area") if row.get("area") in TRACKER_AREA_IDS else ""
+    ms      = _resolve_milestone(row, ctx["milestones"])
+    dur     = row.get("duration_days")
+    open_   = status != "done"
+    soon    = bool(due and open_ and due >= today
+                   and _business_days_since(today, due) <= DUE_SOON_DAYS)
     return {
         "id":             row.get("id"),
         "key":            _item_key(row),
@@ -5602,7 +6099,31 @@ def _dress_item(row: dict, people: dict, today: date, n: int) -> dict:
         "done_at":        row.get("done_at"),
         "idle_days":      _idle_days(row, today),
         "stale":          _is_stale(row, today, n),
-        "overdue":        bool(due and status != "done" and due < today),
+        "overdue":        bool(due and open_ and due < today),
+        # Planning (019). Every one of these reads as "not set" on a row from
+        # before it, so an older database draws the board it always did.
+        "area":           area,
+        "duration_days":  dur if isinstance(dur, int) and not isinstance(dur, bool) else None,
+        "starts_on":      str(row.get("starts_on"))[:10] if row.get("starts_on") else None,
+        "waits_on":       waits,
+        "waiting_on":     [{"id": w, "key": _item_key(by_id[w]), "title": by_id[w].get("title") or "",
+                            "status": by_id[w].get("status") or "todo"} for w in waits],
+        # Everything it waits on is done and nobody has started it: the one to
+        # pick up next. Only for an item that waits on something; one that
+        # never did is just To do.
+        "ready":          bool(status == "todo" and waits
+                               and all(by_id[w].get("status") == "done" for w in waits)),
+        "critical":       row.get("critical") is True,
+        "milestone":      row.get("milestone") or "",
+        "milestone_name": (ms or {}).get("name") or "",
+        "milestone_date": ms["date"].isoformat() if ms and ms.get("date") else None,
+        "due":            due.isoformat() if due else None,
+        "due_derived":    bool(due and plan["derived"]),
+        "due_soon":       soon,
+        # touched_at is when it last moved, which is when it entered the status
+        # it is in or somebody last checked in on it, never a typo fix.
+        "days_in_status": _idle_days(row, today),
+        "last_commit":    ctx["commits"].get(row.get("id")),
     }
 
 
@@ -5726,6 +6247,28 @@ def _item_event(item_id, actor: dict, kind: str, from_value: str = "",
         logger.error(f"[tracker] event log failed for item {item_id}: {e}")
 
 
+def _milestones_out(milestones: list, items: list, today: date) -> list:
+    """The milestones as the page's strip wants them: a countdown in calendar
+    days (a freeze is a date on the wall, not a count of working days) and how
+    much is still open against each. Items are already dressed, so this counts
+    exactly what the board draws."""
+    out = []
+    for m in milestones:
+        mine = [i for i in items if i["milestone"] == m["key"]
+                and (not m["subteam"] or i["subteam"] == m["subteam"]) and i["status"] != "done"]
+        out.append({
+            "key":       m["key"],
+            "name":      m["name"],
+            "subteam":   m["subteam"],
+            "date":      m["date"].isoformat() if m["date"] else None,
+            "days_left": (m["date"] - today).days if m["date"] else None,
+            "open":      len(mine),
+            "critical":  sum(1 for i in mine if i["critical"]),
+            "overdue":   sum(1 for i in mine if i["overdue"]),
+        })
+    return out
+
+
 @app.get("/api/tracker/items")
 async def api_tracker_items(request: Request):
     """Every item, plus who they can be given to. The board filters on the
@@ -5739,35 +6282,37 @@ async def api_tracker_items(request: Request):
     except Exception as e:
         logger.error(f"[tracker] roster failed: {e}")
         roster = []
-    people = _people_by_id()
+    people  = _people_by_id()
+    ctx     = _item_ctx(rows or [], today, await _commits_for(rows or []))
+    items   = [_dress_item(r, people, today, n, ctx) for r in rows or []]
     return {
         "ready":    rows is not None,
-        "items":    [_dress_item(r, people, today, n) for r in rows or []],
+        # select("*") hands back whatever columns exist, so a row says whether
+        # 019 is there; with no rows yet, ask.
+        "planning_ready": rows is not None and (("area" in rows[0]) if rows else _planning_ready()),
+        "items":    items,
         "people":   [{"id": p["id"], "name": p["name"], "photo": p["photo"],
                       "subteam": p["subteam"]} for p in roster],
         "subteams": SUBTEAMS,
         "statuses": TRACKER_STATUSES,
+        "areas":    TRACKER_AREAS,
+        "milestones": _milestones_out(ctx["milestones"], items, today),
         "quiet_days": n,
+        "due_soon_days": DUE_SOON_DAYS,
         "me":       me["id"],
         "today":    today.isoformat(),
         "limits":   {"title": MAX_ITEM_TITLE, "description": MAX_ITEM_DESC,
                      "note": MAX_ITEM_NOTE, "blocked": MAX_BLOCKED,
-                     "person_note": MAX_PERSON_NOTE, "owners": MAX_OWNERS},
+                     "person_note": MAX_PERSON_NOTE, "owners": MAX_OWNERS,
+                     "duration": MAX_DURATION_DAYS, "waits": MAX_WAITS,
+                     "paste": MAX_PASTE_LINES},
     }
 
 
-@app.post("/api/tracker/items")
-async def api_tracker_item_create(request: Request):
-    """Make an item. A title is all it needs.
-
-    Every other field is optional on purpose. The Notion tracker died partly
-    because making a task was filling in a form, and an item that cannot be
-    captured in the five seconds somebody mentions it is an item that never
-    gets captured. Ids come from the database; one in the body is ignored.
-    """
-    me     = _require_tracker(request)
-    b      = await request.json()
-    people = _people_by_id()
+def _new_item_row(b: dict, me: dict, people: dict, rows: list, milestones: list) -> dict:
+    """The row a create body describes, checked, without saving it. Shared by
+    the one-at-a-time create and the paste flow, so a pasted item obeys exactly
+    the rules a typed one does."""
     title  = _clean_item_title(b.get("title"))
     owners = _clean_owners(_owners_in(b), people)
     # From a select the server filled, so an unknown value is a stale tab and
@@ -5795,18 +6340,44 @@ async def api_tracker_item_create(request: Request):
         "touched_at":     now,
         "done_at":        now if status == "done" else None,
     }
+    # Only what was actually set, so a plain create writes nothing 019 added and
+    # keeps working on a database that has not had it.
+    row.update({k: v for k, v in _planning_in(b, rows, None, milestones).items()
+                if not _is_unset(k, v)})
+    return row
+
+
+def _insert_item(row: dict) -> dict:
     try:
-        made = (_write_owners(lambda r: sb().table("work_items").insert(r).execute(), row)
-                .data or [{}])[0]
+        return (_write_planning(
+            lambda r: _write_owners(lambda r2: sb().table("work_items").insert(r2).execute(), r),
+            row).data or [{}])[0]
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[tracker] create failed: {e}")
         raise HTTPException(503, "Couldn't save that. Has migration 017 been applied?")
 
-    _item_event(made.get("id"), me, "created", to_value=status, body=title)
+
+@app.post("/api/tracker/items")
+async def api_tracker_item_create(request: Request):
+    """Make an item. A title is all it needs.
+
+    Every other field is optional on purpose. The Notion tracker died partly
+    because making a task was filling in a form, and an item that cannot be
+    captured in the five seconds somebody mentions it is an item that never
+    gets captured. Ids come from the database; one in the body is ignored.
+    """
+    me     = _require_tracker(request)
+    b      = await request.json()
+    people = _people_by_id()
+    rows   = (_items_rows() or []) if "waits_on" in b else []
+    row    = _new_item_row(b, me, people, rows, _milestones())
+    made   = _insert_item(row)
+    _item_event(made.get("id"), me, "created", to_value=row["status"], body=row["title"])
     today = datetime.now(TEAM_TZ).date()
-    return {"ok": True, "item": _dress_item(made, people, today, _quiet_days())}
+    ctx   = _item_ctx(rows + [made], today)
+    return {"ok": True, "item": _dress_item(made, people, today, _quiet_days(), ctx)}
 
 
 @app.post("/api/tracker/items/update")
@@ -5820,6 +6391,8 @@ async def api_tracker_item_update(request: Request):
     Status changes, a change of people and a new blocked reason each count as the item
     moving (touched_at). Fixing a typo in the title does not: a three-week-old
     item made to look fresh by an edit is exactly what the stale flag is for.
+    Nor does any of the planning (019): giving an item an area, a duration or
+    something to wait on is the admin arranging the board, not the work moving.
     """
     me  = _require_tracker(request)
     b   = await request.json()
@@ -5828,6 +6401,7 @@ async def api_tracker_item_update(request: Request):
         raise HTTPException(403, "That one isn't yours to change")
     people = _people_by_id()
     now    = datetime.now(TEAM_TZ).isoformat()
+    rows   = _items_rows() or []
 
     upd: dict = {}
     edited: list = []
@@ -5858,6 +6432,23 @@ async def api_tracker_item_update(request: Request):
         if sub != (row.get("subteam") or ""):
             upd["subteam"] = sub
             edited.append("division")
+
+    # Planning, compared against what is stored as the same shape it is sent
+    # in, so re-saving the dialog unchanged writes nothing.
+    stored = {
+        "area":          row.get("area") or None,
+        "duration_days": row.get("duration_days"),
+        "starts_on":     str(row.get("starts_on"))[:10] if row.get("starts_on") else None,
+        "waits_on":      _waits_of(row),
+        "critical":      row.get("critical") is True,
+        "milestone":     row.get("milestone") or None,
+    }
+    labels = {"area": "area", "duration_days": "duration", "starts_on": "start date",
+              "waits_on": "what it waits on", "critical": "critical flag", "milestone": "milestone"}
+    for k, v in _planning_in(b, rows, row["id"], _milestones()).items():
+        if v != stored[k]:
+            upd[k] = v
+            edited.append(labels[k])
 
     old_owners = _owners_of(row)
     added: list = []
@@ -5907,13 +6498,14 @@ async def api_tracker_item_update(request: Request):
 
     if moved:
         upd["touched_at"] = now
+    today = datetime.now(TEAM_TZ).date()
     if not upd:
-        return {"ok": True, "item": _dress_item(row, people,
-                                               datetime.now(TEAM_TZ).date(), _quiet_days())}
+        return {"ok": True, "item": _dress_item(row, people, today, _quiet_days(),
+                                               _item_ctx(rows, today))}
 
     try:
-        after = (_write_owners(
-            lambda r: sb().table("work_items").update(r).eq("id", row["id"]).execute(), upd).data
+        after = (_write_planning(lambda r: _write_owners(
+            lambda r2: sb().table("work_items").update(r2).eq("id", row["id"]).execute(), r), upd).data
                  or [{**row, **upd}])[0]
     except HTTPException:
         raise
@@ -5935,8 +6527,8 @@ async def api_tracker_item_update(request: Request):
                     body=text[:1].upper() + text[1:])
     if edited:
         _item_event(row["id"], me, "edited", body=", ".join(edited))
-    return {"ok": True, "item": _dress_item(after, people,
-                                           datetime.now(TEAM_TZ).date(), _quiet_days())}
+    ctx = _item_ctx([after if r.get("id") == row["id"] else r for r in rows] or [after], today)
+    return {"ok": True, "item": _dress_item(after, people, today, _quiet_days(), ctx)}
 
 
 @app.post("/api/tracker/items/note")
@@ -6022,10 +6614,299 @@ async def api_tracker_item_events(request: Request, id: int = 0):
     return {"events": rows}
 
 
+# ── Paste, message, changes ──────────────────────────────────────────────────
+# The weekly round of "who's on what" happens in a Teams message. These three
+# meet it where it is: paste the message in to make the items, get one back out
+# to send, and see what moved this week. Nothing here saves without a person
+# confirming it, and nothing here writes to the activity feed.
+
+def _name_key(s: str) -> str:
+    """_fold_name, plus accents off: "Ciarán" typed as "Ciaran" in a hurry is
+    the same person. Matching only; never stored."""
+    s = unicodedata.normalize("NFKD", _fold_name(s))
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def _name_index(roster: list) -> list:
+    """Everyone the item picker offers, with the keys a pasted name is matched
+    on. Retired members are not in it, for the reason they are not in the
+    picker: a list of this week's work does not hand anything to an alum."""
+    out = []
+    for p in roster:
+        first = p.get("first") or p["name"].split(" ")[0]
+        out.append({"id": p["id"], "name": p["name"], "first_name": first,
+                    "full": _name_key(p["name"]), "first": _name_key(first)})
+    return out
+
+
+def _match_name(typed: str, index: list) -> dict:
+    """Who a typed name means: a full name, a first name, or an alias from
+    NAME_ALIASES. Exactly one account is a match. More than one is "ambiguous"
+    and none is "unmatched", and both come back flagged for a person to settle
+    in the preview, never guessed: two Ciaráns on the team is normal, and
+    handing one of them the other's work is the failure that matters here.
+    """
+    key = _name_key(typed)
+    hits: list = []
+    for k in [key] + [_name_key(a) for a in NAME_ALIASES.get(key, [])]:
+        found = [p for p in index if p["full"] == k] or [p for p in index if p["first"] == k]
+        hits += [p for p in found if p not in hits]
+    if len(hits) == 1:
+        return {"typed": typed, "status": "matched", "id": hits[0]["id"], "name": hits[0]["name"]}
+    if hits:
+        return {"typed": typed, "status": "ambiguous", "candidates": [h["name"] for h in hits]}
+    return {"typed": typed, "status": "unmatched"}
+
+
+_PASTE_BULLET = re.compile(r"^(?:[-*•·–—]+|\d+[.)])\s+")
+_PASTE_SPLIT  = re.compile(r"\s*:\s*|\s+[-–—]\s+")
+_PASTE_JOIN   = re.compile(r"\s*(?:\+|&|,|\band\b)\s*", re.I)
+# One to three words of letters: "Aoife", "Mary Kate", "Cian O'Brien". Anything
+# longer before the colon is a sentence, not a name, so "Fix the CAN bus wiring:
+# urgent" stays one title instead of becoming somebody called Fix.
+_PASTE_NAME   = re.compile(r"^[^\W\d_][\w.'’-]*(?:\s+[^\W\d_][\w.'’-]*){0,2}$")
+_GRABS        = "up for grabs"
+
+
+def _parse_paste(text: str, index: list, rows: list) -> list:
+    """Pasted lines as proposed items. Nothing is saved.
+
+        Aoife - upright CAD                  one person
+        Aoife + Cian: accumulator layout     a pair; "&", "," and "and" too
+        Cian - precharge; IMD wiring         one line, two items, same people
+        Up for grabs:                        a heading; what follows has nobody
+        - wiring loom drawing                bullets and numbers are stripped
+
+    Any other line ending in a colon is a heading and is skipped, which is how
+    the weekly message's own first line survives a round trip. A line that
+    does not start with names is one item with nobody on it, flagged so the
+    preview says so. Each item carries every name as typed, with whether it
+    matched, so the preview can show its working.
+    """
+    lines = str(text or "").replace("\r\n", "\n").split("\n")
+    if sum(1 for ln in lines if ln.strip()) > MAX_PASTE_LINES:
+        raise HTTPException(400, f"At most {MAX_PASTE_LINES} lines at a time")
+    open_titles = {_fold_name(r.get("title") or ""): r for r in rows if r.get("status") != "done"}
+    out: list = []
+    grabs = False
+    for n, raw in enumerate(lines, 1):
+        body = _PASTE_BULLET.sub("", " ".join(raw.split())).strip()
+        if not body:
+            continue
+        m = _PASTE_SPLIT.search(body)
+        if m and m.end() == len(body) and ":" in m.group():
+            grabs = _fold_name(body[:m.start()]) == _GRABS
+            continue
+        names, task = [], body
+        if not grabs and m and m.start() > 0:
+            left, right = body[:m.start()], body[m.end():].strip()
+            parts = [x.strip() for x in _PASTE_JOIN.split(left) if x.strip()]
+            if right and parts and all(_PASTE_NAME.match(x) for x in parts):
+                names, task = parts, right
+        tasks = [t.strip() for t in task.split(";") if t.strip()] if names else [task]
+        matches = [_match_name(x, index) for x in names]
+        owners: list = []
+        for x in matches:
+            if x["status"] == "matched" and x["id"] not in owners:
+                owners.append(x["id"])
+        warn: list = []
+        for x in matches:
+            if x["status"] == "unmatched":
+                warn.append(f"Nobody on the team called “{x['typed']}”")
+            elif x["status"] == "ambiguous":
+                warn.append(f"“{x['typed']}” could be {' or '.join(x['candidates'])}")
+        if not names and not grabs:
+            warn.append("No name at the start, so nobody's on it yet")
+        for t in tasks:
+            w = list(warn)
+            if len(t) > MAX_ITEM_TITLE:
+                w.append(f"Cut to {MAX_ITEM_TITLE} characters")
+            dupe = open_titles.get(_fold_name(t[:MAX_ITEM_TITLE]))
+            if dupe:
+                w.append(f"Already on the board as {_item_key(dupe)}")
+            out.append({"line": n, "text": raw.strip(), "title": t[:MAX_ITEM_TITLE],
+                        "names": matches, "owner_ids": owners, "duplicate_of": (dupe or {}).get("id"),
+                        "owners": [{"id": x["id"], "name": x["name"]}
+                                   for x in matches if x["status"] == "matched"],
+                        "warnings": w})
+    if len(out) > MAX_PASTE_LINES:
+        raise HTTPException(400, f"That's more than {MAX_PASTE_LINES} items. Paste it in two goes")
+    return out
+
+
+@app.post("/api/tracker/items/parse")
+async def api_tracker_items_parse(request: Request):
+    """Pasted text in, proposed items out. Saves nothing: the page shows a
+    preview to correct, and /bulk saves what the person confirms."""
+    _require_tracker(request)
+    b = await request.json()
+    try:
+        roster = _tracker_roster()
+    except Exception as e:
+        logger.error(f"[tracker] roster failed: {e}")
+        raise HTTPException(503, "Couldn't load the team")
+    items = _parse_paste(b.get("text"), _name_index(roster), _items_rows() or [])
+    if not items:
+        raise HTTPException(400, "Nothing to add. Paste one item per line")
+    return {"items": items}
+
+
+@app.post("/api/tracker/items/bulk")
+async def api_tracker_items_bulk(request: Request):
+    """Save a confirmed list from the paste preview.
+
+    Every item is checked before any is written, by the same _new_item_row a
+    single create uses, so one bad line refuses the lot and says which. The
+    writes themselves are one per item, each logged like a manual create:
+    PostgREST has no transaction across them, so a failure part-way says how
+    many went in rather than pretending none did.
+    """
+    me = _require_tracker(request)
+    b  = await request.json()
+    sent = b.get("items")
+    if not isinstance(sent, list) or not sent:
+        raise HTTPException(400, "Nothing to add")
+    if len(sent) > MAX_PASTE_LINES:
+        raise HTTPException(400, f"At most {MAX_PASTE_LINES} items at a time")
+    people, rows, ms = _people_by_id(), _items_rows() or [], _milestones()
+    planned = []
+    for i, one in enumerate(sent, 1):
+        if not isinstance(one, dict):
+            raise HTTPException(400, f"Item {i} isn't an item")
+        try:
+            planned.append(_new_item_row(one, me, people, rows, ms))
+        except HTTPException as e:
+            raise HTTPException(e.status_code, f"Item {i}: {e.detail}")
+    made = []
+    for row in planned:
+        try:
+            got = _insert_item(row)
+        except HTTPException as e:
+            raise HTTPException(e.status_code, f"{e.detail} ({len(made)} of {len(planned)} were saved)")
+        _item_event(got.get("id"), me, "created", to_value=row["status"], body=row["title"])
+        made.append(got)
+    today = datetime.now(TEAM_TZ).date()
+    ctx = _item_ctx(rows + made, today)
+    return {"ok": True, "items": [_dress_item(r, people, today, _quiet_days(), ctx) for r in made]}
+
+
+def _tracker_message(rows: list, index: list, today: date, subteam: str = "") -> str:
+    """This week's "who's on what", as plain text for a Teams message.
+
+    One line per person or pair, their open items joined with "; ", in the
+    shape _parse_paste reads, so pasting the message back in (after the admin
+    has edited it) makes the same items with the same people. A first name
+    where it is unique on the team and the full name where it is not, for the
+    same reason the parser refuses to guess. Unowned items go last under "Up
+    for grabs", one per line. Done items are left out: the message is what is
+    still to do.
+    """
+    first_count: dict = {}
+    for p in index:
+        first_count[p["first"]] = first_count.get(p["first"], 0) + 1
+    short = {p["id"]: (p["first_name"] if first_count[p["first"]] == 1 and p["first"]
+                       else p["name"]) for p in index}
+    order = {"doing": 0, "blocked": 1, "todo": 2}
+    live = sorted((r for r in rows if r.get("status") in order
+                   and (not subteam or (r.get("subteam") or "") == subteam)),
+                  key=lambda r: (order[r.get("status")], r.get("id") or 0))
+    groups: dict = {}
+    grabs: list = []
+    for r in live:
+        who = tuple(o for o in _owners_of(r) if o in short)
+        (groups.setdefault(who, []) if who else grabs).append(r.get("title") or "")
+    monday = today - timedelta(days=today.weekday())
+    lines = [f"Who's on what, week of {monday.day} {monday.strftime('%b')}:", ""]
+    for who in sorted(groups, key=lambda k: [short[o].lower() for o in k]):
+        lines.append(" + ".join(short[o] for o in who) + " - " + "; ".join(groups[who]))
+    if grabs:
+        lines += ["", "Up for grabs:"] + grabs
+    if len(lines) == 2:
+        lines.append("Nothing open.")
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/api/tracker/message")
+async def api_tracker_message(request: Request, subteam: str = ""):
+    """The weekly message, as text. The admin edits it before it goes
+    anywhere; this only saves them typing it."""
+    _require_tracker(request)
+    try:
+        roster = _tracker_roster()
+    except Exception as e:
+        logger.error(f"[tracker] roster failed: {e}")
+        raise HTTPException(503, "Couldn't load the team")
+    text = _tracker_message(_items_rows() or [], _name_index(roster),
+                            datetime.now(TEAM_TZ).date(), _clean_subteam(subteam) or "")
+    return Response(text, media_type="text/plain; charset=utf-8")
+
+
+def _tracker_changes(me: dict, rows: list, events: list, since: date, today: date) -> dict:
+    """What moved between `since` and today, from the items' own history.
+
+    Private lines are dropped for anybody _sees_private refuses, here as on
+    every other read of work_item_events: the rule has to be in place before
+    the day somebody other than an admin can call this. Lines about items
+    deleted since are dropped too; there is nothing left to click through to.
+    "Newly overdue" is not an event anybody wrote, so it comes from the dates
+    the board draws: open items whose due date fell in the window.
+    """
+    if not _sees_private(me):
+        events = [e for e in events if not e.get("private")]
+    by_id = {r.get("id"): r for r in rows}
+    out: dict = {k: [] for k in ("created", "finished", "blocked", "reassigned", "updates", "overdue")}
+    for e in sorted(events, key=lambda e: str(e.get("created_at") or ""), reverse=True):
+        it = by_id.get(e.get("item_id"))
+        if not it:
+            continue
+        line = {"item_id": it["id"], "key": _item_key(it), "title": it.get("title") or "",
+                "actor": e.get("actor_name") or "", "at": e.get("created_at"),
+                "body": e.get("body") or "", "private": bool(e.get("private"))}
+        kind, to = e.get("kind"), e.get("to_value")
+        if kind == "created":
+            out["created"].append(line)
+        elif kind == "status" and to == "done":
+            out["finished"].append(line)
+        elif kind == "status" and to == "blocked":
+            out["blocked"].append(line)
+        elif kind in ("people", "assigned"):
+            out["reassigned"].append(line)
+        elif kind == "note":
+            out["updates"].append(line)
+    plan = _plan(rows, today)
+    for r in rows:
+        due = (plan.get(r.get("id")) or {}).get("due")
+        if r.get("status") != "done" and due and since <= due < today:
+            out["overdue"].append({"item_id": r["id"], "key": _item_key(r), "title": r.get("title") or "",
+                                   "due": due.isoformat(),
+                                   "derived": bool((plan.get(r.get("id")) or {}).get("derived"))})
+    out["overdue"].sort(key=lambda x: x["due"])
+    return out
+
+
+@app.get("/api/tracker/changes")
+async def api_tracker_changes(request: Request, days: str = "7"):
+    """The "This week" panel: created, finished, newly blocked, reassigned,
+    updates, and what went overdue, over the last `days` calendar days."""
+    me = _require_tracker(request)
+    if not re.fullmatch(r"\d{1,2}", str(days or "")) or not 1 <= int(days) <= TRACKER_WINDOW_DAYS:
+        raise HTTPException(400, f"days has to be between 1 and {TRACKER_WINDOW_DAYS}")
+    today = datetime.now(TEAM_TZ).date()
+    since = today - timedelta(days=int(days))
+    try:
+        events = _all_rows(lambda: sb().table("work_item_events").select("*")
+                           .gte("created_at", _since_ts(since)))
+    except Exception as e:
+        logger.error(f"[tracker] changes read failed (017 applied?): {e}")
+        events = []
+    return {"days": int(days), "since": since.isoformat(), "today": today.isoformat(),
+            **_tracker_changes(me, _items_rows() or [], events, since, today)}
+
+
 # ── People ────────────────────────────────────────────────────────────────────
 
 def _tracker_signals(since: date, today: date, items: list,
-                     only: Optional[str] = None) -> list:
+                     only: Optional[str] = None, commits: Optional[dict] = None) -> list:
     """Every sign of somebody between `since` and today, newest first.
 
     Each one is {pid, day, at, kind, text}. The sources, and why each counts:
@@ -6037,6 +6918,8 @@ def _tracker_signals(since: date, today: date, items: list,
         item      anything they did to any item, or an update somebody wrote
                   on an item they own (somebody checked in)
         note      an admin's note about them: somebody checked in
+        github    a commit on the GitHub branch or PR one of their items links
+                  to (019's link check; `commits` from _commits_for)
 
     Attendance and ticks are matched on profile_id (017), never on the typed
     name. A row nobody has matched yet is skipped here and listed in /admin.
@@ -6158,6 +7041,26 @@ def _tracker_signals(since: date, today: date, items: list,
     except Exception as e:
         logger.error(f"[tracker] item signals failed (017 applied?): {e}")
 
+    # A commit on the branch or PR an item links to, for everyone on it.
+    # Branches and PRs only: a link to a whole repo is usually the team's
+    # shared one, and a commit there by anybody would mark everyone on any item
+    # pointing at it as active, which is the "somebody else acted for you"
+    # mistake the status-change rule above exists to stop. A branch or PR made
+    # for an item is, near enough, the work of the people on it.
+    for it in items or []:
+        when = (commits or {}).get(it.get("id"))
+        t = _github_target(it.get("link") or "") if when else None
+        if not t or t["kind"] == "repo":
+            continue
+        day = _day_of(when)
+        if not day or day < since or day > today:
+            continue
+        where = f"PR #{t['ref']}" if t["kind"] == "pr" else f"branch {t['ref']}"
+        for owner in _owners_of(it):
+            out.append({"pid": owner, "day": day, "at": _local_at(when), "kind": "github",
+                        "item_id": it.get("id"),
+                        "text": f"Commit on {where} for {_item_key(it)} “{it.get('title')}”"})
+
     try:
         for r in _all_rows(lambda: mine(
                 sb().table("person_notes").select("id,profile_id,author_name,body,created_at")
@@ -6206,21 +7109,32 @@ def _signal_out(s: dict) -> dict:
             for k, v in s.items() if k not in ("pid", "ref", "done")}
 
 
+def _no_items() -> dict:
+    return {"todo": 0, "doing": 0, "blocked": 0, "stale": 0,
+            "open": 0, "critical": 0, "overdue": 0}
+
+
 def _open_counts(items: list) -> dict:
-    """{person id: {todo, doing, blocked, stale}} over items not yet done. An
-    item with three people on it counts once for each of them: it is on all
-    three of their plates."""
+    """{person id: {todo, doing, blocked, stale, open, critical, overdue}} over
+    items not yet done. An item with three people on it counts once for each
+    of them: it is on all three of their plates. Overdue goes by the date the
+    board draws, derived ones included."""
     today, n = datetime.now(TEAM_TZ).date(), _quiet_days()
+    plan = _plan(items or [], today)
     out: dict = {}
     for r in items or []:
         status = r.get("status")
         if status not in ("todo", "doing", "blocked"):
             continue
         stale = _is_stale(r, today, n)
+        due = (plan.get(r.get("id")) or {}).get("due")
         for pid in _owners_of(r):
-            c = out.setdefault(pid, {"todo": 0, "doing": 0, "blocked": 0, "stale": 0})
+            c = out.setdefault(pid, _no_items())
             c[status] += 1
+            c["open"] += 1
             c["stale"] += 1 if stale else 0
+            c["critical"] += 1 if r.get("critical") is True else 0
+            c["overdue"] += 1 if due and due < today else 0
     return out
 
 
@@ -6241,7 +7155,8 @@ async def api_tracker_people(request: Request):
         logger.error(f"[tracker] roster failed: {e}")
         raise HTTPException(503, "Couldn't load the team")
     items   = _items_rows()
-    signals = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items or [])
+    signals = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items or [],
+                               commits=await _commits_for(items or []))
 
     span_start = today - timedelta(days=RECENT_SPAN_DAYS)
     last: dict = {}
@@ -6276,7 +7191,7 @@ async def api_tracker_people(request: Request):
                                "text": said_no[p["id"]]["text"]} if p["id"] in said_no else None),
             "meetings":      len(recent.get((p["id"], "meeting"), ())),
             "workshop_days": len(recent.get((p["id"], "workshop"), ())),
-            "items":         counts.get(p["id"], {"todo": 0, "doing": 0, "blocked": 0, "stale": 0}),
+            "items":         counts.get(p["id"], _no_items()),
         })
     people.sort(key=lambda x: (rank.get(x["state"], 9), -(x["quiet_for"] or 0), x["name"].lower()))
     return {
@@ -6318,14 +7233,16 @@ async def api_tracker_person(request: Request, id: str = ""):
                   "captain_of": [], "joined": _day_of(prof.get("created_at"))}
 
     items    = _items_rows() or []
-    timeline = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items, only=pid)
+    timeline = _tracker_signals(today - timedelta(days=TRACKER_WINDOW_DAYS), today, items, only=pid,
+                                commits=await _commits_for(items))
     _label_ticks(timeline)
     if not _sees_private(me):
         timeline = [s for s in timeline if not s.get("private")]
     people = _people_by_id()
     newest = next((s for s in timeline if s.get("counts", True)), None)
     st = _quiet_state(newest["day"] if newest else None, person["joined"], today, n)
-    theirs = [_dress_item(r, people, today, n) for r in items if pid in _owners_of(r)]
+    ctx    = _item_ctx(items, today)
+    theirs = [_dress_item(r, people, today, n, ctx) for r in items if pid in _owners_of(r)]
     order = {s: i for i, s in enumerate(("blocked", "doing", "todo", "done"))}
     theirs.sort(key=lambda i: (order.get(i["status"], 9), -(i["idle_days"] or 0)))
     return {

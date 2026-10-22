@@ -67,6 +67,7 @@ test display names; both conditions are required. Add a name to `TEST_ACTORS` in
 | `links` | admin-managed hyperlink cards and the blocks they sit in: above all that a url's scheme is whitelisted, since an href dispatches on protocol and escaping does not touch it, and that a block holding cards cannot be deleted |
 | `glossary` | the glossary as rows: only admins, committee and granted captains may change it (a self-set captain label may not), ids are minted server-side, a term exists once whatever its capitalisation, and a definition is drawn as text, never markup |
 | `tracker` | the admin-only tracker: a member is refused the page, the card and every endpoint; an admin gets in without the override; who counts as quiet and what does not count; private updates stay marked private; and that 017's account stamp lands on attendance and that unmatched names can be matched |
+| `planning` | the tracker's planning fields (019): every new endpoint and the freeze setting refuse a member; the freeze default with no settings row, each division saved on its own, bad dates refused; derived due dates across a weekend; loops refused; Ready and overdue; planning edits never bump `touched_at`; the paste parser, its alias map and unmatched names; the weekly message round-tripping through the parser; private lines kept out of `/changes`; and the write path against a database without 019, driven inside the test container with a fake PostgREST |
 
 ## Regressions these exist to catch
 
@@ -123,6 +124,13 @@ are global **lexical** bindings, not properties of `window`. Assigning
 passes vacuously against the real document. Drive that page through `w.eval()`.
 And never let it save: `/harness/api/save` overwrites the team's single live
 harness; the suite stubs it and asserts the stub held.
+
+When something cannot be set up over HTTP against the shared database,
+`suite-tracker-planning` drives `main.py`'s own functions inside the test
+container (`docker exec … python -`, see `py()` there): a database without a
+migration, by swapping `sb()` for a fake that answers like PostgREST, and a
+filter whose endpoint refuses the kind of caller it filters for. Prefer HTTP
+everywhere else: this tests the function, not the route in front of it.
 
 Always assert you are on the page you think you are. A test that silently ends up
 on `/login` will pass every check vacuously.

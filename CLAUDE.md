@@ -522,7 +522,7 @@ was deleted is noise at the top of the one place you were trying to clear.
 
 ## The tracker
 
-`/tracker` (`migrations/017`) answers two questions for whoever runs the team:
+`/tracker` (`migrations/017`, `018`, `019`) answers two questions for whoever runs the team:
 who is working on what, and who has gone quiet. **Admin-only for now**, and
 built to open to the team later. The design and the reasoning against TODO.md's
 "do not rebuild Jira" are in the Tracker section there.
@@ -597,6 +597,105 @@ Opening up is three functions: `_require_tracker()` (who may read),
 `_may_edit_item()` (who may change an item; it already takes the item so an
 owner or a granted captain can be let in), and `_sees_private()`, which does not
 change.
+
+### Planning (019)
+
+`migrations/019` adds six optional columns to `work_items`: `area`,
+`duration_days`, `starts_on`, `waits_on`, `critical` and `milestone`. They let
+the board answer "what is next, and will we make the design freeze". **A title
+is still the only required field**, and an item with none of them behaves
+exactly as it did before. No sprints, no points, no velocity: `duration_days` is
+"about how many working days", there to draw a due date nobody typed.
+
+- **Areas** are `TRACKER_AREAS` in `main.py` (accumulator, circuits, software,
+  motor, other), checked in code like statuses. An unknown one is a **400**, not
+  a fallback: unlike a link's accent, every sender is a select or the paste
+  flow, so an unknown id is a bug to hear about.
+- **None of it bumps `touched_at`.** Giving an item an area or something to wait
+  on is the admin arranging the board, not the work moving, so it is logged in
+  the item's history as an edit and nothing else. The stale flag stays honest.
+- **Derived due dates** (`_plan()`). An explicit `due_date` always wins.
+  Otherwise, with a duration, the start is `starts_on`, else the latest finish
+  of what it waits on (a done item's done day, an open one's due date), else
+  today; plus that many **business** days (`_add_business_days`, the inverse of
+  the quiet count). It is returned as `due` with `due_derived`, and drawn
+  "est.". `due_date` stays the stored value, so the dialog edits what was typed
+  and not what was worked out. One with nothing to start from drifts with today,
+  on purpose: it means "about three days from whenever somebody starts", and it
+  can never be overdue.
+- **`waits_on`** is an array with no foreign key, the `owner_ids` call: ids that
+  name nothing are dropped on the way in and out. An item waiting on itself, or
+  a wait that closes a loop, is **refused** (`_clean_waits`): a loop has no
+  start, so nothing in it could be Ready and its dates would be nonsense. An
+  item whose waits are all done and that is still To do is **Ready**. That is
+  what to pick up next, and nobody had to move it.
+- **Overdue, due soon, days in status** go by the drawn date, derived ones
+  included. `days_in_status` is business days since `touched_at`.
+- **Without 019** reads are unchanged (`select("*")`), and writes go through
+  `_write_planning()`, the same retry `_write_owners()` does for 018: a write
+  that sets nothing new is retried without the columns; one that sets a field
+  says it needs 019 rather than dropping it. A plain create only sends the
+  planning keys it was given, so it never trips the retry at all.
+  `planning_ready` on `/api/tracker/items` tells the page to hide the fields.
+
+**The design freezes are settings, not code.** `milestone.design_freeze.pt` and
+`milestone.design_freeze.mech`, edited from `/admin` beside the quiet threshold,
+each saved on its own so moving Mechanical's never re-saves Electrical's. Read
+through `_design_freeze()`, which carries the default (**2026-11-19**), so a
+database with no rows draws a sensible strip rather than a broken one. A date
+that does not exist (2026-02-30) is refused, as is anything outside 2000–2100.
+No feed line, for the reason the quiet threshold has none. Operations has no
+freeze. Settings live **per database**, so stage and prod each have their own
+dates; a fresh one shows the default until somebody changes it.
+
+`_milestones()` merges those two with `SEASON_MILESTONES` (fixed, hand-edited
+dates, still what the dashboard countdown reads) and the competition itself, at
+read time. **One key, `design_freeze`, serves both divisions**: it resolves to
+the item's own division's date, and an Operations item marked for it has no
+date at all rather than borrowing Electrical's. The strip at the top of the
+tracker shows the freeze for the division in view, or both, with what is open
+against each.
+
+**Paste and the weekly message are one format, both ways.** `POST
+/api/tracker/items/parse` reads `Name + Name - task; task` / `Name: task`, with
+`Up for grabs:` heading unowned lines and any other line ending in a colon
+skipped as a heading. Names match a full name, a first name, or
+`NAME_ALIASES` (CJ → Chetanjot, Anrai → Weeraphong); accents are folded for
+matching only. **Exactly one account is a match; more is "ambiguous" and none is
+"unmatched", and both come back flagged, never guessed**: two Ciaráns is normal,
+and handing one the other's work is the failure that matters. It saves nothing.
+`/bulk` saves the confirmed list through the same `_new_item_row()` a single
+create uses, checking every item before writing any, and logs each as created.
+`GET /api/tracker/message` writes one line per person or pair in that shape,
+first names where unique and full names where not, so pasting it back makes the
+same items. A title containing `;` is the one thing that does not round-trip.
+
+**What changed this week** (`/api/tracker/changes?days=N`) summarises
+`work_item_events`: created, finished, newly blocked, changed hands, updates,
+and what went overdue in the window (from the drawn dates, since nobody writes
+an event for that). Private lines go through `_sees_private()` like every other
+read of that table; `suite-tracker-planning` calls `_tracker_changes()` as a
+member to prove it, since the endpoint refuses members outright today.
+
+**GitHub.** An item linking to a github.com repo, branch or PR gets its last
+commit date, fetched server-side (`_commits_for`) and cached in memory for 20
+minutes, failures included, with at most 15 fetches per request: unauthenticated
+GitHub allows 60 an hour. A failure shows nothing. **A commit on a branch or PR
+is a sign of the item's people; a commit on a whole repo is not**: a repo link
+is usually the team's shared one, and counting it would mark everyone on any
+item pointing at it as active, the "somebody else acted for you" mistake the
+status-change rule exists to stop. There is no token; add `GITHUB_TOKEN`
+handling only if private repos start mattering.
+
+The settings table now holds four keys, all read through `_setting()` with a
+default in code, so a missing row is never a broken page:
+
+| key | what | default | logs to the feed |
+|---|---|---|---|
+| `finance.threshold_eur` | purchase approval threshold | 100 | yes |
+| `tracker.quiet_days` | business days before somebody is quiet | 5 | no |
+| `milestone.design_freeze.pt` | Electrical design freeze | 2026-11-19 | no |
+| `milestone.design_freeze.mech` | Mechanical design freeze | 2026-11-19 | no |
 
 ### Accounts on the name-keyed tables
 
@@ -1146,7 +1245,9 @@ for a reason; collapsing them orders parts that don't fit.
 
 `FSUK_DATE` / `FSUK_NAME` / `SEASON_MILESTONES` near the top of `main.py` are the
 only inputs to the dashboard countdown. Changing the date there is the whole
-job. `FSUK_PROVISIONAL` makes the card say so out loud; clear it once IMechE
+job. The design freezes are **not** here: they move, so they are settings rows
+edited from `/admin` (see *Planning (019)* under the tracker), and the tracker
+merges them with these at read time. `FSUK_PROVISIONAL` makes the card say so out loud; clear it once IMechE
 publish the real dates.
 
 ## Working on this safely
@@ -1278,6 +1379,14 @@ unmatched names to tidy.
 `owner_id`. Apply it before the image like the rest. If you do not, items with
 one person or nobody keep saving (`_write_owners()` retries without the
 column), and putting a second person on one says it needs 018.
+
+**019 adds the tracker's planning columns** (`area`, `duration_days`,
+`starts_on`, `waits_on`, `critical`, `milestone`), all nullable, no backfill.
+Apply it before the image like the rest. If you do not, the board works as it
+did, the planning fields are hidden, and anything that tries to set one says it
+needs 019 (`_write_planning()`). The design freeze dates are settings rows, not
+part of 019, and need no SQL: the default stands until somebody changes it in
+`/admin`.
 
 **016 creates `glossary_terms` and seeds the 61 terms the page used to carry.**
 Apply it before the code that reads it, like the others; without it `/glossary`

@@ -417,6 +417,48 @@ is opened on that. The same trick covers a confirmation link. The one email a
 run can send is the single real signup in `suite-auth` and `suite-login`, and
 only when confirmation is on.
 
+### Signup is where impersonation starts
+
+In October 2026 somebody signed up twice as an existing member, with `@ucd.ie`
+addresses they did not need to own because *Confirm email* was off. Nothing
+they tried past an ordinary member's reach got through. What they **could**
+have done is the reason for most of this: the name-keyed tables own rows by
+typed name, so a second account with somebody's name passed every ownership
+check for that person's attendance and Comp Hub rows.
+
+- **A name that would pass for an existing member's is refused (409).**
+  `_name_taken()` compares with everything but letters stripped
+  (`_letters_key`), so "Aoife Byrne2" and "aoife.byrne" are the same key. A
+  real namesake adds a middle name or initial, which is also what lets everyone
+  else tell them apart. The message avoids the word "already": `login.html`
+  reads that as "this email has an account" and jumps to the password step. It
+  checks 409 first as well.
+- **Attendance ownership checks the account, not just the name.**
+  `_require_own_row(request, name, date)` refuses a day whose row carries
+  somebody else's `profile_id`. The write is an upsert on `(name, date)`, so
+  without this a namesake's write would overwrite the first one's day and
+  re-stamp it. The Comp Hub's rows carry no account, so the signup check is
+  what protects those.
+- **No profile row before the address is confirmed.** With confirmation on,
+  signup returns no session and writes nothing of ours; `_signed_in()` builds
+  the row from the signup metadata on the first real sign-in. An unconfirmed
+  address is not a member, and a row would put it in the directory and the name
+  check on the strength of typing somebody's email.
+- **The real client address is `_client_ip()`.** The TCP peer is the Docker
+  bridge for everybody, so the app believes NPM's `X-Real-IP`, and only from a
+  private peer. Signups, logins and refused logins are logged with address and
+  user agent. Before this the proxy's access log was the only record.
+- **Rate limits are per address, in memory** (`_RateLimit`): signup 20/hour,
+  wrong passwords 10/15 min (right ones never count, so a stranger cannot lock
+  you out from elsewhere), forgot + resend 6/15 min, account checks 60/10 min.
+  Generous because a lecture hall shares a handful of UCD addresses. They
+  matter more than they look: every GoTrue call leaves from this server, so
+  GoTrue's own per-IP limits are shared by the whole team. `suite-auth` gives
+  each check its own `X-Real-IP` so it does not spend the bucket other suites
+  sign in through.
+- **`/admin` lists accounts made in the last `NEW_ACCOUNT_DAYS`** with their
+  email, and marks any two accounts sharing a letters-only name **Same name**.
+
 ### One connection, and who may not share it
 
 `supabase` in `main.py` is a module-global client wrapping a **single HTTP/2

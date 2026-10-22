@@ -114,6 +114,39 @@ const today = new Date().toISOString().slice(0, 10);
   check('your own row is yours whatever the spelling', sloppy.status === 200,
     'status ' + sloppy.status);
 
+  console.log('\na second account with the same name is not the first');
+  // Signup refuses a duplicate name now, but accounts from before that check
+  // exist, and the admin API (which this signUp uses) was never checked. Rows
+  // carry their account since 017, so a matching name must not be enough:
+  // without this a namesake could overwrite the first one's day, since the
+  // write is an upsert on (name, date), and take the row over with it.
+  const twin = await signUp('Admin', 'Probe');
+  const hdrT = { Cookie: twin.setCookies.map(x => x.split(';')[0]).join('; ') };
+  const twinWrite = await post('/api/log', {
+    first_name: 'Admin', last_name: 'Probe', date: today, status: 'absent',
+  }, hdrT);
+  check("a namesake cannot overwrite your day", twinWrite.status === 403,
+    'status ' + twinWrite.status);
+  const twinWipe = await post('/api/log/delete', {
+    first_name: 'Admin', last_name: 'Probe', date: today,
+  }, hdrT);
+  check('nor delete it', twinWipe.status === 403, 'status ' + twinWipe.status);
+  const mine = ((await json(await fetch(BASE + '/api/attendance?target_date=' + today,
+    { headers: hdrA }))).rows || []).find(r => r.name === 'Admin Probe');
+  check('and your day is still yours', mine && mine.status === 'arriving',
+    JSON.stringify(mine));
+  // Positive control: the namesake is refused because the day is somebody
+  // else's, not because the endpoint now refuses everybody. A random old date,
+  // so a crashed earlier run's leftover row cannot be what answers.
+  const lone = new Date(Date.UTC(2010, 0, 1) + Math.floor(Math.random() * 3000) * 864e5)
+    .toISOString().slice(0, 10);
+  const twinOwn = await post('/api/log', {
+    first_name: 'Admin', last_name: 'Probe', date: lone, status: 'absent',
+  }, hdrT);
+  check('the namesake can still log a day nobody has', twinOwn.status === 200,
+    'status ' + twinOwn.status);
+  await post('/api/log/delete', { first_name: 'Admin', last_name: 'Probe', date: lone }, hdrT);
+
   // Victim's row was never written, so nothing to clean up beyond Probe's.
   await post('/api/log/delete', { first_name: 'Admin', last_name: 'Probe', date: today });
 
@@ -228,6 +261,15 @@ const today = new Date().toISOString().slice(0, 10);
   const people = await json(await fetch(BASE + '/api/admin/people', { headers: hdrA }));
   check('an admin sees everyone even with a stale member cookie',
     (people.people || []).length >= 2, `${(people.people || []).length} accounts`);
+  // The two Admin Probes are the case the badge exists for, and Victim, whose
+  // name nobody shares, is its negative.
+  const byId = Object.fromEntries((people.people || []).map(x => [x.id, x]));
+  const probes = (people.people || []).filter(x => x.name === 'Admin Probe');
+  check('two accounts with one name are both marked',
+    probes.length >= 2 && probes.every(x => x.same_name), JSON.stringify(probes.map(x => x.same_name)));
+  check('a name nobody shares is not', byId[meB0.id] && byId[meB0.id].same_name === false);
+  check('accounts made just now are new, with a date',
+    byId[meB0.id] && byId[meB0.id].is_new === true && !!byId[meB0.id].created_at);
 
   // Admin without god mode is deliberately NOT elevated: that is what lets an
   // admin check what an ordinary member actually sees.
@@ -270,7 +312,9 @@ const today = new Date().toISOString().slice(0, 10);
   // cookie here would draw them for a forged one.
   {
     const { w: aw, d: ad } = await open('/admin', { setCookies: a.setCookies });
-    const rows = [...ad.querySelectorAll('.who')];
+    // #people, not .who alone: New accounts above it draws the same rows
+    // without the controls, and would answer first.
+    const rows = [...ad.querySelectorAll('#people .who')];
     const rowFor = (re) => rows.find(r => re.test(r.textContent)) || null;
     const doomedRow2 = rowFor(/Doomed/), meRow = rowFor(/You/);
     check('an elevated admin gets a delete button on someone else',

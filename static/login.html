@@ -287,6 +287,14 @@ async function submitCredentials() {
   const data = await r.json().catch(() => ({}));
 
   if (!r.ok) {
+    // 409 is the name being taken, not the email: stay on this step so they
+    // can add a middle initial. Ahead of the test below so it can never be
+    // mistaken for "you already have an account".
+    if (step === 'signup' && r.status === 409) {
+      showError(data.detail);
+      $('last').focus();
+      return;
+    }
     // If signup says the account already exists, the check raced or the account
     // was made elsewhere since. Drop them into sign-in rather than dead-ending.
     if (step === 'signup' && /already/i.test(data.detail || '')) {

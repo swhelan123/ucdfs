@@ -6,6 +6,11 @@ set -u
 
 CJ="$WORK/cookies.txt"; rm -f "$CJ"
 EMAIL="$(test_email)"
+# Letters, not digits: signup refuses a name matching an existing member's
+# with everything but letters stripped, and other suites' "Test Bot"s are
+# alive while this runs. Feed cleanup does not need it in TEST_ACTORS, because
+# nothing this suite does writes a feed line.
+LAST="Bot$(python3 -c 'import random,string;print("".join(random.choice(string.ascii_lowercase) for _ in range(8)))')"
 
 # Whether the project confirms email addresses is a dashboard toggle the app
 # cannot see and the suite must not assume. Signup answers differently in each
@@ -16,7 +21,7 @@ AUTOCONFIRM=$(curl -s -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/auth/v1/settings
 echo "── signup (confirm email is $([ "$AUTOCONFIRM" = "true" ] && echo off || echo on)) ──"
 code=$(curl -s -c "$CJ" -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/signup" \
   -H 'Content-Type: application/json' \
-  -d "{\"first_name\":\"Test\",\"last_name\":\"Bot\",\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")
+  -d "{\"first_name\":\"Test\",\"last_name\":\"$LAST\",\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")
 ck "signup succeeds" "$code" "200"
 if [ "$AUTOCONFIRM" = "true" ]; then
   ck "httpOnly session cookie set"    "$(grep -c 'ucdfs_session' "$CJ")" "1"
@@ -104,6 +109,56 @@ ck "account check: non-UCD blocked" \
       -d '{"email":"victim@gmail.com"}')" "403"
 
 echo
+echo "── a name that would pass for somebody else's ──"
+# Refused before GoTrue is asked, so none of these makes an account or sends
+# an email. Each uses a fresh address, so "email taken" cannot be the reason.
+for variant in "Test|$LAST" "test|  ${LAST^^} " "Test.|$LAST" "Test|${LAST}2"; do
+  f="${variant%%|*}"; l="${variant#*|}"
+  code=$(curl -s -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/signup" \
+    -H 'Content-Type: application/json' \
+    -d "{\"first_name\":\"$f\",\"last_name\":\"$l\",\"email\":\"$(test_email)\",\"password\":\"$TEST_PASSWORD\"}")
+  ck "signup as '$f $l' is refused" "$code" "409"
+done
+ck "  and says who it clashes with" "$(grep -c "Test $LAST" "$WORK/o.json")" "1"
+# The page reads "already" as "this email has an account" and skips to the
+# password step, which is the wrong place for somebody whose name is taken.
+ck "  without the word the page reads as 'email taken'" "$(grep -ci 'already' "$WORK/o.json")" "0"
+
+echo
+echo "── rate limits, per address ──"
+# The app believes X-Real-IP from a private peer, which this container's
+# caller is, so each check gets an address of its own from TEST-NET-3 and
+# cannot spend the bucket every other suite signs in through.
+NET="203.0.113.$((RANDOM % 200 + 20))"
+for i in $(seq 1 10); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H "X-Real-IP: $NET" \
+    -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"wrong-password-$i\"}")
+  [ "$code" = "400" ] || break
+done
+ck "ten wrong passwords are just wrong" "$code" "400"
+ck "the eleventh attempt is refused" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H "X-Real-IP: $NET" \
+      -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"wrong\"}")" "429"
+ck "  even with the right password, from there" \
+   "$(curl -s -D "$WORK/h.txt" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H "X-Real-IP: $NET" \
+      -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "429"
+ck "  and says when to come back" "$(grep -ci '^retry-after:' "$WORK/h.txt")" "1"
+ck "the owner signs in fine from anywhere else" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H "X-Real-IP: 203.0.113.250" \
+      -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "200"
+NET2="198.51.100.$((RANDOM % 200 + 20))"
+for i in $(seq 1 6); do
+  curl -s -o /dev/null -X POST "$BASE/api/auth/forgot" -H "X-Real-IP: $NET2" \
+    -H 'Content-Type: application/json' -d '{"email":"ucdfs-test-nobody@ucdconnect.ie"}'
+done
+ck "emails asked for in a burst are capped" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/resend" -H "X-Real-IP: $NET2" \
+      -H 'Content-Type: application/json' -d '{"email":"ucdfs-test-nobody@ucdconnect.ie"}')" "429"
+ck "a malformed X-Real-IP falls back to the peer instead of failing" \
+   "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/check" -H 'X-Real-IP: not-an-address' \
+      -H 'Content-Type: application/json' -d '{"email":"ucdfs-test-nobody@ucdconnect.ie"}')" "200"
+
+echo
 echo "── the email-link endpoints ──"
 # None of these sends an email: the addresses have no account, or the tokens
 # are junk. What is checked is the contract the sign-in page relies on, and
@@ -138,11 +193,11 @@ echo
 echo "── a real write, end to end ──"
 ck "log attendance" "$(curl -s -b "$CJ" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/log" \
    -H 'Content-Type: application/json' \
-   -d '{"first_name":"Test","last_name":"Bot","date":"2020-01-02","status":"arriving","arrival_time":"09:00","departure_time":"17:00"}')" "200"
+   -d '{"first_name":"Test","last_name":"'"$LAST"'","date":"2020-01-02","status":"arriving","arrival_time":"09:00","departure_time":"17:00"}')" "200"
 ck "read it back" "$(curl -s -b "$CJ" "$BASE/api/attendance?target_date=2020-01-02" \
    | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["rows"]))')" "1"
 ck "delete it" "$(curl -s -b "$CJ" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/log/delete" \
-   -H 'Content-Type: application/json' -d '{"first_name":"Test","last_name":"Bot","date":"2020-01-02"}')" "200"
+   -H 'Content-Type: application/json' -d '{"first_name":"Test","last_name":"'"$LAST"'","date":"2020-01-02"}')" "200"
 
 echo
 echo "── login / logout ──"

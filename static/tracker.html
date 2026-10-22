@@ -208,6 +208,140 @@
 .stat { background: var(--bg); border-radius: 10px; padding: 7px 11px; font-size: 0.76rem;
   color: var(--muted); }
 .stat b { color: var(--text); font-size: 0.9rem; }
+
+/* ── Planning (019) ── */
+/* The design freezes, above the tabs so they are on screen whatever you are
+   looking at. A button: clicking one narrows the board to what it holds. */
+.ms-strip { display: grid; gap: 10px; margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.ms {
+  display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
+  background: var(--ucd-navy); color: #fff; border: 2px solid transparent; border-radius: 14px;
+  padding: 11px 14px; font: inherit; cursor: pointer;
+}
+.ms.on { border-color: var(--ucd-gold); }
+.ms-days { font-size: 1.5rem; font-weight: 800; color: var(--ucd-gold); line-height: 1;
+  font-variant-numeric: tabular-nums; min-width: 2.2em; text-align: center; }
+.ms-days small { display: block; font-size: 0.56rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: rgba(255,255,255,.7); margin-top: 3px; }
+.ms-body { flex: 1; min-width: 0; }
+.ms-name { font-weight: 800; font-size: 0.86rem; }
+.ms-sub { font-size: 0.74rem; color: rgba(255,255,255,.75); margin-top: 2px; }
+.ms-sub b { color: #fff; }
+
+.tools-row { display: flex; gap: 8px; margin: -6px 0 14px; flex-wrap: wrap; }
+.toolbar select.text-input.narrow { flex: 0 0 150px; }
+.seg-mini { display: inline-flex; border: 1px solid var(--border); border-radius: 11px;
+  overflow: hidden; background: var(--card); flex-shrink: 0; }
+.seg-mini button { border: none; background: none; font: inherit; font-size: 0.78rem;
+  font-weight: 700; color: var(--muted); padding: 8px 12px; cursor: pointer; }
+.seg-mini button.on { background: var(--dark); color: #fff; }
+
+.lane { margin-bottom: 18px; }
+.lane .board { margin-top: 2px; }
+
+.item.unowned { border-style: dashed; border-color: var(--amber-border); background: var(--amber-bg); }
+.item.crit { box-shadow: inset 3px 0 0 var(--red), var(--shadow-sm); }
+.item.picked { border-color: var(--indigo); box-shadow: 0 0 0 2px var(--indigo-border); }
+.item-top { display: flex; align-items: center; gap: 6px; }
+.item-top .item-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick { width: 17px; height: 17px; margin: 0; accent-color: var(--indigo); cursor: pointer; flex-shrink: 0; }
+.badge-soon  { background: var(--amber-bg); color: var(--amber); }
+.badge-ready { background: var(--green-bg); color: var(--green-text); }
+.badge-crit  { background: var(--red); color: #fff; }
+.badge-git   { background: var(--bg); color: var(--text); }
+.badge-wait  { background: var(--indigo-bg); color: var(--indigo); border: none; font: inherit;
+  font-size: 0.64rem; font-weight: 800; cursor: pointer; }
+.badge-wait:hover { text-decoration: underline; }
+.badge-wait.done { background: var(--bg); color: var(--muted); text-decoration: line-through; }
+/* Area colour: a dot and its name, tinted with the area's own accent. */
+.area-tag { display: inline-flex; align-items: center; gap: 4px; }
+.area-tag::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ac-amber  { color: var(--amber); }
+.ac-teal   { color: var(--teal); }
+.ac-indigo { color: var(--indigo); }
+.ac-green  { color: var(--green); }
+.ac-purple { color: var(--purple); }
+.ac-none   { color: var(--muted); }
+
+/* Bulk select: appears only while something is picked. */
+.bulk {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+  background: var(--indigo-bg); border: 1px solid var(--indigo-border); border-radius: 12px;
+  padding: 8px 11px; font-size: 0.82rem; font-weight: 700;
+}
+.bulk select.text-input { flex: 0 1 170px; padding: 6px 10px; font-size: 0.8rem; min-width: 0; }
+
+/* The table scrolls inside itself, never the page: half the team reads this
+   on a phone. */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; background: var(--card);
+  border: 1px solid var(--border); border-radius: 14px; }
+.tbl { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 0.8rem; }
+.tbl th { text-align: left; padding: 0; border-bottom: 1px solid var(--border); background: var(--bg); }
+.tbl th button { width: 100%; text-align: left; border: none; background: none; font: inherit;
+  font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); padding: 9px 10px; cursor: pointer; white-space: nowrap; }
+.tbl th button.on { color: var(--text); }
+.tbl td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tbody tr { cursor: pointer; }
+.tbl tbody tr:hover { background: var(--bg); }
+.tbl .t-title { font-weight: 700; min-width: 200px; overflow-wrap: anywhere; }
+.tbl .t-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl .t-pick { width: 34px; }
+
+/* Waits-on picker in the dialog: chips like the people picker. */
+.wait-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 3px 3px 10px;
+  border-radius: 999px; background: var(--indigo-bg); font-size: 0.78rem; font-weight: 600;
+  max-width: 100%; }
+.wait-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.est { font-size: 0.74rem; color: var(--muted); margin-top: 4px; }
+.plan-off { font-size: 0.78rem; color: var(--muted); background: var(--bg); border-radius: 10px;
+  padding: 9px 12px; margin-bottom: 11px; }
+
+/* Paste preview */
+.dlg.wide { max-width: 860px; }
+.paste-box { min-height: 150px; font-family: inherit; }
+.pv { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.pv-row { border: 1px solid var(--border); border-radius: 12px; padding: 9px 10px; }
+.pv-row.off { opacity: 0.45; }
+.pv-row.warned { border-color: var(--amber-border); background: var(--amber-bg); }
+.pv-top { display: flex; align-items: center; gap: 8px; }
+.pv-top .text-input { flex: 1; min-width: 0; padding: 7px 10px; font-size: 0.85rem; }
+.pv-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 7px; }
+.pv-who select.text-input { flex: 0 1 190px; min-width: 0; padding: 5px 9px; font-size: 0.78rem; }
+.pv-warn { font-size: 0.74rem; color: var(--amber); font-weight: 600; margin-top: 5px; }
+.pv-src { font-size: 0.7rem; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+.msg-box { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem; line-height: 1.5; }
+
+/* This week */
+.wk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.wk-head .intro { margin: 0; flex: 1; min-width: 200px; }
+.wk { margin-bottom: 14px; }
+.wk .card { padding: 4px 14px; }
+.wk-line { display: flex; gap: 10px; align-items: baseline; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 0.82rem; cursor: pointer; }
+.wk-line:last-child { border-bottom: none; }
+.wk-line:hover .wk-title { color: var(--indigo); }
+.wk-title { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.wk-meta { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.wk-body { display: block; font-weight: 400; color: var(--muted); font-size: 0.78rem; margin-top: 2px;
+  white-space: pre-line; }
+@media (max-width: 560px) { .wk-line { flex-wrap: wrap; } .wk-meta { white-space: normal; } }
+
+/* Undo after a status change. Its own element rather than UCDFS.toast,
+   which is text-only and lets clicks through. */
+.undo {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(14px);
+  background: var(--dark); color: #fff; border-radius: 16px; padding: 10px 10px 10px 18px;
+  display: flex; align-items: center; gap: 14px; font-size: 0.86rem; font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,.22); z-index: 1700; opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s; max-width: calc(100vw - 32px);
+}
+.undo.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.undo button { border: none; background: var(--ucd-gold); color: var(--dark); font: inherit;
+  font-weight: 800; border-radius: 10px; padding: 6px 12px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -236,9 +370,12 @@
       what it can read without it.
     </div>
 
+    <div class="ms-strip" id="ms-strip"></div>
+
     <div class="tabs">
       <button class="tab active" id="tab-people" type="button" data-tab="people">👥 People</button>
       <button class="tab"        id="tab-board"  type="button" data-tab="board">🗂️ Board</button>
+      <button class="tab"        id="tab-week"   type="button" data-tab="week">🗓️ This week</button>
     </div>
 
     <!-- ── People ─────────────────────────────────────────────────────── -->
@@ -251,16 +388,50 @@
     <!-- ── Board ──────────────────────────────────────────────────────── -->
     <div id="panel-board" class="gone">
       <form class="add-row" id="add-form" autocomplete="off">
-        <input class="text-input" id="add-title" placeholder="What needs doing?" aria-label="New item">
+        <input class="text-input" id="add-title" placeholder="What needs doing? (press N)" aria-label="New item">
         <select class="text-input" id="add-owner" aria-label="Who's doing it"></select>
         <button class="btn btn-dark" id="add-btn" type="submit">Add</button>
       </form>
+      <div class="tools-row">
+        <button class="btn btn-ghost btn-sm" id="paste-open" type="button">📋 Paste a list</button>
+        <button class="btn btn-ghost btn-sm" id="msg-open" type="button">✉️ Weekly message</button>
+      </div>
       <div class="toolbar">
         <input class="text-input" id="q" type="search" placeholder="Search items" aria-label="Search items">
         <select class="text-input" id="who" aria-label="Whose items"></select>
+        <select class="text-input narrow" id="group" aria-label="Group by">
+          <option value="status">By status</option>
+          <option value="area">By area</option>
+          <option value="person">By person</option>
+        </select>
+        <div class="seg-mini" role="group" aria-label="View">
+          <button type="button" id="view-board" class="on">Board</button>
+          <button type="button" id="view-table">Table</button>
+          <button type="button" id="select-mode" aria-pressed="false">Select</button>
+        </div>
       </div>
       <div class="chips" id="board-chips"></div>
-      <div class="board" id="board"></div>
+      <div class="bulk gone" id="bulk">
+        <span id="bulk-n"></span>
+        <select class="text-input" id="bulk-owner" aria-label="Give the selected items to"></select>
+        <select class="text-input" id="bulk-area" aria-label="Set the area of the selected items"></select>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" id="bulk-clear" type="button">Clear</button>
+      </div>
+      <div id="board"></div>
+    </div>
+
+    <!-- ── This week ─────────────────────────────────────────────────── -->
+    <div id="panel-week" class="gone">
+      <div class="wk-head">
+        <p class="intro" id="week-intro">What moved on the board, from each item's own history.</p>
+        <select class="text-input narrow" id="week-days" aria-label="How far back">
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="28">Last 4 weeks</option>
+        </select>
+      </div>
+      <div id="week"></div>
     </div>
 
     <div class="foot">UCD Formula Student · <span id="foot"></span></div>
@@ -303,7 +474,39 @@
       <label class="fld">
         <span class="fld-label">Due</span>
         <input class="text-input" id="f-due" type="date">
+        <div class="est gone" id="f-due-est"></div>
       </label>
+    </div>
+
+    <div class="plan-off gone" id="plan-off">Area, duration, waits on and milestone need
+      migration 019 on this database.</div>
+    <div id="plan-fields">
+      <div class="fld-row">
+        <label class="fld">
+          <span class="fld-label">Area</span>
+          <select class="text-input" id="f-area"></select>
+        </label>
+        <label class="fld">
+          <span class="fld-label">Milestone</span>
+          <select class="text-input" id="f-milestone"></select>
+        </label>
+      </div>
+      <div class="fld-row">
+        <label class="fld">
+          <span class="fld-label">Takes about (working days)</span>
+          <input class="text-input" id="f-duration" type="number" min="0" step="1" inputmode="numeric" placeholder="e.g. 3">
+        </label>
+        <label class="fld">
+          <span class="fld-label">Can start</span>
+          <input class="text-input" id="f-starts" type="date">
+        </label>
+      </div>
+      <div class="fld">
+        <span class="fld-label">Waits on</span>
+        <div class="people-pick" id="f-waits"></div>
+        <select class="text-input" id="f-add-wait" aria-label="Add something this waits on"></select>
+      </div>
+      <label class="check"><input type="checkbox" id="f-critical"> Critical: late here makes the milestone late</label>
     </div>
     <label class="fld">
       <span class="fld-label">Link</span>
@@ -367,6 +570,65 @@
   </div>
 </div>
 
+<!-- ── Paste a list ───────────────────────────────────────────────────── -->
+<div class="dlg-bg top gone" id="paste-bg">
+  <div class="card dlg wide" role="dialog" aria-modal="true" aria-labelledby="paste-h">
+    <div class="dlg-head">
+      <div class="dlg-title">
+        <div class="dlg-h" id="paste-h">Paste a list</div>
+        <div class="dlg-sub">One item per line: <b>Aoife - upright CAD</b>, <b>Aoife + Cian: accumulator layout</b>.
+          A <b>;</b> splits one line into several items for the same people. Nothing is saved until you confirm.</div>
+      </div>
+      <button class="dlg-x" type="button" data-close="paste" aria-label="Close">×</button>
+    </div>
+    <div id="paste-step1">
+      <textarea class="text-input area paste-box" id="paste-text" placeholder="Aoife - upright CAD&#10;Cian + CJ: precharge circuit; IMD wiring&#10;&#10;Up for grabs:&#10;wiring loom drawing"></textarea>
+      <div class="dlg-actions" style="margin-top:10px">
+        <span class="spacer"></span>
+        <button class="btn btn-dark btn-sm" id="paste-parse" type="button">Preview</button>
+      </div>
+    </div>
+    <div id="paste-step2" class="gone">
+      <div class="fld-row">
+        <label class="fld">
+          <span class="fld-label">Division for all</span>
+          <select class="text-input" id="paste-subteam"></select>
+        </label>
+        <label class="fld">
+          <span class="fld-label">Area for all</span>
+          <select class="text-input" id="paste-area"></select>
+        </label>
+      </div>
+      <div class="pv" id="paste-preview"></div>
+      <div class="dlg-actions">
+        <button class="btn btn-ghost btn-sm" id="paste-back" type="button">← Edit the text</button>
+        <span class="spacer"></span>
+        <button class="btn btn-dark btn-sm" id="paste-save" type="button">Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Weekly message ─────────────────────────────────────────────────── -->
+<div class="dlg-bg top gone" id="msg-bg">
+  <div class="card dlg" role="dialog" aria-modal="true" aria-labelledby="msg-h">
+    <div class="dlg-head">
+      <div class="dlg-title">
+        <div class="dlg-h" id="msg-h">Weekly message</div>
+        <div class="dlg-sub" id="msg-sub">Open items, one line per person or pair. Edit it before you send it;
+          pasting it back into "Paste a list" makes the same items.</div>
+      </div>
+      <button class="dlg-x" type="button" data-close="msg" aria-label="Close">×</button>
+    </div>
+    <textarea class="text-input area msg-box" id="msg-text" aria-label="The message"></textarea>
+    <div class="dlg-actions" style="margin-top:10px">
+      <span class="spacer"></span>
+      <button class="btn btn-dark btn-sm" id="msg-copy" type="button">Copy</button>
+    </div>
+  </div>
+</div>
+
+<div class="undo" id="undo" role="status"><span id="undo-text"></span><button type="button" id="undo-btn">Undo</button></div>
 <div class="toast" id="toast"></div>
 
 <script src="/static/shared.js"></script>
@@ -377,19 +639,40 @@ const esc = s => UCDFS.esc(s);
 const $ = id => document.getElementById(id);
 const RING = '<div class="ring ring-block" role="status" aria-label="Loading"><svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20"></circle></svg></div>';
 
-let ITEMS = { items: [], people: [], subteams: [], statuses: [], quiet_days: 5, ready: true };
+let ITEMS = { items: [], people: [], subteams: [], statuses: [], areas: [], milestones: [],
+              quiet_days: 5, ready: true, planning_ready: true };
 let PEOPLE = { people: [], subteams: [], quiet_days: 5 };
 let TAB = 'people';
 let PFILTER = 'all';          // people chip
 let BFILTER = 'all';          // board chip
+let NEED_OWNER = false;       // board: only items nobody is on
+let MSFILTER = '';            // board: only items for one milestone, "key|subteam"
+let GROUP = 'status';         // board lanes: status | area | person
+let VIEW = 'board';           // board | table
+let SORT = { key: 'due', dir: 1 };
+let SELECTING = false;        // bulk select mode
+let SELECTED = new Set();     // item ids picked for a bulk change
 let SHOW_ALL_DONE = false;
 let editing = null;           // the item open in the dialog, as it was when opened
 let viewing = null;           // the person open in the dialog
 let pickedStatus = 'todo';
 let picked = [];              // people on the item open in the dialog, as {id, name, photo}
+let waitsPicked = [];         // what the item open in the dialog waits on, as {id, key, title, status}
+let PASTE = [];               // the paste preview, one proposed item per row
 let peopleStale = true;       // the People view needs a reload before it is shown again
+let weekStale = true;         // and so does This week
 
 const DONE_DAYS = 14;         // done items stay on the board this long
+const UNDO_MS = 6000;
+
+/* Grouping and table/board are per-browser preferences, like the flowchart
+   tour: not identity, so no column, and losing them costs a click. */
+function pref(k, v) {
+  try {
+    if (v === undefined) return localStorage.getItem('ucdfs_tracker_' + k);
+    localStorage.setItem('ucdfs_tracker_' + k, v);
+  } catch (e) { return null; }
+}
 
 // ── Small helpers ─────────────────────────────────────────────────────────
 
@@ -417,6 +700,33 @@ function fmtWhen(iso) {
 }
 
 function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+
+function areaOf(id) { return (ITEMS.areas || []).find(a => a.id === id); }
+
+function areaTag(id) {
+  const a = areaOf(id);
+  return a ? `<span class="area-tag ac-${esc(a.accent)}">${esc(a.name)}</span>` : '';
+}
+
+function ago(iso) {
+  const days = Math.floor(daysAgo(iso));
+  if (!isFinite(days)) return '';
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + 'd ago';
+}
+
+/* The date the board draws: the one somebody set, or one worked out from the
+   duration, which says "est." so nobody mistakes it for a promise. */
+function dueBadge(i) {
+  if (!i.due || i.status === 'done') return '';
+  const est = i.due_derived ? ' est.' : '';
+  if (i.overdue)  return `<span class="badge badge-late">Overdue · ${esc(fmtDay(i.due))}${est}</span>`;
+  if (i.due_soon) return `<span class="badge badge-soon">Due ${esc(fmtDay(i.due))}${est}</span>`;
+  return `<span class="badge">Due ${esc(fmtDay(i.due))}${est}</span>`;
+}
+
+function anyDialogOpen() {
+  return ['item-bg', 'person-bg', 'paste-bg', 'msg-bg'].some(id => !$(id).classList.contains('gone'));
+}
 
 function subName(id) {
   const s = (ITEMS.subteams.length ? ITEMS.subteams : PEOPLE.subteams).find(x => x.id === id);
@@ -473,10 +783,15 @@ async function loadItems() {
   if (l.note) $('u-body').maxLength = l.note;
   if (l.blocked) $('f-blocked').maxLength = l.blocked;
   if (l.person_note) $('n-body').maxLength = l.person_note;
+  if (l.duration) $('f-duration').max = l.duration;
+  // Items deleted since they were picked drop out of a selection silently.
+  SELECTED = new Set([...SELECTED].filter(id => ITEMS.items.some(i => i.id === id)));
   renderAddOwner();
   renderWho();
+  renderBulkSelects();
   renderBoardChips();
   renderBoard();
+  renderStrip();
   renderFoot();
 }
 
@@ -495,9 +810,42 @@ async function loadPeople() {
    is the heavier of the two requests. */
 async function changed() {
   peopleStale = true;
+  weekStale = true;
   const jobs = [loadItems()];
   if (TAB === 'people') jobs.push(loadPeople());
+  if (TAB === 'week') jobs.push(loadWeek());
   await Promise.all(jobs);
+}
+
+// ── Milestones ────────────────────────────────────────────────────────────
+
+/* Which division the page is looking at: the board's chip on the board, the
+   People chip on People. "All" shows both freezes side by side. */
+function viewDivision() {
+  const f = TAB === 'people' ? PFILTER : BFILTER;
+  return (ITEMS.subteams || []).some(s => s.id === f) ? f : '';
+}
+
+function renderStrip() {
+  const div = viewDivision();
+  const ms = (ITEMS.milestones || []).filter(m => m.key === 'design_freeze' && m.date &&
+                                               (!div || m.subteam === div));
+  $('ms-strip').innerHTML = ms.map(m => {
+    const id = m.key + '|' + m.subteam;
+    const d = m.days_left;
+    const big = d < 0 ? Math.abs(d) : d;
+    const unit = d < 0 ? (big === 1 ? 'day ago' : 'days ago') : d === 0 ? 'today' : (d === 1 ? 'day' : 'days');
+    const extra = [m.critical ? `<b>${m.critical}</b> critical` : '', m.overdue ? `<b>${m.overdue}</b> overdue` : '']
+      .filter(Boolean).join(' · ');
+    return `<button class="ms${MSFILTER === id ? ' on' : ''}" type="button" data-ms="${esc(id)}"
+        title="${MSFILTER === id ? 'Show everything again' : 'Show only what is attached to this'}">
+      <div class="ms-days">${d === 0 ? '0' : big}<small>${esc(unit)}</small></div>
+      <div class="ms-body">
+        <div class="ms-name">${esc(m.name)}</div>
+        <div class="ms-sub">${esc(fmtDay(m.date))} · <b>${m.open}</b> open${extra ? ' · ' + extra : ''}</div>
+      </div>
+    </button>`;
+  }).join('');
 }
 
 function renderFoot() {
@@ -521,11 +869,14 @@ function renderPeopleIntro() {
 }
 
 function needsLook(p) { return p.state === 'quiet' || p.state === 'none'; }
+function nothingOpen(p) { return !((p.items || {}).open); }
 
 function renderPeopleChips() {
   const el = $('people-chips');
   const look = PEOPLE.people.filter(needsLook).length;
-  const chips = [{ id: 'all', name: 'Everyone' }, { id: 'look', name: 'Needs a look', count: look }]
+  const idle = PEOPLE.people.filter(nothingOpen).length;
+  const chips = [{ id: 'all', name: 'Everyone' }, { id: 'look', name: 'Needs a look', count: look },
+                 { id: 'idle', name: 'No open items', count: idle }]
     .concat(PEOPLE.subteams.map(s => ({ id: s.id, name: s.name })));
   el.innerHTML = '';
   chips.forEach(c => {
@@ -534,14 +885,15 @@ function renderPeopleChips() {
     b.className = 'chip';
     if (PFILTER === c.id) b.classList.add('active');
     b.innerHTML = esc(c.name) + (c.count !== undefined ? ` <span class="chip-count">${c.count}</span>` : '');
-    b.onclick = () => { PFILTER = c.id; renderPeopleChips(); renderPeople(); };
+    b.onclick = () => { PFILTER = c.id; renderPeopleChips(); renderPeople(); renderStrip(); };
     el.appendChild(b);
   });
 }
 
 function renderPeople() {
   const list = PEOPLE.people.filter(p =>
-    PFILTER === 'all' || (PFILTER === 'look' ? needsLook(p) : p.subteam === PFILTER));
+    PFILTER === 'all' || (PFILTER === 'look' ? needsLook(p) : PFILTER === 'idle' ? nothingOpen(p)
+                          : p.subteam === PFILTER));
   const groups = PEOPLE.subteams.map(s => ({ id: s.id, name: s.name }))
     .concat([{ id: '', name: 'No division yet' }]);
   const html = groups.map(g => {
@@ -551,7 +903,8 @@ function renderPeople() {
       <div class="card people">${rows.map(personRow).join('')}</div>`;
   }).join('');
   $('people').innerHTML = html || `<div class="empty"><div class="empty-icon">🙂</div>
-    <div class="empty-text">${PFILTER === 'look' ? 'Nobody needs a look right now.' : 'Nobody here.'}</div></div>`;
+    <div class="empty-text">${PFILTER === 'look' ? 'Nobody needs a look right now.'
+      : PFILTER === 'idle' ? 'Everybody has something on.' : 'Nobody here.'}</div></div>`;
 }
 
 function personRow(p) {
@@ -573,7 +926,9 @@ function personRow(p) {
       <div class="person-last">${esc(last)}</div>
     </div>
     <div class="person-stats">${recent} in ${PEOPLE.recent_span / 7} weeks<br>
-      ${open || 'nothing open'}${it.stale ? ` · <b>${it.stale}</b> stale` : ''}</div>
+      ${open || 'nothing open'}${it.stale ? ` · <b>${it.stale}</b> stale` : ''}
+      ${it.critical || it.overdue ? '<br>' + [it.critical ? `<b>${it.critical}</b> critical` : '',
+        it.overdue ? `<b>${it.overdue}</b> overdue` : ''].filter(Boolean).join(' · ') : ''}</div>
   </div>`;
 }
 
@@ -614,13 +969,16 @@ function renderPerson(d) {
     `<div class="stat"><b>${open.filter(i => i.status === 'doing').length}</b> doing</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'blocked').length}</b> blocked</div>`,
     `<div class="stat"><b>${open.filter(i => i.status === 'todo').length}</b> to do</div>`,
+    open.some(i => i.critical) ? `<div class="stat"><b>${open.filter(i => i.critical).length}</b> critical</div>` : '',
+    open.some(i => i.overdue) ? `<div class="stat"><b>${open.filter(i => i.overdue).length}</b> overdue</div>` : '',
   ].join('');
   $('person-tl-h').textContent = `Last ${d.window_days} days`;
   $('person-items').innerHTML = d.items.length ? d.items.map(i => `
     <button class="mini" type="button" data-item="${esc(i.id)}">
       <span class="item-key">${esc(i.key)}</span>
       <span class="mini-title">${esc(i.title)}</span>
-      ${i.stale ? `<span class="badge badge-stale">${plural(i.idle_days, 'day')} still</span>` : ''}
+      ${i.stale ? `<span class="badge badge-stale">${plural(i.idle_days, 'day')} in ${esc(statusName(i.status))}</span>` : ''}
+      ${i.critical && i.status !== 'done' ? '<span class="badge badge-crit">Critical</span>' : ''}
       <span class="badge">${esc(statusName(i.status))}</span>
     </button>`).join('') : '<div class="hint">Nothing assigned.</div>';
   $('person-tl').innerHTML = d.timeline.length ? d.timeline.map(s => `
@@ -687,9 +1045,19 @@ function renderBoardChips() {
     b.className = 'chip';
     if (BFILTER === s.id) b.classList.add('active');
     b.textContent = s.name;
-    b.onclick = () => { BFILTER = s.id; renderBoardChips(); renderBoard(); };
+    b.onclick = () => { BFILTER = s.id; renderBoardChips(); renderBoard(); renderStrip(); };
     el.appendChild(b);
   });
+  /* A toggle on top of the division, not another division: "nobody's on it
+     yet in Mechanical" is the question it answers. */
+  const unowned = ITEMS.items.filter(i => i.status !== 'done' && !i.owner_ids.length &&
+                                          (BFILTER === 'all' || i.subteam === BFILTER)).length;
+  const n = document.createElement('button');
+  n.type = 'button';
+  n.className = 'chip' + (NEED_OWNER ? ' active' : '');
+  n.innerHTML = `Needs an owner <span class="chip-count">${unowned}</span>`;
+  n.onclick = () => { NEED_OWNER = !NEED_OWNER; renderBoardChips(); renderBoard(); };
+  el.appendChild(n);
 }
 
 function daysAgo(iso) {
@@ -697,27 +1065,36 @@ function daysAgo(iso) {
   return (Date.now() - new Date(iso).getTime()) / 86400000;
 }
 
-function renderBoard() {
+function shownItems() {
   const q = $('q').value.trim().toLowerCase();
   const who = $('who').value;
-  const shown = ITEMS.items.filter(i =>
+  const [msKey, msSub] = MSFILTER.split('|');
+  return ITEMS.items.filter(i =>
     (BFILTER === 'all' || i.subteam === BFILTER) &&
+    (!NEED_OWNER || (!i.owner_ids.length && i.status !== 'done')) &&
+    (!MSFILTER || (i.milestone === msKey && (!msSub || i.subteam === msSub))) &&
     (!who || (who === '-' ? !i.owner_ids.length : i.owner_ids.includes(who))) &&
     (!q || (i.key + ' ' + i.title + ' ' + i.description + ' ' +
-            i.owners.map(o => o.name).join(' ') + ' ' + i.blocked_reason)
+            i.owners.map(o => o.name).join(' ') + ' ' + i.blocked_reason + ' ' +
+            ((areaOf(i.area) || {}).name || '') + ' ' + i.milestone_name)
              .toLowerCase().includes(q)));
+}
 
-  const order = {
-    // Overdue first, then soonest due, then newest. What to pick up next.
-    todo:    (a, b) => (b.overdue - a.overdue) || String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')) || b.id - a.id,
-    // The longest-idle on top: the one somebody should ask about.
-    doing:   (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
-    blocked: (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
-    done:    (a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')),
-  };
+const ORDER = {
+  // Ready first (what to pick up next), then overdue, then soonest due, then newest.
+  todo:    (a, b) => (b.ready - a.ready) || (b.overdue - a.overdue) ||
+                     String(a.due || '9999').localeCompare(String(b.due || '9999')) || b.id - a.id,
+  // The longest-idle on top: the one somebody should ask about.
+  doing:   (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
+  blocked: (a, b) => (b.idle_days || 0) - (a.idle_days || 0),
+  done:    (a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')),
+};
 
-  $('board').innerHTML = ITEMS.statuses.map(s => {
-    let col = shown.filter(i => i.status === s.id).sort(order[s.id]);
+/* Four status columns for a list of items. The whole board when grouped by
+   status, and once per lane when grouped by area or person. */
+function columnsHtml(list) {
+  return '<div class="board">' + ITEMS.statuses.map(s => {
+    let col = list.filter(i => i.status === s.id).sort(ORDER[s.id]);
     let more = '';
     if (s.id === 'done') {
       const older = col.filter(i => daysAgo(i.done_at) > DONE_DAYS);
@@ -733,18 +1110,64 @@ function renderBoard() {
       ${col.map(itemCard).join('') || `<div class="col-empty">${s.id === 'blocked' ? 'Nothing stuck' : 'Nothing here'}</div>`}
       ${more}
     </div>`;
+  }).join('') + '</div>';
+}
+
+function lanes(list) {
+  if (GROUP === 'area') {
+    return (ITEMS.areas || []).map(a => ({ name: a.name, rows: list.filter(i => i.area === a.id) }))
+      .concat([{ name: 'No area', rows: list.filter(i => !i.area) }]);
+  }
+  // By person: an item several people are on is in each of their lanes, the
+  // same way it counts on each of their plates.
+  const who = new Map();
+  list.forEach(i => i.owners.forEach(o => who.set(o.id, o.name)));
+  return [...who.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([id, name]) => ({ name, rows: list.filter(i => i.owner_ids.includes(id)) }))
+    .concat([{ name: 'Nobody yet', rows: list.filter(i => !i.owner_ids.length) }]);
+}
+
+function renderBoard() {
+  const shown = shownItems();
+  renderBulk();
+  $('view-board').classList.toggle('on', VIEW === 'board');
+  $('view-table').classList.toggle('on', VIEW === 'table');
+  $('select-mode').classList.toggle('on', SELECTING);
+  $('select-mode').setAttribute('aria-pressed', String(SELECTING));
+  $('group').value = GROUP;
+  $('group').disabled = VIEW === 'table';
+  if (VIEW === 'table') { $('board').innerHTML = tableHtml(shown); return; }
+  if (GROUP === 'status') { $('board').innerHTML = columnsHtml(shown); return; }
+  const html = lanes(shown).map(l => {
+    if (!l.rows.length) return '';
+    const open = l.rows.filter(i => i.status !== 'done').length;
+    return `<div class="lane"><div class="section-label">${esc(l.name)} · ${plural(open, 'open')}</div>
+      ${columnsHtml(l.rows)}</div>`;
   }).join('');
+  $('board').innerHTML = html || `<div class="empty"><div class="empty-icon">🗂️</div>
+    <div class="empty-text">Nothing matches.</div></div>`;
 }
 
 function itemCard(i) {
   const quick = { todo: ['doing', 'Start'], doing: ['done', 'Done'], blocked: ['doing', 'Unblock'] }[i.status];
+  const open = i.status !== 'done';
   const badges = [
-    i.overdue ? `<span class="badge badge-late">Due ${esc(fmtDay(i.due_date))}</span>`
-              : (i.due_date && i.status !== 'done' ? `<span class="badge">Due ${esc(fmtDay(i.due_date))}</span>` : ''),
-    i.stale ? `<span class="badge badge-stale">${plural(i.idle_days, 'day')} still</span>` : '',
+    i.critical && open ? '<span class="badge badge-crit">Critical</span>' : '',
+    i.ready ? '<span class="badge badge-ready">Ready</span>' : '',
+    dueBadge(i),
+    i.stale ? `<span class="badge badge-stale">${plural(i.days_in_status, 'day')} in ${esc(statusName(i.status))}</span>` : '',
+    ...(open ? i.waiting_on : []).map(w =>
+      `<button class="badge badge-wait${w.status === 'done' ? ' done' : ''}" type="button" data-wait="${esc(w.id)}"
+         title="${esc(w.title)}">${w.status === 'done' ? '' : 'Waiting on '}${esc(w.key)}</button>`),
+    i.last_commit && open ? `<span class="badge badge-git" title="Last commit on the linked GitHub branch">Commit ${esc(ago(i.last_commit))}</span>` : '',
   ].join('');
-  return `<div class="item${i.stale ? ' stale' : ''}" id="i-${esc(i.id)}" data-item="${esc(i.id)}" role="button" tabindex="0">
-    <div class="item-key">${esc(i.key)}${i.subteam ? ' · ' + esc(subName(i.subteam)) : ''}</div>
+  const cls = ['item', i.stale ? 'stale' : '', !i.owner_ids.length && open ? 'unowned' : '',
+               i.critical && open ? 'crit' : '', SELECTED.has(i.id) ? 'picked' : ''].filter(Boolean).join(' ');
+  return `<div class="${cls}" id="i-${esc(i.id)}" data-item="${esc(i.id)}" role="button" tabindex="0">
+    <div class="item-top">
+      ${SELECTING ? `<input class="pick" type="checkbox" data-pick="${esc(i.id)}" aria-label="Select ${esc(i.key)}" ${SELECTED.has(i.id) ? 'checked' : ''}>` : ''}
+      <div class="item-key">${esc(i.key)}${i.subteam ? ' · ' + esc(subName(i.subteam)) : ''}${i.area ? ' · ' + areaTag(i.area) : ''}</div>
+    </div>
     <div class="item-title">${esc(i.title)}</div>
     ${i.status === 'blocked' && i.blocked_reason ? `<div class="item-why">Waiting on ${esc(i.blocked_reason)}</div>` : ''}
     ${badges ? `<div class="item-badges">${badges}</div>` : ''}
@@ -755,6 +1178,108 @@ function itemCard(i) {
       ${quick ? `<button class="quick" type="button" data-quick="${esc(quick[0])}" data-id="${esc(i.id)}">${quick[1]}</button>` : ''}
     </div>
   </div>`;
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────
+
+const COLS = [
+  { key: 'key',       name: '#',         val: i => i.id },
+  { key: 'title',     name: 'Title',     val: i => i.title.toLowerCase() },
+  { key: 'owners',    name: 'Who',       val: i => i.owners.length ? peopleLabel(i.owners).toLowerCase() : '￿' },
+  { key: 'area',      name: 'Area',      val: i => (areaOf(i.area) || {}).name || '￿' },
+  { key: 'status',    name: 'Status',    val: i => ITEMS.statuses.findIndex(s => s.id === i.status) },
+  { key: 'due',       name: 'Due',       val: i => i.status === 'done' ? '￿' : (i.due || '￾') },
+  { key: 'days',      name: 'In status', val: i => i.status === 'done' ? -1 : (i.days_in_status ?? -1) },
+  { key: 'milestone', name: 'Milestone', val: i => i.milestone_date || (i.milestone ? '￾' : '￿') },
+];
+
+function tableHtml(list) {
+  const col = COLS.find(c => c.key === SORT.key) || COLS[5];
+  const rows = list.slice().sort((a, b) => {
+    const x = col.val(a), y = col.val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * SORT.dir || a.id - b.id;
+  });
+  if (!rows.length) return `<div class="empty"><div class="empty-icon">🗂️</div><div class="empty-text">Nothing matches.</div></div>`;
+  const head = COLS.map(c => `<th><button type="button" data-sort="${c.key}" class="${c.key === SORT.key ? 'on' : ''}">
+      ${esc(c.name)}${c.key === SORT.key ? (SORT.dir > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('');
+  return `<div class="table-wrap"><table class="tbl">
+    <thead><tr>${SELECTING ? '<th class="t-pick"></th>' : ''}${head}</tr></thead>
+    <tbody>${rows.map(i => `<tr data-item="${esc(i.id)}" id="i-${esc(i.id)}"${SELECTED.has(i.id) ? ' class="picked"' : ''}>
+      ${SELECTING ? `<td class="t-pick"><input class="pick" type="checkbox" data-pick="${esc(i.id)}" aria-label="Select ${esc(i.key)}" ${SELECTED.has(i.id) ? 'checked' : ''}></td>` : ''}
+      <td class="t-num item-key">${esc(i.key)}</td>
+      <td class="t-title">${esc(i.title)}${i.critical && i.status !== 'done' ? ' <span class="badge badge-crit">Critical</span>' : ''}${i.ready ? ' <span class="badge badge-ready">Ready</span>' : ''}</td>
+      <td>${esc(i.owners.length ? peopleLabel(i.owners) : 'Nobody yet')}</td>
+      <td>${areaTag(i.area)}</td>
+      <td>${esc(statusName(i.status))}</td>
+      <td class="t-num">${dueBadge(i)}</td>
+      <td class="t-num">${i.status === 'done' || i.days_in_status == null ? '' : plural(i.days_in_status, 'day')}</td>
+      <td>${esc(i.milestone_name)}${i.milestone_date ? ` <span class="item-key">${esc(fmtDay(i.milestone_date))}</span>` : ''}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+// ── Bulk select ───────────────────────────────────────────────────────────
+
+function renderBulkSelects() {
+  $('bulk-owner').innerHTML = '<option value="">Give to…</option><option value="-">Nobody</option>' +
+    ITEMS.people.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  $('bulk-area').innerHTML = '<option value="">Set area…</option><option value="-">No area</option>' +
+    (ITEMS.areas || []).map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  $('bulk-area').disabled = !ITEMS.planning_ready;
+}
+
+function renderBulk() {
+  $('bulk').classList.toggle('gone', !SELECTING || !SELECTED.size);
+  $('bulk-n').textContent = plural(SELECTED.size, 'item') + ' selected';
+}
+
+function togglePick(id) {
+  id = Number(id);
+  SELECTED.has(id) ? SELECTED.delete(id) : SELECTED.add(id);
+  renderBoard();
+}
+
+/* One update per item, through the ordinary endpoint, so each one is checked,
+   logged in that item's history and counted as moving exactly as a single
+   change would be. */
+async function bulkApply(body, said) {
+  const ids = [...SELECTED];
+  let done = 0;
+  try {
+    for (const id of ids) { await api('/api/tracker/items/update', { id, ...body }); done++; }
+    UCDFS.toast(`${said} ${plural(done, 'item')}`);
+    SELECTED.clear();
+  } catch (e) {
+    UCDFS.toast(`${e.message} (${done} of ${ids.length} changed)`);
+  }
+  await changed();
+}
+
+// ── Undo ──────────────────────────────────────────────────────────────────
+
+let undoTimer = null;
+
+/* Six seconds to put a status change back. The put-back is an ordinary status
+   change, so it is in the item's history too: the history records what
+   happened, and this did. */
+function offerUndo(item, label) {
+  const from = item.status, reason = item.blocked_reason, id = item.id;
+  $('undo-text').textContent = label;
+  $('undo').classList.add('show');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => $('undo').classList.remove('show'), UNDO_MS);
+  $('undo-btn').onclick = async () => {
+    clearTimeout(undoTimer);
+    $('undo').classList.remove('show');
+    const body = { id: Number(id), status: from };
+    if (from === 'blocked') body.blocked_reason = reason;
+    try {
+      await api('/api/tracker/items/update', body);
+      await changed();
+      UCDFS.toast(`Back to ${statusName(from)}`);
+    } catch (e) {
+      UCDFS.toast(e.message);
+    }
+  };
 }
 
 async function addItem(e) {
@@ -790,10 +1315,11 @@ function flash(id) {
 }
 
 async function quickMove(id, status) {
+  const before = ITEMS.items.find(x => String(x.id) === String(id));
   try {
     await api('/api/tracker/items/update', { id: Number(id), status });
     await changed();
-    UCDFS.toast(`Moved to ${statusName(status)}`);
+    if (before) offerUndo(before, `${before.key} moved to ${statusName(status)}`);
   } catch (e) {
     UCDFS.toast(e.message);
   }
@@ -822,9 +1348,52 @@ function openItem(id) {
   if (i.link) $('f-open-link').href = i.link;
   $('u-body').value = '';
   $('u-private').checked = false;
+  // Planning (019). Hidden, not disabled, without the migration: fields that
+  // refuse to save are worse than fields that are not there.
+  $('plan-off').classList.toggle('gone', ITEMS.planning_ready !== false);
+  $('plan-fields').classList.toggle('gone', ITEMS.planning_ready === false);
+  $('f-area').innerHTML = '<option value="">None</option>' + (ITEMS.areas || []).map(a =>
+    `<option value="${esc(a.id)}" ${a.id === i.area ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  renderMilestoneOptions(i);
+  $('f-duration').value = i.duration_days == null ? '' : i.duration_days;
+  $('f-starts').value = i.starts_on || '';
+  $('f-critical').checked = !!i.critical;
+  waitsPicked = i.waiting_on.map(w => ({ ...w }));
+  renderWaits();
+  $('f-due-est').classList.toggle('gone', !i.due_derived);
+  $('f-due-est').textContent = i.due_derived
+    ? `Estimated ${fmtDay(i.due)} from how long it takes. Set a date to fix it.` : '';
   pickStatus(i.status);
   $('item-bg').classList.remove('gone');
   loadHistory(i.id);
+}
+
+/* One "design freeze" option, not one per division: it means the item's own
+   division's date, and the label says which date that is right now. */
+function renderMilestoneOptions(i) {
+  const keys = [];
+  (ITEMS.milestones || []).forEach(m => { if (!keys.includes(m.key)) keys.push(m.key); });
+  $('f-milestone').innerHTML = '<option value="">None</option>' + keys.map(k => {
+    const all = ITEMS.milestones.filter(m => m.key === k);
+    const mine = all.find(m => !m.subteam || m.subteam === i.subteam);
+    const label = k === 'design_freeze'
+      ? 'Design freeze' + (mine ? ` (${subName(mine.subteam)}, ${fmtDay(mine.date)})` : ' (its division has none)')
+      : `${all[0].name}${all[0].date ? ' · ' + fmtDay(all[0].date) : ''}`;
+    return `<option value="${esc(k)}" ${k === i.milestone ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+}
+
+function renderWaits() {
+  $('f-waits').innerHTML = waitsPicked.length ? waitsPicked.map(w => `
+    <span class="wait-chip"><span>${esc(w.key)} ${esc(w.title)}${w.status === 'done' ? ' ✓' : ''}</span>
+      <button class="pp-x" type="button" data-unwait="${esc(w.id)}" aria-label="Stop waiting on ${esc(w.key)}">×</button></span>`).join('')
+    : '<span class="pp-none">Nothing</span>';
+  const max = (ITEMS.limits || {}).waits || 12;
+  const left = ITEMS.items.filter(x => editing && x.id !== editing.id && !waitsPicked.some(w => w.id === x.id))
+    .sort((a, b) => (a.status === 'done') - (b.status === 'done') || b.id - a.id);
+  $('f-add-wait').innerHTML = `<option value="">${waitsPicked.length >= max ? 'That\'s as many as one item takes' : '+ Add something it waits on'}</option>` +
+    left.map(x => `<option value="${esc(x.id)}">${esc(x.key)} ${esc(x.title)}${x.status === 'done' ? ' (done)' : ''}</option>`).join('');
+  $('f-add-wait').disabled = waitsPicked.length >= max || !left.length;
 }
 
 function renderPicked() {
@@ -898,10 +1467,21 @@ async function saveItem(e) {
     subteam: editing.subteam, due_date: editing.due_date ? String(editing.due_date).slice(0, 10) : null,
     link: editing.link, description: editing.description, blocked_reason: editing.blocked_reason,
   };
+  if (ITEMS.planning_ready !== false) {
+    const dur = $('f-duration').value.trim();
+    if (dur && !/^\d+$/.test(dur)) { UCDFS.toast('Working days is a whole number'); $('f-duration').focus(); return; }
+    Object.assign(now, { area: $('f-area').value, milestone: $('f-milestone').value,
+                         starts_on: $('f-starts').value || null,
+                         duration_days: dur === '' ? null : Number(dur), critical: $('f-critical').checked });
+    Object.assign(was, { area: editing.area, milestone: editing.milestone, starts_on: editing.starts_on,
+                         duration_days: editing.duration_days, critical: editing.critical });
+  }
   const body = { id: editing.id };
   Object.keys(now).forEach(k => { if (now[k] !== was[k]) body[k] = now[k]; });
   const ids = picked.map(o => o.id);
   if (JSON.stringify(ids) !== JSON.stringify(editing.owner_ids)) body.owner_ids = ids;
+  const waits = waitsPicked.map(w => w.id);
+  if (ITEMS.planning_ready !== false && JSON.stringify(waits) !== JSON.stringify(editing.waits_on)) body.waits_on = waits;
   if (pickedStatus !== 'blocked') delete body.blocked_reason;
   if (!body.title && 'title' in body) { UCDFS.toast('Say what needs doing'); $('f-title').focus(); return; }
   if (pickedStatus === 'blocked' && !now.blocked_reason) {
@@ -912,12 +1492,14 @@ async function saveItem(e) {
   btn.disabled = true;
   try {
     const id = editing.id;
+    const before = editing;
     await api('/api/tracker/items/update', body);
     closeItem();
     await changed();
     if (viewing) openPerson(viewing);
     flash(id);
-    UCDFS.toast('Saved');
+    if ('status' in body) offerUndo(before, `Saved. ${before.key} moved to ${statusName(body.status)}`);
+    else UCDFS.toast('Saved');
   } catch (err) {
     UCDFS.toast(err.message);
   } finally {
@@ -963,16 +1545,165 @@ async function deleteItem() {
   }
 }
 
+// ── Paste a list ──────────────────────────────────────────────────────────
+
+function openPaste() {
+  $('paste-step1').classList.remove('gone');
+  $('paste-step2').classList.add('gone');
+  $('paste-subteam').innerHTML = '<option value="">Each first person\'s own</option>' +
+    ITEMS.subteams.map(s => `<option value="${esc(s.id)}" ${s.id === BFILTER ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+  $('paste-area').innerHTML = '<option value="">None</option>' +
+    (ITEMS.areas || []).map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  $('paste-area').disabled = ITEMS.planning_ready === false;
+  $('paste-bg').classList.remove('gone');
+  $('paste-text').focus();
+}
+
+function closePaste() { $('paste-bg').classList.add('gone'); }
+
+async function parsePaste() {
+  const text = $('paste-text').value;
+  if (!text.trim()) { UCDFS.toast('Paste something first'); return; }
+  const btn = $('paste-parse');
+  btn.disabled = true;
+  try {
+    const d = await api('/api/tracker/items/parse', { text });
+    // Lines that name somebody we couldn't match start unticked as well as
+    // flagged: adding them as they are would file real work under nobody.
+    PASTE = d.items.map(it => ({ ...it, owners: it.owners.slice(),
+      on: !it.duplicate_of && !it.names.some(n => n.status !== 'matched') }));
+    renderPaste();
+    $('paste-step1').classList.add('gone');
+    $('paste-step2').classList.remove('gone');
+  } catch (e) {
+    UCDFS.toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderPaste() {
+  $('paste-preview').innerHTML = PASTE.map((it, n) => {
+    const left = ITEMS.people.filter(p => !it.owners.some(o => o.id === p.id));
+    return `<div class="pv-row${it.on ? '' : ' off'}${it.warnings.length ? ' warned' : ''}" data-row="${n}">
+      <div class="pv-top">
+        <input class="pick" type="checkbox" data-pv-on="${n}" ${it.on ? 'checked' : ''} aria-label="Add this one">
+        <input class="text-input" data-pv-title="${n}" value="${esc(it.title)}" aria-label="Title">
+      </div>
+      <div class="pv-who">
+        ${it.owners.map(o => `<span class="pp">${UCDFS.avatar(o.name, null, 'av av22 av-ink')}${esc(o.name)}
+          <button class="pp-x" type="button" data-pv-unpick="${n}" data-id="${esc(o.id)}" aria-label="Take ${esc(o.name)} off it">×</button></span>`).join('')
+          || '<span class="pp-none">Nobody yet</span>'}
+        <select class="text-input" data-pv-add="${n}" aria-label="Add someone">
+          <option value="">+ Add someone</option>${left.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      ${it.warnings.map(w => `<div class="pv-warn">⚠ ${esc(w)}</div>`).join('')}
+      <div class="pv-src">Line ${it.line}: ${esc(it.text)}</div>
+    </div>`;
+  }).join('');
+  const n = PASTE.filter(it => it.on && it.title.trim()).length;
+  $('paste-save').textContent = n ? `Add ${plural(n, 'item')}` : 'Add';
+  $('paste-save').disabled = !n;
+}
+
+async function savePaste() {
+  const area = $('paste-area').value, sub = $('paste-subteam').value;
+  const items = PASTE.filter(it => it.on && it.title.trim()).map(it => {
+    const one = { title: it.title.trim(), owner_ids: it.owners.map(o => o.id) };
+    if (sub) one.subteam = sub;
+    if (area && ITEMS.planning_ready !== false) one.area = area;
+    return one;
+  });
+  if (!items.length) return;
+  const btn = $('paste-save');
+  btn.disabled = true;
+  try {
+    const d = await api('/api/tracker/items/bulk', { items });
+    closePaste();
+    $('paste-text').value = '';
+    await changed();
+    UCDFS.toast(`Added ${plural(d.items.length, 'item')}`);
+  } catch (e) {
+    UCDFS.toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Weekly message ────────────────────────────────────────────────────────
+
+async function openMessage() {
+  $('msg-text').value = '…';
+  $('msg-bg').classList.remove('gone');
+  const div = BFILTER !== 'all' ? BFILTER : '';
+  $('msg-h').textContent = div ? `Weekly message: ${subName(div)}` : 'Weekly message';
+  try {
+    const r = await fetch('/api/tracker/message' + (div ? '?subteam=' + encodeURIComponent(div) : ''));
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Couldn't make the message");
+    $('msg-text').value = await r.text();
+  } catch (e) {
+    $('msg-text').value = '';
+    UCDFS.toast(e.message);
+  }
+}
+
+async function copyMessage() {
+  const box = $('msg-text');
+  try {
+    await navigator.clipboard.writeText(box.value);
+  } catch (e) {
+    // No clipboard API (plain http on dev, an old browser): select it and use
+    // the old command, and failing that the text is selected to copy by hand.
+    box.select();
+    try { document.execCommand('copy'); } catch (e2) { UCDFS.toast('Selected. Copy it from there'); return; }
+  }
+  UCDFS.toast('Copied');
+}
+
+// ── This week ─────────────────────────────────────────────────────────────
+
+const WEEK_SECTIONS = [
+  ['finished',   'Finished'],
+  ['created',    'New'],
+  ['blocked',    'Newly blocked'],
+  ['overdue',    'Went overdue'],
+  ['reassigned', 'Changed hands'],
+  ['updates',    'Updates'],
+];
+
+async function loadWeek() {
+  if (weekStale) $('week').innerHTML = RING;
+  const d = await api('/api/tracker/changes?days=' + encodeURIComponent($('week-days').value));
+  weekStale = false;
+  const counts = WEEK_SECTIONS.map(([k, name]) => d[k].length ? `${d[k].length} ${name.toLowerCase()}` : '')
+    .filter(Boolean);
+  $('week-intro').textContent = counts.length
+    ? `Since ${fmtDay(d.since)}: ${counts.join(', ')}.` : `Nothing moved since ${fmtDay(d.since)}.`;
+  $('week').innerHTML = WEEK_SECTIONS.map(([k, name]) => {
+    if (!d[k].length) return '';
+    return `<div class="wk"><div class="section-label">${esc(name)} · ${d[k].length}</div><div class="card">
+      ${d[k].map(l => `<div class="wk-line" data-item="${esc(l.item_id)}" role="button" tabindex="0">
+        <span class="item-key">${esc(l.key)}</span>
+        <span class="wk-title">${esc(l.title)}${l.body && k !== 'created' ? `<span class="wk-body">${esc(l.body)}</span>` : ''}</span>
+        <span class="wk-meta">${l.private ? '<span class="lock">Private</span> ' : ''}${k === 'overdue'
+          ? `due ${esc(fmtDay(l.due))}${l.derived ? ' (est.)' : ''}` : `${esc(l.actor || 'Someone')} · ${esc(fmtWhen(l.at))}`}</span>
+      </div>`).join('')}</div></div>`;
+  }).join('') || '';
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────
 
 function showTab(t) {
-  TAB = t === 'board' ? 'board' : 'people';
-  $('tab-people').classList.toggle('active', TAB === 'people');
-  $('tab-board').classList.toggle('active', TAB === 'board');
-  $('panel-people').classList.toggle('gone', TAB !== 'people');
-  $('panel-board').classList.toggle('gone', TAB !== 'board');
+  TAB = ['board', 'week'].includes(t) ? t : 'people';
+  ['people', 'board', 'week'].forEach(x => {
+    $('tab-' + x).classList.toggle('active', TAB === x);
+    $('panel-' + x).classList.toggle('gone', TAB !== x);
+  });
   history.replaceState(null, '', '#' + TAB);
+  renderStrip();
   if (TAB === 'people' && peopleStale) loadPeople().catch(e => UCDFS.toast(e.message));
+  if (TAB === 'week' && weekStale) loadWeek().catch(e => UCDFS.toast(e.message));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -991,16 +1722,107 @@ document.addEventListener('DOMContentLoaded', () => {
       if (b && (e.key === 'Enter' || e.key === ' ') && e.target === b) { e.preventDefault(); openPerson(b.dataset.person); }
     });
     $('board').addEventListener('click', e => {
+      const pk = e.target.closest('[data-pick]');
+      if (pk) { e.stopPropagation(); togglePick(pk.dataset.pick); return; }
       const q = e.target.closest('[data-quick]');
       if (q) { e.stopPropagation(); quickMove(q.dataset.id, q.dataset.quick); return; }
+      const w = e.target.closest('[data-wait]');
+      if (w) { e.stopPropagation(); openItem(w.dataset.wait); return; }
+      const so = e.target.closest('[data-sort]');
+      if (so) {
+        SORT = { key: so.dataset.sort, dir: SORT.key === so.dataset.sort ? -SORT.dir : 1 };
+        renderBoard();
+        return;
+      }
       const m = e.target.closest('[data-more]');
       if (m) { SHOW_ALL_DONE = m.dataset.more === '1'; renderBoard(); return; }
       const c = e.target.closest('[data-item]');
-      if (c) openItem(c.dataset.item);
+      if (c) SELECTING ? togglePick(c.dataset.item) : openItem(c.dataset.item);
     });
     $('board').addEventListener('keydown', e => {
       const c = e.target.closest('.item');
-      if (c && (e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); openItem(c.dataset.item); }
+      if (c && (e.key === 'Enter' || e.key === ' ') && e.target === c) {
+        e.preventDefault();
+        SELECTING ? togglePick(c.dataset.item) : openItem(c.dataset.item);
+      }
+    });
+    $('group').addEventListener('change', e => { GROUP = e.target.value; pref('group', GROUP); renderBoard(); });
+    $('view-board').addEventListener('click', () => { VIEW = 'board'; pref('view', VIEW); renderBoard(); });
+    $('view-table').addEventListener('click', () => { VIEW = 'table'; pref('view', VIEW); renderBoard(); });
+    $('select-mode').addEventListener('click', () => {
+      SELECTING = !SELECTING;
+      if (!SELECTING) SELECTED.clear();
+      renderBoard();
+    });
+    $('bulk-clear').addEventListener('click', () => { SELECTED.clear(); renderBoard(); });
+    $('bulk-owner').addEventListener('change', e => {
+      const v = e.target.value;
+      e.target.value = '';
+      if (!v) return;
+      const p = ITEMS.people.find(x => x.id === v);
+      bulkApply({ owner_ids: v === '-' ? [] : [v] }, v === '-' ? 'Took everybody off' : `Gave ${p ? p.name : 'them'}`);
+    });
+    $('bulk-area').addEventListener('change', e => {
+      const v = e.target.value;
+      e.target.value = '';
+      if (!v) return;
+      bulkApply({ area: v === '-' ? null : v }, v === '-' ? 'Cleared the area on' : `Set ${(areaOf(v) || {}).name} on`);
+    });
+    $('ms-strip').addEventListener('click', e => {
+      const b = e.target.closest('[data-ms]');
+      if (!b) return;
+      MSFILTER = MSFILTER === b.dataset.ms ? '' : b.dataset.ms;
+      renderStrip();
+      showTab('board');
+      renderBoard();
+    });
+    $('f-add-wait').addEventListener('change', e => {
+      const x = ITEMS.items.find(i => String(i.id) === e.target.value);
+      if (x && !waitsPicked.some(w => w.id === x.id))
+        waitsPicked.push({ id: x.id, key: x.key, title: x.title, status: x.status });
+      renderWaits();
+    });
+    $('f-waits').addEventListener('click', e => {
+      const b = e.target.closest('[data-unwait]');
+      if (b) { waitsPicked = waitsPicked.filter(w => String(w.id) !== b.dataset.unwait); renderWaits(); }
+    });
+    $('paste-open').addEventListener('click', openPaste);
+    $('paste-parse').addEventListener('click', parsePaste);
+    $('paste-back').addEventListener('click', () => {
+      $('paste-step2').classList.add('gone');
+      $('paste-step1').classList.remove('gone');
+    });
+    $('paste-save').addEventListener('click', savePaste);
+    $('paste-preview').addEventListener('input', e => {
+      const t = e.target.dataset.pvTitle;
+      if (t !== undefined) { PASTE[t].title = e.target.value; }
+    });
+    $('paste-preview').addEventListener('change', e => {
+      const on = e.target.dataset.pvOn, add = e.target.dataset.pvAdd;
+      if (on !== undefined) { PASTE[on].on = e.target.checked; renderPaste(); }
+      if (add !== undefined && e.target.value) {
+        const p = ITEMS.people.find(x => x.id === e.target.value);
+        if (p) PASTE[add].owners.push({ id: p.id, name: p.name });
+        // Picking somebody by hand settles the warning that held it back.
+        PASTE[add].on = true;
+        renderPaste();
+      }
+    });
+    $('paste-preview').addEventListener('click', e => {
+      const b = e.target.closest('[data-pv-unpick]');
+      if (!b) return;
+      const row = PASTE[b.dataset.pvUnpick];
+      row.owners = row.owners.filter(o => o.id !== b.dataset.id);
+      renderPaste();
+    });
+    $('msg-open').addEventListener('click', openMessage);
+    $('msg-copy').addEventListener('click', copyMessage);
+    $('week-days').addEventListener('change', () => { weekStale = true; loadWeek().catch(e => UCDFS.toast(e.message)); });
+    $('week').addEventListener('click', e => {
+      const l = e.target.closest('[data-item]');
+      if (!l) return;
+      if (ITEMS.items.some(i => String(i.id) === l.dataset.item)) openItem(l.dataset.item);
+      else UCDFS.toast('That item has been deleted');
     });
     $('f-add-person').addEventListener('change', e => {
       const p = ITEMS.people.find(x => x.id === e.target.value);
@@ -1036,15 +1858,36 @@ document.addEventListener('DOMContentLoaded', () => {
       $('add-owner').value = who;
       $('add-title').focus();
     });
+    const closers = { item: closeItem, person: closePerson, paste: closePaste,
+                      msg: () => $('msg-bg').classList.add('gone') };
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',
-      () => b.dataset.close === 'item' ? closeItem() : closePerson()));
+      () => closers[b.dataset.close]()));
     $('item-bg').addEventListener('mousedown', e => { if (e.target === $('item-bg')) closeItem(); });
     $('person-bg').addEventListener('mousedown', e => { if (e.target === $('person-bg')) closePerson(); });
+    $('msg-bg').addEventListener('mousedown', e => { if (e.target === $('msg-bg')) closers.msg(); });
+    // Not the paste dialog: a stray click outside it would lose a list that
+    // took a minute to correct.
     document.addEventListener('keydown', e => {
-      if (e.key !== 'Escape') return;
-      if (!$('item-bg').classList.contains('gone')) closeItem();
-      else if (!$('person-bg').classList.contains('gone')) closePerson();
+      if (e.key === 'Escape') {
+        if (!$('item-bg').classList.contains('gone')) closeItem();
+        else if (!$('paste-bg').classList.contains('gone')) closePaste();
+        else if (!$('msg-bg').classList.contains('gone')) closers.msg();
+        else if (!$('person-bg').classList.contains('gone')) closePerson();
+        return;
+      }
+      /* N for a new item, from anywhere that is not already taking typing.
+         Enter in the box makes it a To do, which is the whole of quick-add. */
+      const t = e.target;
+      if ((e.key === 'n' || e.key === 'N') && !e.ctrlKey && !e.metaKey && !e.altKey && !anyDialogOpen() &&
+          !(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) {
+        e.preventDefault();
+        showTab('board');
+        $('add-title').focus();
+      }
     });
+
+    GROUP = ['status', 'area', 'person'].includes(pref('group')) ? pref('group') : 'status';
+    VIEW = pref('view') === 'table' ? 'table' : 'board';
 
     $('people').innerHTML = RING;
     try {
@@ -1052,7 +1895,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       UCDFS.toast(e.message);
     }
-    showTab(location.hash === '#board' ? 'board' : 'people');
+    showTab(location.hash.slice(1));
   });
 });
 </script>

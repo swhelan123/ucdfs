@@ -2,7 +2,7 @@
 # UCDFS test runner.
 #
 #   ./tests/run.sh                 everything
-#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|purchases|org|comp|harness|profiles|admin|plans|links|glossary|tracker)
+#   ./tests/run.sh static          one suite (static|auth|pages|login|meetings|purchases|org|comp|harness|profiles|admin|plans|links|glossary|tracker|planning)
 #   ./tests/run.sh --keep          leave the test container up afterwards
 #
 # Runs against a throwaway container on :3979 built from the working tree.
@@ -22,7 +22,7 @@ for arg in "$@"; do
     *)      SUITES+=("$arg") ;;
   esac
 done
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings purchases org comp harness profiles admin plans links glossary tracker)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(static auth pages login meetings purchases org comp harness profiles admin plans links glossary tracker planning)
 
 # Stamped before anything runs, so cleanup can find exactly the rows this run
 # wrote to the shared activity feed and nothing older.
@@ -38,7 +38,7 @@ for s in "${SUITES[@]}"; do [ "$s" != "static" ] && needs_container=1; done
 
 needs_node=0
 for s in "${SUITES[@]}"; do
-  case "$s" in static|pages|login|meetings|purchases|org|comp|plans|tracker) needs_node=1 ;; esac
+  case "$s" in static|pages|login|meetings|purchases|org|comp|plans|tracker|planning) needs_node=1 ;; esac
 done
 
 if [ "$needs_node" = "1" ] && [ ! -d "$ROOT/tests/node_modules" ]; then
@@ -138,6 +138,7 @@ for suite in "${SUITES[@]}"; do
     links)   TEST_BASE="$BASE" node "$ROOT/tests/suite-links.js" || total_fail=$((total_fail+1)) ;;
     glossary) TEST_BASE="$BASE" node "$ROOT/tests/suite-glossary.js" || total_fail=$((total_fail+1)) ;;
     tracker) TEST_BASE="$BASE" node "$ROOT/tests/suite-tracker.js" || total_fail=$((total_fail+1)) ;;
+    planning) TEST_BASE="$BASE" TEST_CONTAINER="$CONTAINER" node "$ROOT/tests/suite-tracker-planning.js" || total_fail=$((total_fail+1)) ;;
     *)      echo "Unknown suite: $suite" >&2; total_fail=$((total_fail+1)) ;;
   esac
 done

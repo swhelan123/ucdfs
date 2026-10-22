@@ -1150,7 +1150,7 @@ function renderBoard() {
   const html = lanes(shown).map(l => {
     if (!l.rows.length) return '';
     const open = l.rows.filter(i => i.status !== 'done').length;
-    return `<div class="lane"><div class="section-label">${esc(l.name)} · ${plural(open, 'open')}</div>
+    return `<div class="lane"><div class="section-label">${esc(l.name)} · ${open} open</div>
       ${columnsHtml(l.rows)}</div>`;
   }).join('');
   $('board').innerHTML = html || `<div class="empty"><div class="empty-icon">🗂️</div>

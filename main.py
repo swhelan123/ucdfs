@@ -8,6 +8,7 @@ import uuid
 import base64
 import binascii
 import logging
+import ipaddress
 import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -148,6 +149,100 @@ def _site_url(request: Request) -> str:
     host  = (request.headers.get("x-forwarded-host") or request.headers.get("host")
              or request.url.netloc)
     return f"{proto}://{host}"
+
+
+# ── Who is on the other end ───────────────────────────────────────────────────
+# Every request reaches uvicorn through nginx-proxy-manager, so the TCP peer is
+# the Docker bridge: one address for the whole team. NPM writes the real one
+# into X-Real-IP, replacing anything the client sent. That header is believed
+# only when the peer is a private address (the proxy, or the LAN), because a
+# client talking to uvicorn directly could otherwise name any address it liked.
+# A LAN peer could still lie, which is accepted: nothing forwards the app's
+# port from outside, and the proxy log is the record of what came in anyway.
+#
+# Before this, the app logged the bridge address for everybody, and finding
+# out where an impersonation signup came from meant digging through the
+# proxy's own access log by timestamp.
+def _client_ip(request) -> str:
+    peer = request.client.host if request.client else ""
+    try:
+        trusted = ipaddress.ip_address(peer).is_private
+    except ValueError:
+        trusted = False
+    if trusted:
+        real = (request.headers.get("x-real-ip") or "").strip()
+        try:
+            return str(ipaddress.ip_address(real))
+        except ValueError:
+            pass
+    return peer or "unknown"
+
+
+def _client_ua(request) -> str:
+    return (request.headers.get("user-agent") or "")[:200]
+
+
+class _RateLimit:
+    """A sliding window of events per key, in memory.
+
+    One uvicorn process, so memory is the whole truth, and a restart forgetting
+    it is fine for windows measured in minutes. It matters more than usual
+    here: every GoTrue call leaves from this server's address, so GoTrue's own
+    per-IP limits are shared by the entire team, and one person hammering
+    sign-in could spend them for everybody. This is what keeps that one
+    person's traffic theirs.
+    """
+
+    def __init__(self, limit: int, window: int):
+        self.limit, self.window = limit, window
+        self._hits: dict = {}
+        self._lock = threading.Lock()
+
+    def _live(self, key: str, now: float) -> list:
+        hits = [t for t in self._hits.get(key, ()) if now - t < self.window]
+        if hits:
+            self._hits[key] = hits
+        else:
+            self._hits.pop(key, None)
+        return hits
+
+    def wait(self, key: str) -> int:
+        """Seconds until `key` may try again; 0 means now."""
+        now = time.time()
+        with self._lock:
+            hits = self._live(key, now)
+            return int(self.window - (now - hits[0])) + 1 if len(hits) >= self.limit else 0
+
+    def hit(self, key: str) -> None:
+        now = time.time()
+        with self._lock:
+            if len(self._hits) > 20000:          # a sweep, not a cap: drop the stale
+                for k in list(self._hits):
+                    self._live(k, now)
+            self._hits.setdefault(key, []).append(now)
+
+
+# Generous on purpose. UCD's network puts a whole lecture hall behind a handful
+# of addresses, and September is thirty signups in an afternoon from one room.
+# These stop a script, not a crowd.
+_SIGNUP_LIMIT     = _RateLimit(20, 60 * 60)    # attempts, per address, per hour
+_LOGIN_FAIL_LIMIT = _RateLimit(10, 15 * 60)    # wrong passwords, per address
+_EMAIL_LIMIT      = _RateLimit(6, 15 * 60)     # forgot + resend: each sends mail
+_CHECK_LIMIT      = _RateLimit(60, 10 * 60)    # account lookups, per address
+
+
+def _throttle(limit: _RateLimit, request, record: bool = True) -> None:
+    """429 if this address is over `limit`, otherwise count this attempt."""
+    ip = _client_ip(request)
+    wait = limit.wait(ip)
+    if wait:
+        logger.warning(f"[auth] rate limited {request.url.path} ip={ip}")
+        mins = max(1, round(wait / 60))
+        raise HTTPException(429, f"Too many attempts from here. Try again in "
+                                 f"{mins} minute{'s' if mins != 1 else ''}.",
+                            headers={"Retry-After": str(wait)})
+    if record:
+        limit.hit(ip)
 
 # ── Season calendar ───────────────────────────────────────────────────────────
 # Hand-edited once a season. The dashboard countdown reads this and nothing
@@ -1400,6 +1495,7 @@ async def auth_check(request: Request):
     "there's already an account with that email" for the same input, and the
     first name it returns is contained in the UCD address that was submitted.
     """
+    _throttle(_CHECK_LIMIT, request)
     b = await request.json()
     try:
         email = _check_email_domain(b.get("email"))
@@ -1421,12 +1517,50 @@ async def auth_check(request: Request):
     }
 
 
+def _letters_key(s: str) -> str:
+    """A name with everything but letters gone: "Aoife Byrne2", "aoife.byrne"
+    and "Aoife  BYRNE" are one key. Stricter than _fold_name on purpose,
+    because this one is asking "would people mistake these for each other",
+    not "is this the same spelling"."""
+    return "".join(c for c in _name_key(s) if c.isalpha())
+
+
+def _name_taken(first: str, last: str) -> Optional[str]:
+    """The existing member a new signup's name would pass for, or None.
+
+    Two accounts with one name are not just confusing. attendance, the Comp Hub
+    and pt_done_log own rows by typed name, so a second "Aoife Byrne" passes
+    every one of those ownership checks for the first one's history. That is
+    what an impersonation signup in October 2026 could have used and did not.
+
+    A real namesake adds a middle name or initial, which is also what lets
+    everyone else tell them apart. A failed lookup lets the signup through:
+    _require_own_row checks the account on any row that carries one, so that
+    direction costs a confusing directory, not somebody's history.
+    """
+    key = _letters_key(first + " " + last)
+    if not key:
+        return None
+    try:
+        rows = supabase.table("profiles").select("first_name,last_name").execute().data or []
+    except Exception as e:
+        logger.error(f"[auth] name check failed, letting the signup through: {e}")
+        return None
+    for r in rows:
+        full = ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip()
+        if _letters_key(full) == key:
+            return full
+    return None
+
+
 @app.post("/api/auth/signup")
 async def auth_signup(request: Request):
+    _throttle(_SIGNUP_LIMIT, request)
     b = await request.json()
     first = (b.get("first_name") or "").strip()
     last  = (b.get("last_name") or "").strip()
     pw    = b.get("password") or ""
+    ip, ua = _client_ip(request), _client_ua(request)
 
     try:
         email = _check_email_domain(b.get("email"))
@@ -1434,6 +1568,16 @@ async def auth_signup(request: Request):
             raise AuthError("We need your first name.")
         if len(pw) < 8:
             raise AuthError("Password must be at least 8 characters.")
+        taken = _name_taken(first, last)
+        if taken:
+            logger.warning(f"[auth] signup refused, name matches {taken!r}: "
+                           f"{email} ip={ip} ua={ua!r}")
+            # Not "already": login.html reads that word as "this email has an
+            # account" and moves to the password step. It checks 409 first
+            # too, but the wording should not be the thing holding it up.
+            raise AuthError(f"Someone on the team is called {taken}. If that isn't "
+                            "you, add a middle name or initial so people can tell "
+                            "you apart.", 409)
 
         created = await _gotrue(
             "POST", "/signup?redirect_to=" + _login_url(request),
@@ -1446,8 +1590,7 @@ async def auth_signup(request: Request):
     user_id = (created.get("user") or created).get("id")
     if not user_id:
         raise HTTPException(400, "Could not create that account.")
-
-    profile = _upsert_profile(user_id, first, last, email)
+    logger.info(f"[auth] signup {email} ({first} {last}) id={user_id} ip={ip} ua={ua!r}")
 
     # With "Confirm email" off in the Supabase dashboard, signup returns a
     # session and they are in. With it on there is no session yet: GoTrue has
@@ -1455,10 +1598,19 @@ async def auth_signup(request: Request):
     # link brings them back to /login with a session in the fragment, which
     # /api/auth/session below turns into the cookie. Works either way, so
     # flipping the setting is a dashboard change and not a deploy.
+    #
+    # No profile row until then. An address nobody has confirmed is not a
+    # member: a row now would put them in the directory, the org chart and the
+    # name check above on the strength of typing somebody's email. _signed_in()
+    # builds the row from the signup metadata on the first real sign-in, the
+    # path every way of arriving already goes through. It also keeps junk out:
+    # for an address that already exists, GoTrue answers with a made-up user
+    # id rather than say so, and that id has no auth.users row to point at.
     if not created.get("access_token"):
         return JSONResponse({"ok": True, "needs_confirmation": True, "email": email,
                              "message": f"We've sent a link to {email}."})
 
+    _upsert_profile(user_id, first, last, email)
     return _signed_in(created, email)
 
 
@@ -1469,14 +1621,24 @@ async def auth_login(request: Request):
     pw    = b.get("password") or ""
     if not email or not pw:
         raise HTTPException(400, "Email and password required")
+    # Only wrong passwords count. A right one never locks anybody out, which is
+    # what lets the limit sit on the address and not the account: a stranger
+    # guessing at your password cannot stop you signing in.
+    _throttle(_LOGIN_FAIL_LIMIT, request, record=False)
+    ip, ua = _client_ip(request), _client_ua(request)
 
     try:
         tokens = await _gotrue("POST", "/token?grant_type=password",
                                json_body={"email": email, "password": pw},
                                fallback="That email and password don't match.")
     except AuthError as e:
+        if e.status != 429:
+            _LOGIN_FAIL_LIMIT.hit(ip)
+        logger.info(f"[auth] login refused {email}: {e.message} ip={ip} ua={ua!r}")
         raise HTTPException(e.status, e.message)
 
+    logger.info(f"[auth] login {email} id={(tokens.get('user') or {}).get('id')} "
+                f"ip={ip} ua={ua!r}")
     return _signed_in(tokens, email)
 
 
@@ -1519,6 +1681,7 @@ def _login_url(request: Request) -> str:
 @app.post("/api/auth/forgot")
 async def auth_forgot(request: Request):
     """Send the reset-password email."""
+    _throttle(_EMAIL_LIMIT, request)
     b = await request.json()
     try:
         email = _check_email_domain(b.get("email"))
@@ -1547,6 +1710,7 @@ async def auth_forgot(request: Request):
 @app.post("/api/auth/resend")
 async def auth_resend(request: Request):
     """Send the confirm-your-email link again, for a signup that lost it."""
+    _throttle(_EMAIL_LIMIT, request)
     b = await request.json()
     try:
         email = _check_email_domain(b.get("email"))
@@ -1674,13 +1838,19 @@ async def api_god_mode(request: Request):
     return response
 
 
+# How long an account shows as new in /admin. Every signup is somebody an admin
+# should be able to put a face to; a week is long enough to notice one at the
+# next meeting and short enough that the list stays a list.
+NEW_ACCOUNT_DAYS = 7
+
+
 @app.get("/api/admin/people")
 async def api_admin_people(request: Request):
     """Everyone, with their role. Admin-only: this is the permission list."""
     require_role(request, "admin")
     try:
         rows = supabase.table("profiles").select(
-            "id,first_name,last_name,email,role,god_mode,subteam").execute().data or []
+            "id,first_name,last_name,email,role,god_mode,subteam,created_at").execute().data or []
     except Exception as e:
         logger.error(f"[admin] people query failed: {e}")
         raise HTTPException(503, "Couldn't load the team.")
@@ -1689,15 +1859,30 @@ async def api_admin_people(request: Request):
                              if r.get("role") in ASSIGNABLE_ROLES else 9,
                              (r.get("first_name") or "").lower()))
     me = current_profile(request)
+
+    def full(r):
+        return ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip()
+
+    # Two accounts that would pass for each other, by the same key the signup
+    # check uses. Signup refuses new ones; this is how an admin sees one that
+    # got in before that check existed, or through a failed lookup.
+    keys = {}
+    for r in rows:
+        keys.setdefault(_letters_key(full(r)), []).append(r.get("id"))
+    since = time.time() - NEW_ACCOUNT_DAYS * 86400
     return {
         "people": [{
             "id":    r.get("id"),
-            "name":  ((r.get("first_name") or "") + " " + (r.get("last_name") or "")).strip(),
+            "name":  full(r),
             "email": r.get("email") or "",
             "role":  r.get("role") or "member",
             "god_mode": bool(r.get("god_mode")),
             "is_me": r.get("id") == me.get("id"),
+            "created_at": r.get("created_at") or "",
+            "is_new": _ts_key(r.get("created_at")) >= since,
+            "same_name": len(keys.get(_letters_key(full(r)), ())) > 1,
         } for r in rows],
+        "new_days": NEW_ACCOUNT_DAYS,
         "roles": ASSIGNABLE_ROLES,
         "me": me.get("id"),
     }
@@ -4058,7 +4243,7 @@ async def get_attendance(target_date: Optional[str] = None):
     return {"date": d, "rows": rows}
 
 
-def _require_own_row(request: Request, name: str):
+def _require_own_row(request: Request, name: str, target_date: Optional[str] = None):
     """You may only write your own attendance. God mode may write anyone's.
 
     This used to live only in the page. The buttons were hidden for other
@@ -4070,6 +4255,13 @@ def _require_own_row(request: Request, name: str):
     from the account while the stored rows predate accounts and were typed by
     hand: "shane whelan" and "Shane  Whelan" are the same person, and treating
     them as different silently locks people out of their own history.
+
+    The name is not the whole check. Given the day, a row that already carries
+    an account (017 stamps every new one) belongs to that account, whatever it
+    is called. Without this, a second account with the same name passes for
+    the first: it can delete their days, and since the write is an upsert on
+    (name, date), logging a day they logged overwrites it and re-stamps it to
+    the newcomer. Rows from before 017 carry no account and still go by name.
     """
     if is_god(request):
         return
@@ -4077,6 +4269,20 @@ def _require_own_row(request: Request, name: str):
     theirs = " ".join((name or "").split()).lower()
     if mine != theirs:
         raise HTTPException(403, "You can only change your own attendance")
+    if not target_date:
+        return
+    try:
+        rows = supabase.table("attendance").select("*") \
+            .eq("name", name).eq("date", target_date).execute().data or []
+    except Exception as e:
+        # Fail closed. The name already matched, so the one person this can
+        # wrongly refuse is somebody sharing a name, which is the case at stake.
+        logger.error(f"[attendance] owner check failed for {name} {target_date}: {e}")
+        raise HTTPException(503, "Couldn't check that day just now. Try again.")
+    me = current_profile(request)["id"]
+    if any(r.get("profile_id") and r["profile_id"] != me for r in rows):
+        raise HTTPException(403, "That day was logged by another account with the same "
+                                 "name. Ask an admin.")
 
 
 @app.post("/api/log")
@@ -4098,7 +4304,7 @@ async def log_web(request: Request):
         raise HTTPException(status_code=400, detail="status must be 'arriving' or 'absent'")
 
     name = f"{first_name} {last_name}"
-    _require_own_row(request, name)
+    _require_own_row(request, name, target_date)
     # Your own row carries your account. A row god mode writes for somebody
     # else carries theirs only if exactly one account has that name; otherwise
     # it stays unstamped and turns up in /admin to be matched by hand.
@@ -4130,7 +4336,7 @@ async def delete_log(request: Request):
     if not first_name or not last_name or not target_date:
         raise HTTPException(status_code=400, detail="first_name, last_name and date required")
     name = f"{first_name} {last_name}"
-    _require_own_row(request, name)
+    _require_own_row(request, name, target_date)
     logger.info(f"[delete_log] {name} | {target_date}")
     supabase.table("attendance").delete().eq("name", name).eq("date", target_date).execute()
     return {"reply": f"Entry removed for {name} on {target_date}."}
@@ -4928,6 +5134,7 @@ MAX_PR_ITEM   = 160
 MAX_PR_REASON = 600
 MAX_PR_NOTE   = 400
 DEFAULT_THRESHOLD_EUR = Decimal("100")
+EST_EUR_MAX   = Decimal("100000")
 
 
 def _setting(key: str, default: str = "") -> str:
@@ -5148,6 +5355,12 @@ async def api_purchases_create(request: Request):
         est = Decimal(str(b.get("est_eur"))) if b.get("est_eur") not in (None, "") else None
         if est is not None and est < 0:
             raise HTTPException(400, "An estimate cannot be negative")
+        # The column is numeric(10, 2), so anything from €100M up failed in
+        # Postgres and came back as a 503, which says "try again later" about
+        # a number that will never fit. Nothing the team buys comes near this.
+        if est is not None and est > EST_EUR_MAX:
+            raise HTTPException(400, f"Estimates over €{EST_EUR_MAX:,} aren't taken here. "
+                                     "Talk to the treasurer.")
     except (InvalidOperation, ValueError):
         raise HTTPException(400, "That estimate is not a number")
 

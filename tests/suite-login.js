@@ -194,7 +194,13 @@ const sent = (calls, path) => calls.filter(c => c.path === path);
     d.getElementById('confirm').value = TEST_PASSWORD;
     await submit(d);
     const after = await (await api('/api/auth/check', { email: fresh })).json();
-    check('matching, the account is created', after.exists === true);
+    if (autoconfirm) {
+      check('matching, the account is created', after.exists === true);
+    } else {
+      // An address nobody has confirmed is not a member, so it is not in the
+      // directory either: the profile row is made on the first real sign-in.
+      check('matching, the signup is sent but nobody is a member yet', after.exists === false);
+    }
     check('the error is gone', !d.getElementById('auth-error').classList.contains('show'));
     const req = sent(calls, '/api/auth/signup')[0];
     check('the server got one password, not two',

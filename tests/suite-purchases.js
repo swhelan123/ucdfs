@@ -116,6 +116,13 @@ const get  = (path, cs) => fetch(BASE + path, { headers: hdr(cs) }).then(json);
     check('an item is required', noItem.status === 400, String(noItem.status));
     const noWhy = await post('/api/purchases', member.setCookies, { item: 'ucdfs-test thing' });
     check('a reason is required', noWhy.status === 400, String(noWhy.status));
+    // This used to reach Postgres, overflow numeric(10,2) and come back as a
+    // 503, "try again later" about a number that will never fit.
+    for (const huge of [100000.01, 1e9]) {
+      const r = await post('/api/purchases', member.setCookies,
+        { item: 'ucdfs-test huge', reason: 'x', est_eur: huge });
+      check(`an estimate of €${huge} is refused as a 400`, r.status === 400, String(r.status));
+    }
     const made = await file(member.setCookies, 10);
     check('a complete one is filed', !!made.id, JSON.stringify(made).slice(0, 70));
     check('and gets a reference people can say out loud',

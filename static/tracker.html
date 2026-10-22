@@ -288,6 +288,7 @@
 .tbl tbody tr:hover { background: var(--bg); }
 .tbl .t-title { font-weight: 700; min-width: 200px; overflow-wrap: anywhere; }
 .tbl .t-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl .t-nowrap { white-space: nowrap; }
 .tbl .t-pick { width: 34px; }
 
 /* Waits-on picker in the dialog: chips like the people picker. */
@@ -318,6 +319,7 @@
 /* This week */
 .wk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .wk-head .intro { margin: 0; flex: 1; min-width: 200px; }
+.wk-head select.text-input { flex: 0 0 170px; width: auto; padding: 9px 13px; font-size: 0.85rem; }
 .wk { margin-bottom: 14px; }
 .wk .card { padding: 4px 14px; }
 .wk-line { display: flex; gap: 10px; align-items: baseline; padding: 8px 0;
@@ -708,10 +710,17 @@ function areaTag(id) {
   return a ? `<span class="area-tag ac-${esc(a.accent)}">${esc(a.name)}</span>` : '';
 }
 
+/* "today", "3d ago", and a date past a fortnight, when a count of days stops
+   meaning anything at a glance. */
 function ago(iso) {
   const days = Math.floor(daysAgo(iso));
   if (!isFinite(days)) return '';
-  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + 'd ago';
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days <= 14) return days + 'd ago';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IE', { day: 'numeric', month: 'short',
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
 }
 
 /* The date the board draws: the one somebody set, or one worked out from the
@@ -1209,11 +1218,11 @@ function tableHtml(list) {
       <td class="t-num item-key">${esc(i.key)}</td>
       <td class="t-title">${esc(i.title)}${i.critical && i.status !== 'done' ? ' <span class="badge badge-crit">Critical</span>' : ''}${i.ready ? ' <span class="badge badge-ready">Ready</span>' : ''}</td>
       <td>${esc(i.owners.length ? peopleLabel(i.owners) : 'Nobody yet')}</td>
-      <td>${areaTag(i.area)}</td>
-      <td>${esc(statusName(i.status))}</td>
+      <td class="t-nowrap">${areaTag(i.area)}</td>
+      <td class="t-nowrap">${esc(statusName(i.status))}</td>
       <td class="t-num">${dueBadge(i)}</td>
       <td class="t-num">${i.status === 'done' || i.days_in_status == null ? '' : plural(i.days_in_status, 'day')}</td>
-      <td>${esc(i.milestone_name)}${i.milestone_date ? ` <span class="item-key">${esc(fmtDay(i.milestone_date))}</span>` : ''}</td>
+      <td class="t-nowrap">${esc(i.milestone_name)}${i.milestone_date ? ` <span class="item-key">${esc(fmtDay(i.milestone_date))}</span>` : ''}</td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1663,21 +1672,21 @@ async function copyMessage() {
 
 // ── This week ─────────────────────────────────────────────────────────────
 
+// [key, heading, how the summary line counts it]
 const WEEK_SECTIONS = [
-  ['finished',   'Finished'],
-  ['created',    'New'],
-  ['blocked',    'Newly blocked'],
-  ['overdue',    'Went overdue'],
-  ['reassigned', 'Changed hands'],
-  ['updates',    'Updates'],
+  ['finished',   'Finished',      n => `${n} finished`],
+  ['created',    'New',           n => `${n} new`],
+  ['blocked',    'Newly blocked', n => `${n} newly blocked`],
+  ['overdue',    'Went overdue',  n => `${n} went overdue`],
+  ['reassigned', 'Changed hands', n => `${n} changed hands`],
+  ['updates',    'Updates',       n => plural(n, 'update')],
 ];
 
 async function loadWeek() {
   if (weekStale) $('week').innerHTML = RING;
   const d = await api('/api/tracker/changes?days=' + encodeURIComponent($('week-days').value));
   weekStale = false;
-  const counts = WEEK_SECTIONS.map(([k, name]) => d[k].length ? `${d[k].length} ${name.toLowerCase()}` : '')
-    .filter(Boolean);
+  const counts = WEEK_SECTIONS.map(([k, , say]) => d[k].length ? say(d[k].length) : '').filter(Boolean);
   $('week-intro').textContent = counts.length
     ? `Since ${fmtDay(d.since)}: ${counts.join(', ')}.` : `Nothing moved since ${fmtDay(d.since)}.`;
   $('week').innerHTML = WEEK_SECTIONS.map(([k, name]) => {

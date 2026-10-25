@@ -174,7 +174,15 @@ const sent = (calls, path) => calls.filter(c => c.path === path);
   console.log(`\n  typing the password twice (confirm email is ${autoconfirm ? 'off' : 'on'})`);
   {
     const { w, d, errors } = await open('/login');
-    const calls = tapFetch(w);
+    // With confirmation on, a real signup makes GoTrue email `fresh`, which
+    // does not exist. Every run then bounced one email: enough for Supabase
+    // to warn about the project's bounce rate (25 Oct 2026), and the default
+    // mailer's two-an-hour limit failed the next run outright. So the page
+    // gets the server's own needs-confirmation answer instead. What that
+    // answer means on the server side is suite-auth's job.
+    const calls = tapFetch(w, autoconfirm ? {} : { '/api/auth/signup': {
+      ok: true, needs_confirmation: true, email: fresh,
+      message: `We've sent a link to ${fresh}.` } });
     d.getElementById('email').value = fresh;
     await submit(d);
     check('the signup step asks for it twice',
@@ -193,13 +201,9 @@ const sent = (calls, path) => calls.filter(c => c.path === path);
 
     d.getElementById('confirm').value = TEST_PASSWORD;
     await submit(d);
-    const after = await (await api('/api/auth/check', { email: fresh })).json();
     if (autoconfirm) {
+      const after = await (await api('/api/auth/check', { email: fresh })).json();
       check('matching, the account is created', after.exists === true);
-    } else {
-      // An address nobody has confirmed is not a member, so it is not in the
-      // directory either: the profile row is made on the first real sign-in.
-      check('matching, the signup is sent but nobody is a member yet', after.exists === false);
     }
     check('the error is gone', !d.getElementById('auth-error').classList.contains('show'));
     const req = sent(calls, '/api/auth/signup')[0];

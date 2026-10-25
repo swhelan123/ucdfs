@@ -413,9 +413,17 @@ an email. Turning it on needs two more dashboard changes or it does not work:
 Suite-login walks the whole reset path without an email: `generate_link` (the
 admin API) hands back the token GoTrue would have mailed, following the verify
 URL by hand gives the redirect with the session in the fragment, and the page
-is opened on that. The same trick covers a confirmation link. The one email a
-run can send is the single real signup in `suite-auth` and `suite-login`, and
-only when confirmation is on.
+is opened on that. The same trick covers a confirmation link.
+
+**A test run sends no email at all.** With confirmation on, a real signup makes
+GoTrue mail the `ucdfs-test-…` address, which does not exist, so it bounces. It
+used to be one per suite per run, and on 25 Oct 2026 Supabase warned that
+non-prod's bounce rate risked its default mailer being restricted; at two emails
+an hour, the second suite's signup also failed outright. Now, with confirmation
+on, `suite-auth` makes its unconfirmed account through the admin API (which
+never mails) and checks everything after the email, and `suite-login` gives the
+page the server's own needs-confirmation answer. Keep it that way: test with an
+address nobody owns and you are spending the project's sender reputation.
 
 ### Signup is where impersonation starts
 

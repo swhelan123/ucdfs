@@ -19,41 +19,58 @@ AUTOCONFIRM=$(curl -s -H "apikey: $SUPABASE_KEY" "$SUPABASE_URL/auth/v1/settings
   | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("mailer_autoconfirm")).lower())' 2>/dev/null)
 
 echo "── signup (confirm email is $([ "$AUTOCONFIRM" = "true" ] && echo off || echo on)) ──"
-code=$(curl -s -c "$CJ" -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/signup" \
-  -H 'Content-Type: application/json' \
-  -d "{\"first_name\":\"Test\",\"last_name\":\"$LAST\",\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")
-ck "signup succeeds" "$code" "200"
-if [ "$AUTOCONFIRM" = "true" ]; then
-  ck "httpOnly session cookie set"    "$(grep -c 'ucdfs_session' "$CJ")" "1"
-  ck "readable profile cookie set"    "$(grep -c 'ucdfs_profile' "$CJ")" "1"
-  ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
-  ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
-else
-  ck "no session until the email is confirmed" "$(grep -c 'ucdfs_session' "$CJ")" "0"
-  ck "and the page is told so" \
-     "$(python3 -c 'import json;print(json.load(open("'"$WORK/o.json"'")).get("needs_confirmation"))')" "True"
-  ck "signing in before confirming is refused" \
-     "$(curl -s -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/login" \
-        -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "400"
-  ck "with the reason" "$(grep -c -i 'confirm your email' "$WORK/o.json")" "1"
-  # Confirm it the way the link would, minus the email: through the admin API.
-  # The rest of this suite needs a signed-in cookie jar either way.
-  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$EMAIL" <<'PY2'
+# Admin API calls, for making and confirming an account without any email.
+admin() {
+  python3 - "$SUPABASE_URL" "$SUPABASE_SERVICE_KEY" "$@" <<'PY2'
 import json, sys, urllib.request
-url, key, email = sys.argv[1:4]
+url, key, op, email = sys.argv[1:5]
 hdr = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
 def call(method, path, body=None):
     req = urllib.request.Request(url + path, headers=hdr, method=method,
                                  data=None if body is None else json.dumps(body).encode())
     with urllib.request.urlopen(req, timeout=20) as r:
         raw = r.read(); return json.loads(raw) if raw else {}
-users = call("GET", "/auth/v1/admin/users?per_page=1000").get("users", [])
-uid = next((u["id"] for u in users if u.get("email") == email), None)
-if uid: call("PUT", "/auth/v1/admin/users/" + uid, {"email_confirm": True})
+if op == "create-unconfirmed":
+    call("POST", "/auth/v1/admin/users", {"email": email, "password": sys.argv[5],
+         "email_confirm": False,
+         "user_metadata": {"first_name": sys.argv[6], "last_name": sys.argv[7]}})
+elif op == "confirm":
+    users = call("GET", "/auth/v1/admin/users?per_page=1000").get("users", [])
+    uid = next((u["id"] for u in users if u.get("email") == email), None)
+    if uid: call("PUT", "/auth/v1/admin/users/" + uid, {"email_confirm": True})
 PY2
+}
+if [ "$AUTOCONFIRM" = "true" ]; then
+  code=$(curl -s -c "$CJ" -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/signup" \
+    -H 'Content-Type: application/json' \
+    -d "{\"first_name\":\"Test\",\"last_name\":\"$LAST\",\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")
+  ck "signup succeeds" "$code" "200"
+  ck "httpOnly session cookie set"    "$(grep -c 'ucdfs_session' "$CJ")" "1"
+  ck "readable profile cookie set"    "$(grep -c 'ucdfs_profile' "$CJ")" "1"
+  ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
+  ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
+else
+  # No real signup here. GoTrue would email $EMAIL, which does not exist, and
+  # every run bounced one: Supabase warned about the project's bounce rate on
+  # 25 Oct 2026, and its default mailer allows two an hour, so the next run
+  # failed outright. The admin API makes the same unconfirmed account without
+  # sending anything, so what is checked is what happens after the email.
+  echo "  (no real signup with confirmation on: it would email an address nobody owns)"
+  admin create-unconfirmed "$EMAIL" "$TEST_PASSWORD" Test "$LAST"
+  ck "signing in before confirming is refused" \
+     "$(curl -s -o "$WORK/o.json" -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+        -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "400"
+  ck "with the reason" "$(grep -c -i 'confirm your email' "$WORK/o.json")" "1"
+  ck "and nobody is a member until then" \
+     "$(curl -s -X POST "$BASE/api/auth/check" -H 'Content-Type: application/json' \
+        -d "{\"email\":\"$EMAIL\"}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["exists"])')" "False"
+  # Confirm it the way the link would, minus the email.
+  admin confirm "$EMAIL"
   ck "confirmed, signing in works" \
      "$(curl -s -c "$CJ" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
         -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$TEST_PASSWORD\"}")" "200"
+  ck "the first sign-in makes the profile, named as at signup" \
+     "$(curl -s -b "$CJ" "$BASE/api/profile/me" | python3 -c 'import json,sys;p=json.load(sys.stdin).get("person") or {};print(p.get("name"))')" "Test $LAST"
   ck "session cookie is HttpOnly"     "$(grep 'ucdfs_session' "$CJ" | grep -c '^#HttpOnly')" "1"
   ck "profile cookie is NOT HttpOnly" "$(grep 'ucdfs_profile' "$CJ" | grep -c '^#HttpOnly')" "0"
 fi
